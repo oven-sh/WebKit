@@ -32,53 +32,96 @@
 #include "NativeImage.h"
 #include "PixelBuffer.h"
 #include "PixelBufferConversion.h"
+#include <wtf/Borrow.h>
 
 namespace WebCore {
 
-void MeshGradientRenderer::draw(GraphicsContext& context, const MeshGradient& gradient, const FloatRect& destination)
+static PixelBufferFormat renderingFormat(const ColorSpace& destinationColorSpace)
+{
+    if (!MeshGradient::renderingColorSpace(destinationColorSpace)) {
+#if ENABLE(PIXEL_FORMAT_RGBA16F) && ENABLE(DESTINATION_COLOR_SPACE_EXTENDED_SRGB)
+        return { AlphaPremultiplication::Premultiplied, PixelFormat::RGBA16F, ColorSpace::ExtendedSRGB() };
+#else
+        return { AlphaPremultiplication::Premultiplied, PixelFormat::RGBA8, ColorSpace::SRGB() };
+#endif
+    }
+
+#if ENABLE(PIXEL_FORMAT_RGBA16F)
+    if (destinationColorSpace.usesExtendedRange())
+        return { AlphaPremultiplication::Premultiplied, PixelFormat::RGBA16F, destinationColorSpace };
+#endif
+    return { AlphaPremultiplication::Premultiplied, PixelFormat::RGBA8, destinationColorSpace };
+}
+
+static PixelFormat imageBufferPixelFormat([[maybe_unused]] const ColorSpace& colorSpace)
+{
+#if ENABLE(PIXEL_FORMAT_RGBA16F)
+    if (colorSpace.usesExtendedRange())
+        return PixelFormat::RGBA16F;
+#endif
+    return PixelFormat::BGRA8;
+}
+
+static const ColorSpace& imageColorSpace(const ColorSpace& contextColorSpace)
+{
+    if (contextColorSpace.supportsOutput() && contextColorSpace.usesRGBColorModel())
+        return contextColorSpace;
+
+#if ENABLE(PIXEL_FORMAT_RGBA16F) && ENABLE(DESTINATION_COLOR_SPACE_EXTENDED_SRGB)
+    return ColorSpace::ExtendedSRGB();
+#else
+    return ColorSpace::SRGB();
+#endif
+}
+
+bool MeshGradientRenderer::draw(GraphicsContext& context, const MeshGradient& gradient, const FloatRect& destination)
 {
     if (context.paintingDisabled())
-        return;
+        return true;
 
     auto transform = context.getCTM(GraphicsContext::DefinitelyIncludeDeviceScale);
     float scale = std::max(std::abs(transform.xScale()), std::abs(transform.yScale()));
 
     auto pixelSize = expandedIntSize(destination.size().scaled(scale));
     if (pixelSize.isEmpty())
-        return;
+        return true;
 
-    RefPtr image = gradient.renderedImage(pixelSize, scale);
+    auto& colorSpace = imageColorSpace(context.colorSpace());
+
+    RefPtr image = gradient.renderedImage(pixelSize, scale, colorSpace);
     if (!image) {
-        PixelBufferFormat format { AlphaPremultiplication::Premultiplied, PixelFormat::RGBA8, ColorSpace::SRGB() };
+        auto format = renderingFormat(colorSpace);
         auto bufferSize = PixelBuffer::computeBufferSize(format.pixelFormat, pixelSize);
         if (bufferSize.hasOverflowed())
-            return;
+            return false;
 
         Vector<uint8_t> pixels;
         if (!pixels.tryGrow(bufferSize.value()))
-            return;
+            return false;
 
         if (!render(gradient, { format, PixelBuffer::bytesPerPixel(format.pixelFormat) * pixelSize.width(), pixels.mutableSpan() }, pixelSize, scale))
-            return;
+            return false;
 
-        auto source = PixelBufferSourceView::create(format, pixelSize, pixels.span());
+        Borrow borrowedPixels = pixels;
+        auto source = PixelBufferSourceView::create(format, pixelSize, borrowedPixels->span());
         if (!source)
-            return;
+            return false;
 
-        RefPtr imageBuffer = context.createImageBuffer(pixelSize, 1, ColorSpace::SRGB(), RenderingMode::Unaccelerated);
+        RefPtr imageBuffer = context.createImageBuffer(pixelSize, 1, colorSpace, RenderingMode::Unaccelerated, std::nullopt, { imageBufferPixelFormat(colorSpace) });
         if (!imageBuffer)
-            return;
+            return false;
 
         imageBuffer->putPixelBuffer(*source, { { }, pixelSize });
 
         image = ImageBuffer::sinkIntoNativeImage(WTF::move(imageBuffer));
         if (!image)
-            return;
+            return false;
 
         gradient.setRenderedImage(pixelSize, scale, *image);
     }
 
     context.drawNativeImage(*image, destination, FloatRect { { }, pixelSize });
+    return true;
 }
 
 } // namespace WebCore

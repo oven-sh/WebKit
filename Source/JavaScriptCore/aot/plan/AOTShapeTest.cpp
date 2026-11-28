@@ -560,7 +560,7 @@ static DistancePages buildDistancePages(std::span<const DistanceOfShapes> stretc
 
     DistancePages pages { .logShapesPerPage = logShapesPerPage };
     pages.rowOfPage.reserveInitialCapacity(numberOfPages);
-    UncheckedKeyHashMap<uint64_t, uint32_t> rowsByKey;
+    HashMap<uint64_t, uint32_t> rowsByKey;
     Vector<uint16_t, 64> row(FillWith { }, shapesPerPage, static_cast<uint16_t>(0));
     size_t highest = stretches.size() - 1;
     for (size_t page = 0; page < numberOfPages; ++page) {

@@ -146,15 +146,14 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
         return @[ ];
 
     return createNSArray(paths, [] (auto& path) {
-        return [NSURL fileURLWithFileSystemRepresentation:path.utf8().legacyCStringPointer() isDirectory:NO relativeToURL:nil];
+        return [NSURL fileURLWithFileSystemRepresentation:makeUTF8CString(path).legacyCStringPointer() isDirectory:NO relativeToURL:nil];
     }).autorelease();
 }
 
 - (void)setAdditionalReadAccessAllowedURLs:(NSArray<NSURL *> *)additionalReadAccessAllowedURLs
 {
     Vector<String> paths(ReserveCapacityTag { }, additionalReadAccessAllowedURLs.count);
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL NSURL *url in additionalReadAccessAllowedURLs) {
+    for (NSURL *url in additionalReadAccessAllowedURLs) {
         if (!url.isFileURL)
             [NSException raise:NSInvalidArgumentException format:@"%@ is not a file URL", url];
 
@@ -414,8 +413,7 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 {
     Vector<uint64_t> sizes;
     sizes.reserveCapacity(thresholds.count);
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL NSNumber *threshold in thresholds)
+    for (NSNumber *threshold in thresholds)
         sizes.append(static_cast<uint64_t>(threshold.unsignedLongLongValue));
     protect(*_processPoolConfiguration)->setMemoryFootprintNotificationThresholds(WTF::move(sizes));
 }

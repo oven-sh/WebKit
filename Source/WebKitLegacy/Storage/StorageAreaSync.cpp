@@ -233,7 +233,7 @@ void StorageAreaSync::syncTimerFired()
 
 void StorageAreaSync::openDatabase(OpenDatabaseParamType openingStrategy)
 {
-    ASSERT(!isMainThread());
+    m_syncManager->assertIsCurrent();
     ASSERT(!m_database->isOpen());
     ASSERT(!m_databaseOpenFailed);
 
@@ -256,7 +256,7 @@ void StorageAreaSync::openDatabase(OpenDatabaseParamType openingStrategy)
     StorageTracker::tracker().cancelDeletingOrigin(m_databaseIdentifier);
 
     if (!m_database->open(databaseFilename)) {
-        LOG_ERROR("Failed to open database file %s for local storage", databaseFilename.utf8());
+        LOG_ERROR("Failed to open database file %s for local storage", makeUTF8CString(databaseFilename));
         markImported();
         m_databaseOpenFailed = true;
         return;
@@ -319,7 +319,7 @@ void StorageAreaSync::migrateItemTableIfNeeded()
 
 void StorageAreaSync::performImport()
 {
-    ASSERT(!isMainThread());
+    m_syncManager->assertIsCurrent();
     ASSERT(!m_database->isOpen());
 
     openDatabase(SkipIfNonExistent);
@@ -384,7 +384,7 @@ void StorageAreaSync::blockUntilImportComplete()
 
 void StorageAreaSync::sync(bool clearItems, const HashMap<String, String>& items)
 {
-    ASSERT(!isMainThread());
+    m_syncManager->assertIsCurrent();
 
     if (items.isEmpty() && !clearItems && !m_syncCloseDatabase)
         return;
@@ -466,7 +466,7 @@ void StorageAreaSync::sync(bool clearItems, const HashMap<String, String>& items
 
 void StorageAreaSync::performSync()
 {
-    ASSERT(!isMainThread());
+    m_syncManager->assertIsCurrent();
 
     bool clearItems;
     HashMap<String, String> items;
@@ -497,7 +497,7 @@ void StorageAreaSync::performSync()
 
 void StorageAreaSync::deleteEmptyDatabase()
 {
-    ASSERT(!isMainThread());
+    m_syncManager->assertIsCurrent();
     if (!m_database->isOpen())
         return;
 
@@ -527,7 +527,7 @@ void StorageAreaSync::deleteEmptyDatabase()
     } else {
         String databaseFilename = m_syncManager->fullDatabaseFilename(m_databaseIdentifier);
         if (!FileSystem::deleteFile(databaseFilename))
-            LOG_ERROR("Failed to delete database file %s\n", databaseFilename.utf8());
+            LOG_ERROR("Failed to delete database file %s\n", makeUTF8CString(databaseFilename));
     }
 }
 

@@ -122,7 +122,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(GPUProcessProxy);
 
 void GPUProcessProxy::keepProcessAliveTemporarily()
 {
-    ASSERT(isMainRunLoop());
+    RELEASE_ASSERT(isMainRunLoop());
     static constexpr auto durationToKeepGPUProcessAliveAfterDestruction = 1_min;
 
     if (!singleton())
@@ -137,7 +137,7 @@ void GPUProcessProxy::keepProcessAliveTemporarily()
 
 Ref<GPUProcessProxy> GPUProcessProxy::getOrCreate()
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
     if (auto& existingGPUProcess = singleton()) {
         ASSERT(existingGPUProcess->state() != State::Terminated);
         return *existingGPUProcess;
@@ -235,7 +235,12 @@ GPUProcessProxy::GPUProcessProxy()
 #endif
 
     // Initialize the GPU process.
-    sendWithAsyncReply(Messages::GPUProcess::InitializeGPUProcess(WTF::move(parameters)), [initializationActivityAndGrant = initializationActivityAndGrant()] { });
+    sendWithAsyncReply(Messages::GPUProcess::InitializeGPUProcess(WTF::move(parameters)), [weakThis = WeakPtr { *this }, initializationActivityAndGrant = initializationActivityAndGrant()](IPC::Connection* connection) {
+        if (!connection)
+            return;
+        if (RefPtr protectedThis = weakThis)
+            protectedThis->beginResponsivenessChecks();
+    });
 
 #if HAVE(AUDIO_COMPONENT_SERVER_REGISTRATIONS) && ENABLE(AUDIO_COMPONENT_SERVER_REGISTRATIONS_IN_GPU_PROCESS)
     auto registrations = fetchAudioComponentServerRegistrations();
@@ -400,7 +405,7 @@ static inline bool addTCCDSandboxExtension(Vector<SandboxExtension::Handle>& ext
 }
 #endif
 
-void GPUProcessProxy::updateSandboxAccess(bool allowAudioCapture, bool allowVideoCapture, bool allowDisplayCapture)
+void GPUProcessProxy::updateSandboxAccess(OptionSet<CaptureSandboxAccess> access)
 {
     if (m_useMockCaptureDevices)
         return;
@@ -408,19 +413,19 @@ void GPUProcessProxy::updateSandboxAccess(bool allowAudioCapture, bool allowVide
 #if PLATFORM(COCOA)
     Vector<SandboxExtension::Handle> extensions;
 
-    if (allowVideoCapture && !m_hasSentCameraSandboxExtension && addCameraSandboxExtensions(extensions))
+    if (access.contains(CaptureSandboxAccess::Video) && !m_hasSentCameraSandboxExtension && addCameraSandboxExtensions(extensions))
         m_hasSentCameraSandboxExtension = true;
 
-    if (allowAudioCapture && !m_hasSentMicrophoneSandboxExtension && addMicrophoneSandboxExtension(extensions))
+    if (access.contains(CaptureSandboxAccess::Audio) && !m_hasSentMicrophoneSandboxExtension && addMicrophoneSandboxExtension(extensions))
         m_hasSentMicrophoneSandboxExtension = true;
 
 #if HAVE(SCREEN_CAPTURE_KIT)
-    if (allowDisplayCapture && !m_hasSentDisplayCaptureSandboxExtension && addDisplayCaptureSandboxExtension(protect(connection())->getAuditToken(), extensions))
+    if (access.contains(CaptureSandboxAccess::Display) && !m_hasSentDisplayCaptureSandboxExtension && addDisplayCaptureSandboxExtension(protect(connection())->getAuditToken(), extensions))
         m_hasSentDisplayCaptureSandboxExtension = true;
 #endif
 
 #if PLATFORM(IOS) || PLATFORM(VISION)
-    if ((allowAudioCapture || allowVideoCapture) && !m_hasSentTCCDSandboxExtension && addTCCDSandboxExtension(extensions))
+    if (access.containsAny({ CaptureSandboxAccess::Audio, CaptureSandboxAccess::Video }) && !m_hasSentTCCDSandboxExtension && addTCCDSandboxExtension(extensions))
         m_hasSentTCCDSandboxExtension = true;
 #endif // PLATFORM(IOS) || PLATFORM(VISION)
 
@@ -434,7 +439,14 @@ void GPUProcessProxy::updateCaptureAccess(bool allowAudioCapture, bool allowVide
     if (allowAudioCapture)
         m_lastPageUsingMicrophone = pageIdentifier;
 
-    updateSandboxAccess(allowAudioCapture, allowVideoCapture, allowDisplayCapture);
+    OptionSet<CaptureSandboxAccess> access;
+    if (allowAudioCapture)
+        access.add(CaptureSandboxAccess::Audio);
+    if (allowVideoCapture)
+        access.add(CaptureSandboxAccess::Video);
+    if (allowDisplayCapture)
+        access.add(CaptureSandboxAccess::Display);
+    updateSandboxAccess(access);
     sendWithAsyncReply(Messages::GPUProcess::UpdateCaptureAccess { allowAudioCapture, allowVideoCapture, allowDisplayCapture, willUseEchoCancellation, processID }, WTF::move(completionHandler));
 }
 
@@ -505,6 +517,11 @@ void GPUProcessProxy::setShouldListenToVoiceActivity(const WebPageProxy& proxy, 
 void GPUProcessProxy::promptForGetDisplayMedia(WebCore::DisplayCapturePromptType type, CompletionHandler<void(std::optional<WebCore::CaptureDevice>)>&& completionHandler)
 {
     sendWithAsyncReply(Messages::GPUProcess::PromptForGetDisplayMedia { type }, WTF::move(completionHandler));
+}
+
+void GPUProcessProxy::selectWindowForCapture(uint32_t windowID, CompletionHandler<void(std::optional<WebCore::CaptureDevice>)>&& completionHandler)
+{
+    sendWithAsyncReply(Messages::GPUProcess::SelectWindowForCapture { windowID }, WTF::move(completionHandler));
 }
 
 void GPUProcessProxy::cancelGetDisplayMediaPrompt()
@@ -668,8 +685,6 @@ void GPUProcessProxy::didFinishLaunching(ProcessLauncher* launcher, IPC::Connect
     if (RefPtr networkProcess = NetworkProcessProxy::defaultNetworkProcess())
         networkProcess->sendXPCEndpointToProcess(*this);
 #endif
-
-    beginResponsivenessChecks();
 
     for (auto& processPool : WebProcessPool::allProcessPools())
         processPool->gpuProcessDidFinishLaunching(processID());

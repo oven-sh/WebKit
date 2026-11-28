@@ -34,8 +34,7 @@
 #include "StyleComputedStyle+GettersInlines.h"
 #include <wtf/TZoneMallocInlines.h>
 
-namespace WebCore {
-namespace Layout {
+namespace WebCore::Layout {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(LineBox);
 
@@ -43,7 +42,7 @@ LineBox::LineBox(const Box& rootLayoutBox, InlineLayoutUnit contentLogicalLeft, 
     : m_lineIndex(lineIndex)
     , m_isFirstFormattedLine(isFirstFormattedLine)
     , m_hasBlockEllipsisContentOnly(hasBlockEllipsisContentOnly)
-    , m_rootInlineBox(InlineLevelBox::createRootInlineBox(rootLayoutBox, isFirstFormattedLine ? rootLayoutBox.firstLineStyle() : rootLayoutBox.style(), contentLogicalLeft, contentLogicalWidth))
+    , m_rootInlineBox(InlineLevelBox::createRootInlineBox(rootLayoutBox, protect(isFirstFormattedLine ? rootLayoutBox.firstLineStyle() : rootLayoutBox.style()), contentLogicalLeft, contentLogicalWidth))
 {
     m_nonRootInlineLevelBoxList.reserveInitialCapacity(nonSpanningInlineLevelBoxCount);
     m_nonRootInlineLevelBoxMap.reserveInitialCapacity(nonSpanningInlineLevelBoxCount);
@@ -66,7 +65,8 @@ InlineRect LineBox::logicalRectForTextRun(const LineRun& run) const
     auto& metricsOfPrimaryFont = ancestorInlineBox->primarymetricsOfPrimaryFont();
     auto logicalHeight = metricsOfPrimaryFont.ascent() + metricsOfPrimaryFont.descent();
     CheckedRef textStyle = isFirstFormattedLine() ? run.layoutBox().firstLineStyle() : run.layoutBox().style();
-    if (auto& textMetrics = textStyle->fontCascade().metricsOfPrimaryFont(); &textMetrics != &metricsOfPrimaryFont) {
+    CheckedRef fontCascade = textStyle->fontCascade();
+    if (auto& textMetrics = fontCascade->metricsOfPrimaryFont(); &textMetrics != &metricsOfPrimaryFont) {
         // Text with a font of its own (in a display: contents element) sits on the baseline of its parent inline box.
         runlogicalTop += metricsOfPrimaryFont.ascent(m_baselineType) - textMetrics.ascent(m_baselineType);
         logicalHeight = textMetrics.ascent() + textMetrics.descent();
@@ -147,6 +147,4 @@ InlineRect LineBox::logicalContentBoxForInlineBox(const Box& layoutBox) const
     return logicalRectForInlineLevelBox(layoutBox);
 }
 
-} // namespace Layout
-} // namespace WebCore
-
+} // namespace WebCore::Layout

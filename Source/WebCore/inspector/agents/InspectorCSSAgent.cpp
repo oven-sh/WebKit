@@ -717,11 +717,14 @@ Inspector::Protocol::ErrorStringOr<Ref<Inspector::Protocol::CSS::CSSRule>> Inspe
 
     auto action = makeUnique<AddRuleAction>(inspectorStyleSheet, selector);
     auto& rawAction = *action;
-    auto performResult = domAgent->history()->perform(WTF::move(action));
+    InspectorCSSId newRuleId;
+    auto performResult = domAgent->history()->perform(WTF::move(action), [&] {
+        newRuleId = rawAction.newRuleId();
+    });
     if (performResult.hasException())
         return makeUnexpected(InspectorDOMAgent::toErrorString(performResult.releaseException()));
 
-    auto rule = inspectorStyleSheet->buildObjectForRule(protect(inspectorStyleSheet->ruleForId(rawAction.newRuleId())));
+    auto rule = inspectorStyleSheet->buildObjectForRule(protect(inspectorStyleSheet->ruleForId(newRuleId)));
     if (!rule)
         return makeUnexpected("Internal error: missing style sheet"_s);
 
@@ -798,7 +801,7 @@ Inspector::Protocol::ErrorStringOr<Ref<JSON::ArrayOf<Inspector::Protocol::CSS::C
     return cssProperties;
 }
 
-Inspector::Protocol::ErrorStringOr<Ref<JSON::ArrayOf<String>>> InspectorCSSAgent::getSupportedSystemFontFamilyNames()
+Ref<JSON::ArrayOf<String>> InspectorCSSAgent::systemFontFamilyNames()
 {
     auto fontFamilyNames = JSON::ArrayOf<String>::create();
 
@@ -807,6 +810,11 @@ Inspector::Protocol::ErrorStringOr<Ref<JSON::ArrayOf<String>>> InspectorCSSAgent
         fontFamilyNames->addItem(familyName);
 
     return fontFamilyNames;
+}
+
+Inspector::Protocol::ErrorStringOr<Ref<JSON::ArrayOf<String>>> InspectorCSSAgent::getSupportedSystemFontFamilyNames()
+{
+    return systemFontFamilyNames();
 }
 
 Inspector::Protocol::ErrorStringOr<void> InspectorCSSAgent::forcePseudoState(Inspector::Protocol::DOM::NodeId nodeId, Ref<JSON::Array>&& forcedPseudoClasses)

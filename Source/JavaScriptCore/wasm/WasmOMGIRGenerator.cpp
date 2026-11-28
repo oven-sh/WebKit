@@ -1220,9 +1220,9 @@ private:
     Vector<UnlinkedWasmToWasmCall>& m_unlinkedWasmToWasmCalls; // List each call site and the function index whose address it should be patched with.
     FixedBitVector& m_directCallees; // Note this includes call targets from functions we inline.
     unsigned* m_osrEntryScratchBufferSize;
-    UncheckedKeyHashMap<ValueKey, Value*> m_constantPool;
-    UncheckedKeyHashMap<const RTT*, B3::Type> m_tupleMap;
-    UncheckedKeyHashMap<const RTT*, B3::Type> m_tupleWithPassedGlobalMap;
+    HashMap<ValueKey, Value*> m_constantPool;
+    HashMap<const RTT*, B3::Type> m_tupleMap;
+    HashMap<const RTT*, B3::Type> m_tupleWithPassedGlobalMap;
     B3::Type m_int64PairTupleType { };
     InsertionSet m_constantInsertionValues;
     // Indexed by local. Entries are restored at the end of the scope that proved them.
@@ -1281,7 +1281,7 @@ private:
     StackMaps m_stackmaps;
     Vector<UnlinkedHandlerInfo> m_exceptionHandlers;
 
-    RefPtr<B3::Air::PrologueGenerator> m_prologueGenerator;
+    const RefPtr<B3::Air::PrologueGenerator> m_prologueGenerator;
 
     Vector<std::unique_ptr<OMGIRGenerator>> m_protectedInlineeGenerators;
     Vector<std::unique_ptr<FunctionParser<OMGIRGenerator>>> m_protectedInlineeParsers;
@@ -1520,7 +1520,7 @@ OMGIRGenerator::OMGIRGenerator(AbstractHeapRepository& heaps, CompilationContext
         }
     }
 
-    m_prologueGenerator = createSharedTask<B3::Air::PrologueGeneratorFunction>([=, this](CCallHelpers& jit, B3::Air::Code& code, B3::Air::GenerationContext& context) {
+    lazyInitialize(m_prologueGenerator, createSharedTask<B3::Air::PrologueGeneratorFunction>([=, this](CCallHelpers& jit, B3::Air::Code& code, B3::Air::GenerationContext& context) {
         RELEASE_ASSERT(m_callee);
         AllowMacroScratchRegisterUsage allowScratch(jit);
 
@@ -1536,7 +1536,7 @@ OMGIRGenerator::OMGIRGenerator(AbstractHeapRepository& heaps, CompilationContext
             emitDirectEntry(jit, context);
         if (!emitsShrinkWrappedFrame())
             storeInstanceAndCallee(jit, wasmCallingConvention().prologueScratchGPRs[0]);
-    });
+    }));
     if (m_context.codeForImage && m_context.codeForImage->passedGlobal && emitsShrinkWrappedFrame()) {
         m_passedGlobal = m_proc.addVariable(Int32);
         m_isResumable = isResumable(m_info, FunctionCodeIndex(m_functionIndex), *m_context.codeForImage->passedGlobal);
@@ -2871,7 +2871,7 @@ void OMGIRGenerator::emitMemoryFill(Value* dstAddressValue, Value* targetValue, 
         });
 
         m_currentBlock->appendNew<BulkMemoryValue>(
-            m_proc, MemoryFill, origin(),
+            m_proc, MemoryFill8, origin(),
             m_currentBlock->appendNew<WasmAddressValue>(m_proc, origin(), dstAddressValue, GPRInfo::wasmBaseMemoryPointer),
             targetValue,
             countValue);
@@ -4803,76 +4803,19 @@ auto OMGIRGenerator::addArrayLen(TypedExpression arrayref, ExpressionType& resul
     return { };
 }
 
-static std::optional<uint8_t> repeatedFillByte(Value* value, size_t elementSize)
-{
-    ASSERT(elementSize <= sizeof(uint64_t));
-    uint64_t bits;
-    if (value->hasInt())
-        bits = value->asInt();
-    else if (value->hasFloat())
-        bits = std::bit_cast<uint32_t>(value->asFloat());
-    else if (value->hasDouble())
-        bits = std::bit_cast<uint64_t>(value->asDouble());
-    else
-        return std::nullopt;
-
-    uint8_t byte = bits & 0xff;
-    for (size_t i = 1; i < elementSize; ++i) {
-        if (((bits >> (i * 8)) & 0xff) != byte)
-            return std::nullopt;
-    }
-    return byte;
-}
-
 void OMGIRGenerator::emitArrayFillRange(StorageType elementType, Value* array, Value* offsetValue, Value* valueValue, Value* sizeValue)
 {
-    size_t elementSize = elementType.elementSize();
     Value* address = emitArrayElementAddress(elementType, array, offsetValue);
     Value* count = pointerOfInt32(sizeValue);
 
-    if (isRefType(elementType.unpacked())) {
-        callWasmOperation(m_currentBlock, B3::Void, operationWasmArrayFillRefs, address, valueValue, count);
+    Value* pattern = valueValue;
+    if (pattern->type().isFloat())
+        pattern = m_currentBlock->appendNew<Value>(m_proc, BitwiseCast, origin(), pattern);
+
+    bool isRef = isRefType(elementType.unpacked());
+    m_currentBlock->appendNew<BulkMemoryValue>(m_proc, memoryFillOpcode(widthForBytes(elementType.elementSize())), origin(), address, pattern, count, isRef);
+    if (isRef)
         emitWriteBarrier(pointerOfWasmRef(array));
-        return;
-    }
-
-    if (elementType.unpacked().isV128()) {
-        Value* lane0 = m_currentBlock->appendNew<SIMDValue>(m_proc, origin(), B3::VectorExtractLane, B3::Int64, SIMDLane::i64x2, SIMDSignMode::None, uint8_t { 0 }, valueValue);
-        Value* lane1 = m_currentBlock->appendNew<SIMDValue>(m_proc, origin(), B3::VectorExtractLane, B3::Int64, SIMDLane::i64x2, SIMDSignMode::None, uint8_t { 1 }, valueValue);
-        callWasmOperation(m_currentBlock, B3::Void, operationWasmArrayFill16B, address, lane0, lane1, count);
-        return;
-    }
-
-    if (elementSize == 1) {
-        m_currentBlock->appendNew<BulkMemoryValue>(m_proc, MemoryFill, origin(), address, valueValue, count);
-        return;
-    }
-
-    if (auto fillByte = repeatedFillByte(valueValue, elementSize)) {
-        m_currentBlock->appendNew<BulkMemoryValue>(m_proc, MemoryFill, origin(), address, constant(Int32, *fillByte),
-            m_currentBlock->appendNew<Value>(m_proc, Mul, origin(), count,
-                m_currentBlock->appendNew<ConstPtrValue>(m_proc, origin(), elementSize)));
-        return;
-    }
-
-    Value* bits = valueValue;
-    if (bits->type().isFloat())
-        bits = m_currentBlock->appendNew<Value>(m_proc, BitwiseCast, origin(), bits);
-    if (bits->type() == Int32)
-        bits = m_currentBlock->appendNew<Value>(m_proc, ZExt32, origin(), bits);
-
-    switch (elementSize) {
-    case 2:
-        callWasmOperation(m_currentBlock, B3::Void, operationWasmArrayFill2B, address, bits, count);
-        return;
-    case 4:
-        callWasmOperation(m_currentBlock, B3::Void, operationWasmArrayFill4B, address, bits, count);
-        return;
-    case 8:
-        callWasmOperation(m_currentBlock, B3::Void, operationWasmArrayFill8B, address, bits, count);
-        return;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
 }
 
 auto OMGIRGenerator::addArrayFill(TypeSignatureIndex typeIndex, TypedExpression arrayref, ExpressionType offset, ExpressionType value, ExpressionType size) -> PartialResult

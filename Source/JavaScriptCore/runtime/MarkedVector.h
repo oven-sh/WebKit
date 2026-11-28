@@ -21,6 +21,7 @@
 
 #pragma once
 
+#include <JavaScriptCore/GCConductor.h>
 #include <JavaScriptCore/VM.h>
 #include <wtf/CheckedArithmetic.h>
 #include <wtf/ForbidHeapAllocation.h>
@@ -79,7 +80,7 @@ class alignas(alignof(EncodedJSValue)) MarkedVectorBase {
 protected:
     enum class Status { Success, Overflowed };
 public:
-    typedef UncheckedKeyHashSet<MarkedVectorBase*> ListSet;
+    typedef HashSet<MarkedVectorBase*> ListSet;
 
     ~MarkedVectorBase()
     {
@@ -101,7 +102,7 @@ public:
         m_size = newSize;
     }
 
-    template<typename Visitor> static void markLists(Visitor&, ListSet&);
+    template<typename Visitor> static void markLists(Visitor&, ListSet&) WTF_REQUIRES_SHARED_CAPABILITY(markerWithWorldStoppedRole);
 
     void overflowCheckNotNeeded() { clearNeedsOverflowCheck(); }
 

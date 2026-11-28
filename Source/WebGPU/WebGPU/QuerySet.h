@@ -25,6 +25,10 @@
 
 #pragma once
 
+#if !__has_feature(objc_arc)
+#error This header requires ARC. Include it only from files compiled with -fobjc-arc.
+#endif
+
 #import "BindableResource.h"
 #import <WebGPU/WebGPU.h>
 #import <WebGPU/WebGPUCpp.h>
@@ -77,9 +81,9 @@ public:
     NODELETE void setOverrideLocation(QuerySet& otherQuerySet, uint32_t beginningOfPassIndex, uint32_t endOfPassIndex);
 
     Device& device() const { return m_device; }
-    uint32_t count() const { return m_count; }
+    NODELETE uint32_t count() const final { return m_count; }
     // std::nullopt only for invalid query sets.
-    std::optional<WebGPU::QueryType> type() const { return m_type; }
+    std::optional<WebGPU::QueryType> type() const final { return m_type; }
     id<MTLBuffer> visibilityBuffer() const { return m_visibilityBuffer; }
     NODELETE CounterSampleBuffer counterSampleBufferWithOffset() const;
 

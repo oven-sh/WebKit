@@ -146,7 +146,6 @@
 #include <WebCore/ParentalControlsURLFilter.h>
 #endif
 
-
 #if HAVE(BROWSERENGINEKIT_WEBCONTENTFILTER)
 #include "WebParentalControlsURLFilter.h"
 #endif
@@ -203,9 +202,6 @@ NetworkProcess::NetworkProcess()
 #if ENABLE(LEGACY_CUSTOM_PROTOCOL_MANAGER)
     addSupplementWithoutRefCountedCheck<LegacyCustomProtocolManager>();
 #endif
-#if PLATFORM(COCOA) && ENABLE(LEGACY_CUSTOM_PROTOCOL_MANAGER)
-    LegacyCustomProtocolManager::networkProcessCreated(*this);
-#endif
 
     NetworkStateNotifier::singleton().addListener([weakThis = WeakPtr { *this }](bool isOnLine) {
         if (!weakThis)
@@ -216,6 +212,137 @@ NetworkProcess::NetworkProcess()
 }
 
 NetworkProcess::~NetworkProcess() = default;
+
+// https://fetch.spec.whatwg.org/#get-the-available-deferred-fetch-quota
+static constexpr uint64_t maximumDeferredFetchQuota = 640 * 1024;
+static constexpr uint64_t deferredFetchQuotaReservedForMinimal = 128 * 1024;
+static constexpr uint64_t normalDeferredFetchQuotaPool = maximumDeferredFetchQuota - deferredFetchQuotaReservedForMinimal;
+static constexpr uint64_t normalDeferredFetchReservation = 64 * 1024;
+static constexpr uint64_t minimalDeferredFetchReservation = 8 * 1024;
+static constexpr uint64_t perRequestOriginDeferredFetchQuota = 64 * 1024;
+
+std::pair<std::optional<WebCore::DeferredFetchIdentifier>, uint64_t> NetworkProcess::reserveDeferredFetchQuota(WebPageProxyIdentifier pageIdentifier, FrameIdentifier controlFrameIdentifier, const SecurityOriginData& reportingOrigin, uint64_t maximumQuota, bool isTopLevelControlFrame, uint64_t requestedBytes)
+{
+    if (!maximumQuota)
+        return { std::nullopt, 0 };
+
+    auto& page = m_deferredFetchQuotas.ensure(pageIdentifier, [] {
+        return DeferredFetchPageQuota { };
+    }).iterator->value;
+
+    // FIXME: The spec reserves a container's quota when the container navigates, and frees
+    // it on a same-origin or away navigation. We reserve on the first fetchLater() call from
+    // a control frame instead, so a container that never calls fetchLater() does not consume
+    // its parent's quota.
+    auto controlFrameIterator = page.controlFrames.find(controlFrameIdentifier);
+    if (controlFrameIterator == page.controlFrames.end()) {
+        // The control frame has no reservation yet, so take one from the pool its policy
+        // entitles it to. A container that cannot be given its full reservation gets
+        // nothing, which is also what caps the minimal pool at sixteen containers.
+        DeferredFetchControlFrameQuota reservation;
+        reservation.isTopLevel = isTopLevelControlFrame;
+        if (isTopLevelControlFrame) {
+            reservation.reservedBytes = std::min(maximumQuota, normalDeferredFetchQuotaPool);
+            if (maximumQuota > normalDeferredFetchQuotaPool) {
+                // deferred-fetch-minimal is disallowed, so nothing needs setting aside for
+                // containers and the whole 640 KiB is available here.
+                reservation.reservedBytes = std::min(maximumQuota, maximumDeferredFetchQuota - page.minimalPoolBytesReserved);
+            }
+        } else if (maximumQuota >= normalDeferredFetchReservation) {
+            if (page.normalPoolBytesReserved + normalDeferredFetchReservation > normalDeferredFetchQuotaPool)
+                return { std::nullopt, 0 };
+            reservation.reservedBytes = normalDeferredFetchReservation;
+            page.normalPoolBytesReserved += normalDeferredFetchReservation;
+        } else {
+            if (page.minimalPoolBytesReserved + minimalDeferredFetchReservation > deferredFetchQuotaReservedForMinimal)
+                return { std::nullopt, 0 };
+            reservation.reservedBytes = minimalDeferredFetchReservation;
+            reservation.isMinimal = true;
+            page.minimalPoolBytesReserved += minimalDeferredFetchReservation;
+        }
+        controlFrameIterator = page.controlFrames.add(controlFrameIdentifier, WTF::move(reservation)).iterator;
+    }
+
+    auto& controlFrame = controlFrameIterator->value;
+    // The top-level control frame draws from whatever the containers have not reserved.
+    auto reservedBytes = controlFrame.reservedBytes;
+    if (isTopLevelControlFrame) {
+        reservedBytes = reservedBytes > page.normalPoolBytesReserved ? reservedBytes - page.normalPoolBytesReserved : 0;
+        reservedBytes = std::min(reservedBytes, maximumQuota);
+    }
+
+    auto originBytesUsed = controlFrame.bytesUsedByOrigin.get(reportingOrigin);
+    auto availableForOrigin = originBytesUsed >= perRequestOriginDeferredFetchQuota ? 0 : perRequestOriginDeferredFetchQuota - originBytesUsed;
+    auto availableInReservation = controlFrame.totalBytesUsed >= reservedBytes ? 0 : reservedBytes - controlFrame.totalBytesUsed;
+    auto availableBytes = std::min(availableForOrigin, availableInReservation);
+    if (requestedBytes > availableBytes) {
+        releaseDeferredFetchControlFrameIfUnused(pageIdentifier, controlFrameIdentifier);
+        return { std::nullopt, availableBytes };
+    }
+
+    auto identifier = WebCore::DeferredFetchIdentifier::generate();
+    controlFrame.bytesUsedByOrigin.add(reportingOrigin, 0).iterator->value += requestedBytes;
+    controlFrame.totalBytesUsed += requestedBytes;
+    m_deferredFetchQuotaReservations.add(identifier, DeferredFetchQuotaReservation { pageIdentifier, controlFrameIdentifier, reportingOrigin, requestedBytes });
+    return { identifier, availableBytes };
+}
+
+void NetworkProcess::releaseDeferredFetchControlFrameIfUnused(WebPageProxyIdentifier pageIdentifier, FrameIdentifier controlFrameIdentifier)
+{
+    auto pageIterator = m_deferredFetchQuotas.find(pageIdentifier);
+    if (pageIterator == m_deferredFetchQuotas.end())
+        return;
+
+    auto& page = pageIterator->value;
+    auto controlFrameIterator = page.controlFrames.find(controlFrameIdentifier);
+    if (controlFrameIterator == page.controlFrames.end() || controlFrameIterator->value.totalBytesUsed)
+        return;
+
+    // Only a container took its reservation from one of the pools. The top-level control
+    // frame draws from what the containers have left, so it has nothing to give back.
+    auto& controlFrame = controlFrameIterator->value;
+    if (controlFrame.isMinimal) {
+        RELEASE_ASSERT(page.minimalPoolBytesReserved >= controlFrame.reservedBytes);
+        page.minimalPoolBytesReserved -= controlFrame.reservedBytes;
+    } else if (!controlFrame.isTopLevel) {
+        RELEASE_ASSERT(page.normalPoolBytesReserved >= controlFrame.reservedBytes);
+        page.normalPoolBytesReserved -= controlFrame.reservedBytes;
+    }
+    page.controlFrames.remove(controlFrameIterator);
+
+    if (page.controlFrames.isEmpty())
+        m_deferredFetchQuotas.remove(pageIterator);
+}
+
+void NetworkProcess::releaseDeferredFetchQuota(WebCore::DeferredFetchIdentifier identifier)
+{
+    auto reservationIterator = m_deferredFetchQuotaReservations.find(identifier);
+    if (reservationIterator == m_deferredFetchQuotaReservations.end())
+        return;
+    auto reservation = WTF::move(reservationIterator->value);
+    m_deferredFetchQuotaReservations.remove(reservationIterator);
+
+    auto pageIterator = m_deferredFetchQuotas.find(reservation.pageIdentifier);
+    if (pageIterator == m_deferredFetchQuotas.end())
+        return;
+
+    auto controlFrameIterator = pageIterator->value.controlFrames.find(reservation.controlFrameIdentifier);
+    if (controlFrameIterator == pageIterator->value.controlFrames.end())
+        return;
+
+    auto& controlFrame = controlFrameIterator->value;
+    auto originIterator = controlFrame.bytesUsedByOrigin.find(reservation.reportingOrigin);
+    if (originIterator != controlFrame.bytesUsedByOrigin.end()) {
+        RELEASE_ASSERT(originIterator->value >= reservation.bytes);
+        originIterator->value -= reservation.bytes;
+        if (!originIterator->value)
+            controlFrame.bytesUsedByOrigin.remove(originIterator);
+    }
+    RELEASE_ASSERT(controlFrame.totalBytesUsed >= reservation.bytes);
+    controlFrame.totalBytesUsed -= reservation.bytes;
+
+    releaseDeferredFetchControlFrameIfUnused(reservation.pageIdentifier, reservation.controlFrameIdentifier);
+}
 
 AuthenticationManager& NetworkProcess::authenticationManager()
 {
@@ -413,13 +540,15 @@ void NetworkProcess::createNetworkConnectionToWebProcess(ProcessIdentifier ident
         return;
     }
 
-    auto& [currentLoadedWebArchive, currentDomains] = m_allowedFirstPartiesForCookies.ensure(identifier, [&] {
-        return std::make_pair(parameters.loadedWebArchive, HashSet<RegistrableDomain> { });
+    auto& allowedFirstParties = m_allowedFirstPartiesForCookies.ensure(identifier, [&] {
+        return AllowedFirstParties { parameters.loadedWebArchive, { }, { } };
     }).iterator->value;
     if (parameters.loadedWebArchive == LoadedWebArchive::Yes)
-        currentLoadedWebArchive = LoadedWebArchive::Yes;
-    for (auto& domain : parameters.allowedFirstPartiesForCookies)
-        currentDomains.add(domain);
+        allowedFirstParties.loadedWebArchive = LoadedWebArchive::Yes;
+    for (auto& site : parameters.allowedFirstPartiesForCookies) {
+        allowedFirstParties.domains.add(site.domain());
+        allowedFirstParties.sites.add(site);
+    }
 
     auto newConnection = NetworkConnectionToWebProcess::create(identifier, sessionID, WTF::move(parameters), WTF::move(connectionIdentifiers->server));
     Ref connection = newConnection;
@@ -460,10 +589,10 @@ void NetworkProcess::createNetworkConnectionToWebProcess(ProcessIdentifier ident
         std::optional<HashSet<WebCore::RegistrableDomain>> allowedSites = HashSet<WebCore::RegistrableDomain> { };
         auto iter = m_allowedFirstPartiesForCookies.find(identifier);
         if (iter != m_allowedFirstPartiesForCookies.end()) {
-            if (iter->value.first == LoadedWebArchive::Yes)
+            if (iter->value.loadedWebArchive == LoadedWebArchive::Yes)
                 allowedSites = std::nullopt; // All sites.
             else
-                allowedSites = iter->value.second;
+                allowedSites = iter->value.domains;
         }
         session->storageManager().startReceivingMessageFromConnection(connection->connection(), WTF::move(allowedSites), connection->sharedPreferencesForWebProcessValue());
     }
@@ -486,14 +615,31 @@ void NetworkProcess::isSecurityFlagEnabledForTesting(const String& flagName, Com
     completionHandler(securityFlags().isFlagEnabledNamedForTesting(flagName));
 }
 
-void NetworkProcess::addAllowedFirstPartyForCookies(WebCore::ProcessIdentifier processIdentifier, WebCore::RegistrableDomain&& firstPartyForCookies, LoadedWebArchive loadedWebArchive, CompletionHandler<void()>&& completionHandler)
+void NetworkProcess::addAllowedFirstPartyForCookies(WebCore::ProcessIdentifier processIdentifier, WebCore::Site&& firstPartyForCookies, LoadedWebArchive loadedWebArchive, CompletionHandler<void()>&& completionHandler)
 {
-    if (!HashSet<WebCore::RegistrableDomain>::isValidValue(firstPartyForCookies))
+    // Record every site that has a real scheme. Site::isEmpty() is not the test to use here: it reports the
+    // registrable domain, which RegistrableDomain sets to "nullOrigin" for any empty host, so it is true for a
+    // file: or custom-scheme first party as well as for an opaque one. Site::protocol() is empty only for the
+    // invalidProtocol sentinel an opaque origin collapses to, which is the one case worth dropping.
+    if (!firstPartyForCookies.protocol().isEmpty()) {
+        m_allowedFirstPartiesForCookies.ensure(processIdentifier, [] {
+            return AllowedFirstParties { };
+        }).iterator->value.sites.add(firstPartyForCookies);
+    }
+
+    addAllowedFirstPartyDomainForCookies(processIdentifier, WebCore::RegistrableDomain { firstPartyForCookies.domain() }, loadedWebArchive, WTF::move(completionHandler));
+}
+
+void NetworkProcess::addAllowedFirstPartyDomainForCookies(WebCore::ProcessIdentifier processIdentifier, WebCore::RegistrableDomain&& firstPartyForCookies, LoadedWebArchive loadedWebArchive, CompletionHandler<void()>&& completionHandler)
+{
+    if (firstPartyForCookies.string().isNull())
         return completionHandler();
 
-    auto& [currentLoadedWebArchive, currentDomains] = m_allowedFirstPartiesForCookies.ensure(processIdentifier, [] {
-        return std::make_pair(LoadedWebArchive::No, HashSet<RegistrableDomain> { });
+    auto& allowedFirstParties = m_allowedFirstPartiesForCookies.ensure(processIdentifier, [] {
+        return AllowedFirstParties { };
     }).iterator->value;
+    auto& currentLoadedWebArchive = allowedFirstParties.loadedWebArchive;
+    auto& currentDomains = allowedFirstParties.domains;
 
     auto updateConnectionAllowedSitesForStorage = [&](auto& allowedSites) {
         auto iter = m_webProcessConnections.find(processIdentifier);
@@ -514,47 +660,35 @@ void NetworkProcess::addAllowedFirstPartyForCookies(WebCore::ProcessIdentifier p
     completionHandler();
 }
 
-auto NetworkProcess::allowsFirstPartyForCookies(WebCore::ProcessIdentifier processIdentifier, const URL& firstParty) -> AllowCookieAccess
+bool NetworkProcess::allowsFirstPartyForCookies(WebCore::ProcessIdentifier processIdentifier, const URL& firstParty)
 {
-    auto allowCookieAccess = allowsFirstPartyForCookies(processIdentifier, RegistrableDomain { firstParty });
-    if (allowCookieAccess == NetworkProcess::AllowCookieAccess::Terminate) {
-        // FIXME: This should probably not be necessary. If about:blank is the first party for cookies,
-        // we should set it to be the inherited origin then remove this exception.
-        if (firstParty.isAboutBlank())
-            return AllowCookieAccess::Disallow;
-
-        if (firstParty.isNull())
-            return AllowCookieAccess::Disallow; // FIXME: This shouldn't be allowed.
-    }
-
-    return allowCookieAccess;
+    return allowsFirstPartyForCookies(processIdentifier, RegistrableDomain { firstParty });
 }
 
-auto NetworkProcess::allowsFirstPartyForCookies(WebCore::ProcessIdentifier processIdentifier, const RegistrableDomain& firstPartyDomain) -> AllowCookieAccess
+// This returns false only if the web process is not permitted to use the domain, which is a security violation.
+// An empty domain (such as about:blank) is permitted, but cookie use with it is disallowed.
+bool NetworkProcess::allowsFirstPartyForCookies(WebCore::ProcessIdentifier processIdentifier, const RegistrableDomain& firstPartyDomain)
 {
-    // FIXME: This shouldn't be needed but it is hit sometimes at least with PDFs.
-    auto terminateOrDisallow = firstPartyDomain.isEmpty() ? AllowCookieAccess::Disallow : AllowCookieAccess::Terminate;
-    if (!decltype(m_allowedFirstPartiesForCookies)::isValidKey(processIdentifier)) {
-        ASSERT_NOT_REACHED();
-        return terminateOrDisallow;
-    }
+    if (firstPartyDomain.isEmpty())
+        return true;
 
     auto iterator = m_allowedFirstPartiesForCookies.find(processIdentifier);
     if (iterator == m_allowedFirstPartiesForCookies.end()) {
         ASSERT_NOT_REACHED();
-        return terminateOrDisallow;
+        return false;
     }
 
-    if (iterator->value.first == LoadedWebArchive::Yes)
-        return AllowCookieAccess::Allow;
+    if (iterator->value.loadedWebArchive == LoadedWebArchive::Yes)
+        return true;
 
-    auto& set = iterator->value.second;
-    if (!std::remove_reference_t<decltype(set)>::isValidValue(firstPartyDomain)) {
-        ASSERT_NOT_REACHED();
-        return terminateOrDisallow;
-    }
+    auto& set = iterator->value.domains;
+    return set.contains(firstPartyDomain);
+}
 
-    return set.contains(firstPartyDomain) ? AllowCookieAccess::Allow : terminateOrDisallow;
+bool NetworkProcess::hostsDomain(WebCore::ProcessIdentifier processIdentifier, const RegistrableDomain& domain) const
+{
+    RefPtr connection = webProcessConnection(processIdentifier);
+    return connection && connection->hostsDomain(domain);
 }
 
 // Dropped when the connection does not exist yet: NetworkProcessConnectionParameters carries the current value.
@@ -564,12 +698,26 @@ void NetworkProcess::setHostedDomains(WebCore::ProcessIdentifier processIdentifi
         connection->setHostedDomains(WTF::move(domains));
 }
 
+bool NetworkProcess::allowsFirstPartySite(WebCore::ProcessIdentifier processIdentifier, const WebCore::Site& site) const
+{
+    auto iterator = m_allowedFirstPartiesForCookies.find(processIdentifier);
+    if (iterator == m_allowedFirstPartiesForCookies.end())
+        return false;
+
+    if (iterator->value.loadedWebArchive == LoadedWebArchive::Yes)
+        return true;
+
+    auto& sites = iterator->value.sites;
+    if (sites.contains(site))
+        return true;
+
+    // The web content process may upgrade an http navigation to https (HTTPS-by-default, content
+    // blocker make-https) after the UI process recorded the http site of the navigation request.
+    return site.protocol() == "https"_s && sites.contains(WebCore::Site { String { "http"_s }, WebCore::RegistrableDomain { site.domain() } });
+}
+
 void NetworkProcess::addAllowedWebPageProxyIdentifier(WebCore::ProcessIdentifier processIdentifier, WebPageProxyIdentifier pageID)
 {
-    if (!HashSet<WebPageProxyIdentifier>::isValidValue(pageID)) {
-        ASSERT_NOT_REACHED();
-        return;
-    }
     m_allowedWebPageProxyIdentifiers.ensure(processIdentifier, [] {
         return HashSet<WebPageProxyIdentifier> { };
     }).iterator->value.add(pageID);
@@ -581,8 +729,6 @@ bool NetworkProcess::allowsWebPageProxyIdentifier(WebCore::ProcessIdentifier pro
     // there is nothing to validate; let it through and let the endpoint handle the absent page itself.
     if (!pageID)
         return true;
-    if (!decltype(m_allowedWebPageProxyIdentifiers)::isValidKey(processIdentifier) || !HashSet<WebPageProxyIdentifier>::isValidValue(*pageID))
-        return false;
     auto iterator = m_allowedWebPageProxyIdentifiers.find(processIdentifier);
     if (iterator == m_allowedWebPageProxyIdentifiers.end())
         return false;
@@ -732,7 +878,7 @@ void NetworkProcess::addWebsiteDataStore(WebsiteDataStoreParameters&& parameters
 #endif
 
     auto& session = m_networkSessions.ensure(sessionID, [&]() {
-        return NetworkSession::create(*this, parameters.networkSessionParameters);
+        return NetworkSession::create(parameters.networkSessionParameters);
     }).iterator->value;
 
     if (m_isSuspended)
@@ -781,24 +927,24 @@ void NetworkProcess::forEachNetworkStorageSession(NOESCAPE const Function<void(N
 
 NetworkSession* NetworkProcess::networkSession(PAL::SessionID sessionID) const
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
     return m_networkSessions.get(sessionID);
 }
 
 void NetworkProcess::setSession(PAL::SessionID sessionID, std::unique_ptr<NetworkSession>&& session)
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
     m_networkSessions.set(sessionID, WTF::move(session));
 }
 
 void NetworkProcess::destroySession(PAL::SessionID sessionID, CompletionHandler<void()>&& completionHandler)
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
 
     if (auto session = m_networkSessions.take(sessionID)) {
         auto dataStoreIdentifier = session->dataStoreIdentifier();
         UNUSED_PARAM(dataStoreIdentifier);
-        RELEASE_LOG(Storage, "%p - NetworkProcess::destroySession sessionID=%" PRIu64 " identifier=%" PUBLIC_LOG_STRING, this, sessionID.toUInt64(), dataStoreIdentifier ? dataStoreIdentifier->toString().utf8() : "null"_s);
+        RELEASE_LOG(Storage, "%p - NetworkProcess::destroySession sessionID=%" PRIu64 " identifier=%" PUBLIC_LOG_STRING, this, sessionID.toUInt64(), dataStoreIdentifier ? makeUTF8CString(dataStoreIdentifier->toString()) : "null"_s);
         session->invalidateAndCancel();
         Ref storageManager = session->storageManager();
         m_closingStorageManagers.add(storageManager.copyRef());
@@ -816,10 +962,10 @@ void NetworkProcess::destroySession(PAL::SessionID sessionID, CompletionHandler<
 
 void NetworkProcess::ensureSessionWithDataStoreIdentifierRemoved(WTF::UUID identifier, CompletionHandler<void()>&& completionHandler)
 {
-    RELEASE_LOG(Storage, "%p - NetworkProcess::ensureSessionWithDataStoreIdentifierRemoved identifier=%" PUBLIC_LOG_STRING, this, identifier.toString().utf8());
+    RELEASE_LOG(Storage, "%p - NetworkProcess::ensureSessionWithDataStoreIdentifierRemoved identifier=%" PUBLIC_LOG_STRING, this, makeUTF8CString(identifier.toString()));
     for (auto& session : m_networkSessions.values()) {
         if (session->dataStoreIdentifier() == identifier)
-            RELEASE_LOG_ERROR(Storage, "NetworkProcess::ensureSessionWithDataStoreIdentifierRemoved session still exists for identifier %" PUBLIC_LOG_STRING, identifier.toString().utf8());
+            RELEASE_LOG_ERROR(Storage, "NetworkProcess::ensureSessionWithDataStoreIdentifierRemoved session still exists for identifier %" PUBLIC_LOG_STRING, makeUTF8CString(identifier.toString()));
     }
 
     completionHandler();
@@ -1748,7 +1894,6 @@ bool NetworkProcess::isEnhancedSecurityLinksEnabled() const
 }
 #endif // HAVE(ENHANCED_SECURITY_LINKS)
 
-
 void NetworkProcess::notifyMediaStreamingActivity(bool activity)
 {
 #if PLATFORM(COCOA)
@@ -2607,6 +2752,22 @@ void NetworkProcess::findPendingDownloadLocation(NetworkDataTask& networkDataTas
 {
     String suggestedFilename = networkDataTask.suggestedFilename();
 
+    // Some downloads might already have a destination.
+    // e.g. A download the client attempted to resume, but we decided to force it to restart instead.
+    // Skip the destination deciding callback in those cases.
+    if (!networkDataTask.pendingDownloadLocation().isEmpty()) {
+        auto downloadID = *networkDataTask.pendingDownloadID();
+        Ref protectedTask = networkDataTask;
+        completionHandler(PolicyAction::Download);
+        if (protectedTask->state() == NetworkDataTask::State::Canceling || protectedTask->state() == NetworkDataTask::State::Completed)
+            return;
+        CheckedRef downloadManager = this->downloadManager();
+        if (downloadManager->download(downloadID))
+            return;
+        downloadManager->downloadDestinationDecided(downloadID, WTF::move(protectedTask));
+        return;
+    }
+
     RefPtr connection = downloadProxyConnection();
     if (!connection) {
         RELEASE_LOG_ERROR(Network, "NetworkProcess::findPendingDownloadLocation: No download proxy connection for download %" PRIu64, networkDataTask.pendingDownloadID()->toUInt64());
@@ -3069,7 +3230,7 @@ void NetworkProcess::processPushMessage(PAL::SessionID sessionID, WebPushMessage
         auto origin = SecurityOriginData::fromURL(pushMessage.registrationURL);
 
         if (permissionState == PushPermissionState::Prompt) {
-            RELEASE_LOG(Push, "Push message from %" SENSITIVE_LOG_STRING " won't be processed since permission is in the prompt state; removing push subscription", origin.toString().utf8());
+            RELEASE_LOG(Push, "Push message from %" SENSITIVE_LOG_STRING " won't be processed since permission is in the prompt state; removing push subscription", makeUTF8CString(origin.toString()));
             session->notificationManager().removePushSubscriptionsForOrigin(SecurityOriginData { origin }, [callback = WTF::move(callback)](auto&&) mutable {
                 callback(false, std::nullopt);
             });
@@ -3077,7 +3238,7 @@ void NetworkProcess::processPushMessage(PAL::SessionID sessionID, WebPushMessage
         }
 
         if (permissionState == PushPermissionState::Denied) {
-            RELEASE_LOG(Push, "Push message from %" SENSITIVE_LOG_STRING " won't be processed since permission is in the denied state", origin.toString().utf8());
+            RELEASE_LOG(Push, "Push message from %" SENSITIVE_LOG_STRING " won't be processed since permission is in the denied state", makeUTF8CString(origin.toString()));
             // FIXME: move topic to ignore list in webpushd if permission is denied.
             callback(false, std::nullopt);
             return;
@@ -3091,7 +3252,7 @@ void NetworkProcess::processPushMessage(PAL::SessionID sessionID, WebPushMessage
             if (!builtInNotficationsEnabled &&!isDeclarative && !result) {
                 if (CheckedPtr session = networkSession(sessionID)) {
                     session->notificationManager().incrementSilentPushCount(WTF::move(origin), [scope = WTF::move(scope), callback = WTF::move(callback), result](unsigned newSilentPushCount) mutable {
-                        RELEASE_LOG_ERROR(Push, "Push message for scope %" SENSITIVE_LOG_STRING " not handled properly; new silent push count: %u", scope.utf8(), newSilentPushCount);
+                        RELEASE_LOG_ERROR(Push, "Push message for scope %" SENSITIVE_LOG_STRING " not handled properly; new silent push count: %u", makeUTF8CString(scope), newSilentPushCount);
                         callback(result, std::nullopt);
                     });
                     return;
@@ -3307,7 +3468,6 @@ void NetworkProcess::setPrivateClickMeasurementEphemeralMeasurementForTesting(PA
     
     completionHandler();
 }
-
 
 void NetworkProcess::setPrivateClickMeasurementTokenPublicKeyURLForTesting(PAL::SessionID sessionID, URL&& url, CompletionHandler<void()>&& completionHandler)
 {
@@ -3570,7 +3730,7 @@ RTCDataChannelRemoteManagerProxy& NetworkProcess::rtcDataChannelProxy()
 {
     ASSERT(isMainRunLoop());
     if (!m_rtcDataChannelProxy)
-        lazyInitialize(m_rtcDataChannelProxy, RTCDataChannelRemoteManagerProxy::create(*this));
+        lazyInitialize(m_rtcDataChannelProxy, RTCDataChannelRemoteManagerProxy::create());
     return *m_rtcDataChannelProxy;
 }
 #endif

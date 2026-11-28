@@ -949,6 +949,19 @@ void UnifiedPDFPlugin::paintContents(const GraphicsLayer& layer, GraphicsContext
     ASSERT_NOT_REACHED();
 }
 
+static void drawPDFPage(GraphicsContext& context, PDFPage *page, FloatPoint pageOrigin, PDFAccessibilityDisplayMode displayMode)
+{
+    GraphicsContextStateSaver stateSaver(context);
+    // Translate the context to the bottom of pageBounds and flip, so that PDFKit operates
+    // from this page's drawing origin.
+    context.translate(pageOrigin);
+    context.scale({ 1, -1 });
+
+    RetainPtr platformContext = context.platformContext();
+    applyPDFContentAXColorAdjustment(platformContext.get(), page, displayMode);
+    [page drawWithBox:kPDFDisplayBoxCropBox toContext:platformContext.get()];
+}
+
 void UnifiedPDFPlugin::paintPDFContent(const WebCore::GraphicsLayer* layer, GraphicsContext& context, const FloatRect& clipRect, const std::optional<PDFLayoutRow>& row, AsyncPDFRenderer* asyncRenderer)
 {
     if (visibleOrDocumentSizeIsEmpty())
@@ -1014,26 +1027,10 @@ void UnifiedPDFPlugin::paintPDFContent(const WebCore::GraphicsLayer* layer, Grap
 
             LOG_WITH_STREAM(PDF, stream << "UnifiedPDFPlugin: painting PDF page " << pageInfo.pageIndex << " into rect " << pageDestinationRect << " with clip " << clipRect);
 
-            auto drawPage = [&](GraphicsContext& pageContext, FloatPoint pageOrigin) {
-                GraphicsContextStateSaver pageContextStateSaver(pageContext);
-                // Translate the context to the bottom of pageBounds and flip, so that PDFKit operates
-                // from this page's drawing origin.
-                pageContext.translate(pageOrigin);
-                pageContext.scale({ 1, -1 });
-
-                RetainPtr platformContext = pageContext.platformContext();
-                applyPDFContentAXColorAdjustment(platformContext, page.get(), displayMode);
-                [page drawWithBox:kPDFDisplayBoxCropBox toContext:platformContext];
-            };
-
             if (context.hasPlatformContext())
-                drawPage(context, pageDestinationRect.minXMaxYCorner());
-            else if (RefPtr pageBuffer = context.createAlignedImageBuffer(pageDestinationRect.size(), context.colorSpace(), RenderingMethod::Local)) {
-                // Recording contexts (e.g. for remote snapshotting) have no platform context for PDFKit to draw into,
-                // so render into a local (non-remote) buffer first.
-                drawPage(pageBuffer->context(), { 0, pageDestinationRect.height() });
-                context.drawImageBuffer(*pageBuffer, pageDestinationRect);
-            }
+                drawPDFPage(context, page.get(), pageDestinationRect.minXMaxYCorner(), displayMode);
+            else
+                drawPageIntoRecordingContext(context, page.get(), pageInfo.pageIndex, pageDestinationRect, displayMode);
         }
 
         // Translate the context to the bottom of pageBounds and flip, to match PDFKit's page coordinate space.
@@ -1050,6 +1047,34 @@ void UnifiedPDFPlugin::paintPDFContent(const WebCore::GraphicsLayer* layer, Grap
             }
         }
     }
+}
+
+void UnifiedPDFPlugin::drawPageIntoRecordingContext(GraphicsContext& context, PDFPage *page, PDFDocumentLayout::PageIndex pageIndex, const FloatRect& pageRect, PDFAccessibilityDisplayMode displayMode)
+{
+    // Recording contexts (e.g. for remote snapshotting) have no platform context for PDFKit to draw into,
+    // so render into a local (non-remote) buffer first.
+    RefPtr pageBuffer = context.createAlignedImageBuffer(pageRect.size(), context.colorSpace(), RenderingMethod::Local);
+    if (!pageBuffer)
+        return;
+    drawPDFPage(pageBuffer->context(), page, { 0, pageRect.height() }, displayMode);
+
+#if ENABLE(GPU_PROCESS)
+    RefPtr webPage = this->webPage();
+    if (webPage && displayMode == PDFAccessibilityDisplayMode::None) {
+        bool recorded = webPage->recordPDFPageIntoRemoteSnapshot(context, identifier(), [&] -> RefPtr<SharedBuffer> {
+            RetainPtr data = liveData();
+            if (!data)
+                return nullptr;
+            return SharedBuffer::create(data.get());
+        }, static_cast<unsigned>(pageIndex), pageRect, *pageBuffer);
+        if (recorded)
+            return;
+    }
+#else
+    UNUSED_PARAM(pageIndex);
+#endif
+
+    context.drawImageBuffer(*pageBuffer, pageRect);
 }
 
 bool UnifiedPDFPlugin::hasSelection() const
@@ -1456,7 +1481,7 @@ void UnifiedPDFPlugin::deviceOrPageScaleFactorChanged(CheckForMagnificationGestu
 IntRect UnifiedPDFPlugin::availableContentsRect() const
 {
     auto availableRect = IntRect({ }, size());
-    if (ScrollbarTheme::theme().usesOverlayScrollbars())
+    if (usesOverlayScrollbars())
         return availableRect;
 
     int verticalScrollbarSpace = 0;
@@ -1903,7 +1928,7 @@ void UnifiedPDFPlugin::updateScrollingExtents()
 
     EventRegion eventRegion;
     auto eventRegionContext = eventRegion.makeContext();
-    eventRegionContext.unite(FloatRoundedRect(FloatRect({ }, size())), *renderer, protect(renderer->style()).get());
+    eventRegionContext->unite(FloatRoundedRect(FloatRect({ }, size())), *renderer, protect(renderer->style()).get());
     m_scrollContainerLayer->setEventRegion(WTF::move(eventRegion));
 }
 
@@ -2390,8 +2415,7 @@ void UnifiedPDFPlugin::repaintAnnotationsForFormField(NSString *fieldName)
 {
 #if HAVE(PDFDOCUMENT_ANNOTATIONS_FOR_FIELD_NAME)
     RetainPtr annotations = [m_pdfDocument annotationsForFieldName:fieldName];
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL PDFAnnotation *annotation in annotations.get())
+    for (PDFAnnotation *annotation in annotations.get())
         setNeedsRepaintForAnnotation(annotation, repaintRequirementsForAnnotation(annotation));
 #else
     UNUSED_PARAM(fieldName);
@@ -2693,7 +2717,7 @@ std::optional<PDFContextMenu> UnifiedPDFPlugin::createContextMenu(const IntPoint
 
 Vector<String> UnifiedPDFPlugin::contextMenuItemTitlesForTesting(const IntPoint& contextMenuEventRootViewPoint) const
 {
-    auto contextMenu = createContextMenu(contextMenuEventRootViewPoint, WebEventInputSource::UserDriven);
+    auto contextMenu = createContextMenu(contextMenuEventRootViewPoint, WebEventInputSource::Default);
     if (!contextMenu)
         return { };
 
@@ -3144,7 +3168,7 @@ void UnifiedPDFPlugin::extendCurrentSelectionIfNeeded()
 
 static bool shouldNotTrackSelectionForEvent(const WebCore::PlatformMouseEvent& event)
 {
-    return event.inputSource() == WebCore::MouseEventInputSource::Automation && event.syntheticClickType() != WebCore::SyntheticClickType::NoTap;
+    return event.inputSource() == WebCore::MouseEventInputSource::Touch && event.syntheticClickType() != WebCore::SyntheticClickType::NoTap;
 }
 
 void UnifiedPDFPlugin::beginTrackingSelection(PDFDocumentLayout::PageIndex pageIndex, const WebCore::FloatPoint& pagePoint, const WebCore::PlatformMouseEvent& event)
@@ -3271,8 +3295,7 @@ PDFPageCoverage UnifiedPDFPlugin::pageCoverageForSelection(PDFSelection *selecti
 
     auto pageCoverage = PDFPageCoverage { };
 
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL PDFPage *page in [selection pages]) {
+    for (PDFPage *page in [selection pages]) {
         auto pageIndex = m_documentLayout.indexForPage(page);
         if (!pageIndex)
             continue;
@@ -3360,8 +3383,7 @@ PDFPluginTextExtractionContent UnifiedPDFPlugin::textExtractionContent() const
         }];
 
         size_t searchOffset = 0;
-        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-        for (SUPPRESS_UNRETAINED_LOCAL PDFAnnotation *annotation in annotationsInReadingOrder.get()) {
+        for (PDFAnnotation *annotation in annotationsInReadingOrder.get()) {
             if (!annotationIsExternalLink(annotation))
                 continue;
 
@@ -3638,10 +3660,8 @@ void UnifiedPDFPlugin::collectFindMatchRects(const String& target, WebCore::Find
     m_findMatchRects.clear();
 
     RetainPtr foundSelections = [m_pdfDocument findString:target.createNSString().get() withOptions:compareOptionsForFindOptions(options)];
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL PDFSelection *selection in foundSelections.get()) {
-        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-        for (SUPPRESS_UNRETAINED_LOCAL PDFPage *page in selection.pages) {
+    for (PDFSelection *selection in foundSelections.get()) {
+        for (PDFPage *page in selection.pages) {
             auto pageIndex = m_documentLayout.indexForPage(page);
             if (!pageIndex)
                 continue;
@@ -3675,8 +3695,7 @@ Vector<WebFoundTextRange::PDFData> UnifiedPDFPlugin::findTextMatches(const Strin
         return matches;
 
     RetainPtr foundSelections = [m_pdfDocument findString:target.createNSString().get() withOptions:compareOptionsForFindOptions(options)];
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL PDFSelection *selection in foundSelections.get()) {
+    for (PDFSelection *selection in foundSelections.get()) {
         RetainPtr startPage = [[selection pages] firstObject];
         NSRange startPageRange = [selection rangeAtIndex:0 onPage:startPage.get()];
         NSUInteger startPageIndex = [m_pdfDocument indexForPage:startPage.get()];
@@ -3724,8 +3743,7 @@ Vector<WebCore::FloatRect> UnifiedPDFPlugin::rectsForTextMatchesInRect(const Vec
         if (!selection)
             continue;
 
-        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-        for (SUPPRESS_UNRETAINED_LOCAL PDFPage *page in [selection pages]) {
+        for (PDFPage *page in [selection pages]) {
             auto pageIndex = m_documentLayout.indexForPage(page);
             if (!pageIndex)
                 continue;
@@ -3982,8 +4000,7 @@ std::pair<String, RetainPtr<PDFSelection>> UnifiedPDFPlugin::textForImmediateAct
     if (!annotationsForCurrentPage)
         return { { }, nil };
 
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL PDFAnnotation *annotation in annotationsForCurrentPage.get()) {
+    for (PDFAnnotation *annotation in annotationsForCurrentPage.get()) {
         FloatRect annotationBoundsInPageSpace = [annotation bounds];
 
         if (!annotationBoundsInPageSpace.contains(pagePoint))
@@ -4547,7 +4564,7 @@ void UnifiedPDFPlugin::installDataDetectorOverlay(PageOverlay& overlay)
         return;
 
     Ref rootFrame { frame->coreLocalFrame()->rootFrame() };
-    overlay.setAssociatedFrame(rootFrame.ptr());
+    overlay.setAssociatedFrame(rootFrame);
     webPage->corePage()->pageOverlayController().installPageOverlay(overlay, PageOverlay::FadeMode::DoNotFade);
 }
 
@@ -4975,8 +4992,7 @@ bool UnifiedPDFPlugin::platformPopulateEditorStateIfNeeded(EditorState& state) c
 
     Vector<FloatRect> selectionRects;
 #if HAVE(PDFSELECTION_ENUMERATE_RECTS_AND_TRANSFORMS)
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL PDFPage *page in [selection pages]) {
+    for (PDFPage *page in [selection pages]) {
         auto pageIndex = m_documentLayout.indexForPage(page);
         [selection enumerateRectsAndTransformsForPage:page usingBlock:[&, protectedThis = Ref { *this }](CGRect rect, CGAffineTransform transform) {
             auto transformedRectInPage = CGRectApplyAffineTransform(rect, transform);
@@ -5163,7 +5179,7 @@ void UnifiedPDFPlugin::handleSyntheticClick(PlatformMouseEvent&& event)
 {
 #if HAVE(PDFDOCUMENT_SELECTION_WITH_GRANULARITY)
     auto handledMouseEvent = false;
-    if (event.inputSource() == WebCore::MouseEventInputSource::Automation)
+    if (event.inputSource() == WebCore::MouseEventInputSource::Touch)
         handledMouseEvent = handleMouseEvent(event);
 
     if (event.type() == WebCore::PlatformEventType::MousePressed)

@@ -31,8 +31,11 @@
 #include "DocumentWriter.h"
 
 #include "ContentSecurityPolicy.h"
+#include "CrossOriginEmbedderPolicy.h"
+#include "CrossOriginOpenerPolicy.h"
 #include "DOMImplementation.h"
 #include "DocumentInlines.h"
+#include "DocumentIsolationPolicy.h"
 #include "DocumentLoader.h"
 #include "DocumentPage.h"
 #include "DocumentView.h"
@@ -40,6 +43,7 @@
 #include "FrameLoaderStateMachine.h"
 #include "HistoryController.h"
 #include "HistoryItem.h"
+#include "IntegrityPolicy.h"
 #include "LocalDOMWindow.h"
 #include "LocalFrame.h"
 #include "LocalFrameInlines.h"
@@ -100,7 +104,7 @@ void DocumentWriter::replaceDocumentWithResultOfExecutingJavascriptURL(const Str
         }
 
         if (RefPtr parser = frame->document()->parser())
-            parser->appendBytes(*this, byteCast<uint8_t>(source.utf8().span()));
+            parser->appendBytes(*this, byteCast<uint8_t>(makeUTF8CString(source).span()));
     }
 
     end();
@@ -167,6 +171,70 @@ bool DocumentWriter::begin(const URL& urlReference, bool dispatch, Document* own
     if (document->isPluginDocument() && document->isSandboxed(SandboxFlag::Plugins))
         document = SinkDocument::create(frame, url);
 
+    // Keep the existing document alive through FrameLoader::detachCurrentDocument(), as FrameLoader::didBeginDocument() still uses the previous window's document.
+    RefPtr existingDocument = frame->document();
+
+    if (ownerDocument) {
+        // |document| is the result of evaluating a JavaScript URL.
+        document->setCookieURL(ownerDocument->cookieURL());
+        document->setSecurityOriginPolicy(ownerDocument->securityOriginPolicy());
+        document->setCrossOriginEmbedderPolicy(ownerDocument->crossOriginEmbedderPolicy());
+        document->setDocumentIsolationPolicy(ownerDocument->documentIsolationPolicy());
+        document->setAgentClusterIdentifier(ownerDocument->agentClusterIdentifier());
+        document->setIPAddressSpace(ownerDocument->ipAddressSpace());
+
+        document->setContentSecurityPolicy(makeUnique<ContentSecurityPolicy>(URL { url }, document));
+        CheckedRef contentSecurityPolicy = *document->contentSecurityPolicy();
+        CheckedRef ownerContentSecurityPolicy = *ownerDocument->contentSecurityPolicy();
+        contentSecurityPolicy->copyStateFrom(ownerContentSecurityPolicy.ptr());
+        contentSecurityPolicy->setInsecureNavigationRequestsToUpgrade(ownerContentSecurityPolicy->takeNavigationRequestsToUpgrade());
+    } else if (url.protocolIsAbout() || url.protocolIsData()) {
+        // https://html.spec.whatwg.org/multipage/origin.html#determining-navigation-params-policy-container
+        RefPtr currentHistoryItem = frame->loader().history().currentItem();
+
+        auto isLoadingBrowserControlledHTML = [frameLoader] {
+            RefPtr documentLoader = frameLoader->documentLoader();
+            return documentLoader && documentLoader->substituteData().isValid();
+        };
+
+        if (triggeringAction && triggeringAction->type() == NavigationType::BackForward && currentHistoryItem && currentHistoryItem->policyContainer()) {
+            const auto& policyContainerFromHistory = currentHistoryItem->policyContainer();
+            ASSERT(policyContainerFromHistory);
+            document->inheritPolicyContainerFrom(*policyContainerFromHistory);
+        } else if (url == aboutSrcDocURL()) {
+            RefPtr parentFrame = dynamicDowncast<LocalFrame>(frame->tree().parent());
+            if (parentFrame && parentFrame->document()) {
+                document->inheritPolicyContainerFrom(parentFrame->document()->policyContainer());
+                protect(document->contentSecurityPolicy())->updateSourceSelf(protect(protect(parentFrame->document())->securityOrigin()));
+            }
+        } else if (triggeringAction && triggeringAction->requester() && !isLoadingBrowserControlledHTML()) {
+            document->inheritPolicyContainerFrom(triggeringAction->requester()->policyContainer);
+            protect(document->contentSecurityPolicy())->updateSourceSelf(triggeringAction->requester()->securityOrigin);
+        }
+
+        // https://html.spec.whatwg.org/multipage/origin.html#requires-storing-the-policy-container-in-history
+        if (triggeringAction && triggeringAction->type() != NavigationType::BackForward && currentHistoryItem)
+            currentHistoryItem->setPolicyContainer(document->policyContainer());
+    }
+
+    if (!ownerDocument && frameLoader->stateMachine().isDisplayingInitialEmptyDocument() && existingDocument && existingDocument->contentSecurityPolicy() && document->contentSecurityPolicy())
+        protect(document->contentSecurityPolicy())->setInsecureNavigationRequestsToUpgrade(existingDocument->contentSecurityPolicy()->takeNavigationRequestsToUpgrade());
+
+    document->initContentSecurityPolicy();
+    if (RefPtr documentLoader = frameLoader->documentLoader()) {
+        // The DocumentLoader may have already parsed the CSP header to do some checks. If so, reuse the already parsed version instead of parsing again.
+        if (CheckedPtr contentSecurityPolicy = documentLoader->contentSecurityPolicy())
+            protect(document->contentSecurityPolicy())->didReceiveHeaders(*contentSecurityPolicy, ContentSecurityPolicy::ReportParsingErrors::No);
+        else
+            protect(document->contentSecurityPolicy())->didReceiveHeaders(ContentSecurityPolicyResponseHeaders(documentLoader->response()), frameLoader->referrer(), ContentSecurityPolicy::ReportParsingErrors::No);
+
+        if (document->url().protocolIsBlob())
+            protect(document->contentSecurityPolicy())->updateSourceSelf(SecurityOrigin::create(document->url()));
+
+        if (documentLoader->isLoadingErrorDocument())
+            document->enforceSandboxFlags(SandboxFlag::Origin);
+    }
+
     // FIXME: Do we need to consult the content security policy here about blocked plug-ins?
 
     bool mayReuseDefaultView = frameLoader->stateMachine().isDisplayingInitialEmptyDocument()
@@ -190,11 +258,6 @@ bool DocumentWriter::begin(const URL& urlReference, bool dispatch, Document* own
 
     RefPtr previousWindow = mayReuseDefaultView ? nullptr : frame->window();
 
-    // Temporarily extend the lifetime of the existing document so that FrameLoader::clear() doesn't destroy it as
-    // we need to retain its ongoing set of upgraded requests in new navigation contexts per <http://www.w3.org/TR/upgrade-insecure-requests/>
-    // and we may also need to inherit its Content Security Policy below.
-    RefPtr existingDocument = frame->document();
-
     Function<void()> handleDOMWindowCreation = [document, frame, shouldReuseDefaultView] {
         if (shouldReuseDefaultView)
             document->takeDOMWindowFrom(*protect(frame->document()));
@@ -202,10 +265,10 @@ bool DocumentWriter::begin(const URL& urlReference, bool dispatch, Document* own
             document->createDOMWindow();
     };
 
-    frameLoader->clear(document.ptr(), !shouldReuseDefaultView, !shouldReuseDefaultView, true, WTF::move(handleDOMWindowCreation));
+    frameLoader->detachCurrentDocument(document.ptr(), shouldReuseDefaultView ? ClearWindowProperties::No : ClearWindowProperties::Yes, shouldReuseDefaultView ? ClearScriptObjects::No : ClearScriptObjects::Yes, ClearFrameView::Yes, WTF::move(handleDOMWindowCreation));
     clear();
 
-    // frameLoader->clear() might fire unload event which could remove the view of the document.
+    // frameLoader->detachCurrentDocument() might fire unload event which could remove the view of the document.
     // Bail out if document has no view.
     if (!document->view())
         return false;
@@ -214,54 +277,54 @@ bool DocumentWriter::begin(const URL& urlReference, bool dispatch, Document* own
         protect(frame->script())->updatePlatformScriptObjects();
 
     frameLoader->setOutgoingReferrer(url);
-    frame->setDocument(document.copyRef());
 
     if (m_decoder)
         document->setDecoder(m_decoder.copyRef());
-    if (ownerDocument) {
-        // |document| is the result of evaluating a JavaScript URL.
-        document->setCookieURL(ownerDocument->cookieURL());
-        document->setSecurityOriginPolicy(ownerDocument->securityOriginPolicy());
-        document->setCrossOriginEmbedderPolicy(ownerDocument->crossOriginEmbedderPolicy());
-        document->setDocumentIsolationPolicy(ownerDocument->documentIsolationPolicy());
-        document->setAgentClusterIdentifier(ownerDocument->agentClusterIdentifier());
-        document->setIPAddressSpace(ownerDocument->ipAddressSpace());
 
-        document->setContentSecurityPolicy(makeUnique<ContentSecurityPolicy>(URL { url }, document));
-        CheckedRef contentSecurityPolicy = *document->contentSecurityPolicy();
-        CheckedRef ownerContentSecurityPolicy = *ownerDocument->contentSecurityPolicy();
-        contentSecurityPolicy->copyStateFrom(ownerContentSecurityPolicy.ptr());
-        contentSecurityPolicy->setInsecureNavigationRequestsToUpgrade(ownerContentSecurityPolicy->takeNavigationRequestsToUpgrade());
-    } else if (url.protocolIsAbout() || url.protocolIsData()) {
-        // https://html.spec.whatwg.org/multipage/origin.html#determining-navigation-params-policy-container
-        RefPtr currentHistoryItem = frame->loader().history().currentItem();
+    if (RefPtr documentLoader = frameLoader->documentLoader()) {
+        // Documents that inherit their origin, such as about:blank, keep the identifier they inherited.
+        if (auto agentClusterIdentifier = documentLoader->agentClusterAssignment().identifier; agentClusterIdentifier && !frameLoader->stateMachine().creatingInitialEmptyDocument())
+            document->setAgentClusterIdentifier(agentClusterIdentifier);
 
-        auto isLoadingBrowserControlledHTML = [document] {
-            return document->loader() && document->loader()->substituteData().isValid();
-        };
+        if (document->url().protocolIsInHTTPFamilyOrBlob()) {
+            auto isSecureContext = document->isSecureContext() ? IsSecureContext::Yes : IsSecureContext::No;
+            document->setCrossOriginEmbedderPolicy(obtainCrossOriginEmbedderPolicy(documentLoader->response(), isSecureContext, credentiallessSupport(document->settingsValues()), document.ptr()));
 
-        if (triggeringAction && triggeringAction->type() == NavigationType::BackForward && currentHistoryItem && currentHistoryItem->policyContainer()) {
-            const auto& policyContainerFromHistory = currentHistoryItem->policyContainer();
-            ASSERT(policyContainerFromHistory);
-            document->inheritPolicyContainerFrom(*policyContainerFromHistory);
-        } else if (url == aboutSrcDocURL()) {
-            RefPtr parentFrame = dynamicDowncast<LocalFrame>(frame->tree().parent());
-            if (parentFrame && parentFrame->document()) {
-                document->inheritPolicyContainerFrom(parentFrame->document()->policyContainer());
-                protect(document->contentSecurityPolicy())->updateSourceSelf(protect(protect(parentFrame->document())->securityOrigin()));
+            if (auto ipAddressSpace = documentLoader->response().ipAddressSpace(); ipAddressSpace != IPAddressSpace::Unknown)
+                document->setIPAddressSpace(ipAddressSpace);
+
+            if (!frameLoader->stateMachine().creatingInitialEmptyDocument()) {
+                auto& agentClusterAssignment = documentLoader->agentClusterAssignment();
+                if (frame->settings().originAgentClusterEnabled())
+                    document->setIsOriginKeyed(agentClusterAssignment.isOriginKeyed);
+                // The UI process decides the value, since it determines the agent cluster. The rest is only for reporting.
+                DocumentIsolationPolicy documentIsolationPolicy;
+                if (frame->settings().documentIsolationPolicyEnabled() && frame->settings().siteIsolationEnabled())
+                    documentIsolationPolicy = obtainDocumentIsolationPolicy(documentLoader->response(), isSecureContext, credentiallessSupport(document->settingsValues()));
+                ASSERT(documentIsolationPolicy.value == agentClusterAssignment.documentIsolationPolicy);
+                documentIsolationPolicy.value = agentClusterAssignment.documentIsolationPolicy;
+                document->setDocumentIsolationPolicy(documentIsolationPolicy);
             }
-        } else if (triggeringAction && triggeringAction->requester() && !isLoadingBrowserControlledHTML()) {
-            document->inheritPolicyContainerFrom(triggeringAction->requester()->policyContainer);
-            protect(document->contentSecurityPolicy())->updateSourceSelf(triggeringAction->requester()->securityOrigin);
         }
 
-        // https://html.spec.whatwg.org/multipage/origin.html#requires-storing-the-policy-container-in-history
-        if (triggeringAction && triggeringAction->type() != NavigationType::BackForward && currentHistoryItem)
-            currentHistoryItem->setPolicyContainer(document->policyContainer());
+        String referrerPolicy = documentLoader->response().httpHeaderField(HTTPHeaderName::ReferrerPolicy);
+        if (!referrerPolicy.isNull())
+            document->processReferrerPolicy(referrerPolicy, ReferrerPolicySource::HTTPHeader);
+
+        // https://html.spec.whatwg.org/multipage/browsing-the-web.html#initialise-the-document-object (Step 7)
+        if (frame->isMainFrame()) {
+            if (auto crossOriginOpenerPolicy = documentLoader->crossOriginOpenerPolicy())
+                document->setCrossOriginOpenerPolicy(WTF::move(*crossOriginOpenerPolicy));
+        }
+
+        if (auto integrityPolicy = documentLoader->integrityPolicy())
+            document->setIntegrityPolicy(WTF::move(integrityPolicy));
+
+        if (auto integrityPolicyReportOnly = documentLoader->integrityPolicyReportOnly())
+            document->setIntegrityPolicyReportOnly(WTF::move(integrityPolicyReportOnly));
     }
 
-    if (existingDocument && existingDocument->contentSecurityPolicy() && document->contentSecurityPolicy())
-        protect(document->contentSecurityPolicy())->setInsecureNavigationRequestsToUpgrade(existingDocument->contentSecurityPolicy()->takeNavigationRequestsToUpgrade());
+    frame->setDocument(document.copyRef());
 
     frameLoader->didBeginDocument(dispatch, previousWindow);
 

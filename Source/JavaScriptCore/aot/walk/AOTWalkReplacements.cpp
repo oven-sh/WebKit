@@ -558,7 +558,12 @@ static void buildStepOfArrayIteratorAsReplacement(Walker& walker, const BodyValu
         byList.endFirstArm({ done, value });
     }
     ArmsOfReplacements byRange(builder, buildTestOfPositionInIteratedObjectForReplacement(builder, iterated, index), 2);
+    // Reading the length may have run a next() of this iterator that finished it. It stays finished.
+    Reference indexBehindLength = builder.converted(builder.proveOrTrap(builder.getInternalField(iterator, JSArrayIterator::Field::Index), TypeTable::integer), Representation::Int64);
+    ArmsOfReplacements byFinishedBehindLength(builder, builder.applyOperator(Opcode::Less, indexBehindLength, builder.integer(0)), 0);
+    byFinishedBehindLength.endFirstArm({ });
     builder.putInternalField(iterator, JSArrayIterator::Field::Index, builder.applyOperator(Opcode::Add, index, builder.integer(1)));
+    byFinishedBehindLength.endSecondArm({ });
     byRange.endFirstArm({ builder.boolean(false), buildValueAtPositionOfArrayIteratorForReplacement(builder, iterator, iterated, index) });
     builder.putInternalField(iterator, JSArrayIterator::Field::Index, builder.integer(JSArrayIterator::doneIndex));
     byRange.endSecondArm({ builder.boolean(true), builder.undefined() });

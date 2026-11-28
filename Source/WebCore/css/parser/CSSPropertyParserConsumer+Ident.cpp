@@ -30,8 +30,7 @@
 #include "CSSParserIdioms.h"
 #include "CSSValuePool.h"
 
-namespace WebCore {
-namespace CSSPropertyParserHelpers {
+namespace WebCore::CSSPropertyParserHelpers {
 
 std::optional<CSSValueID> consumeIdentRaw(CSSParserTokenRange& range)
 {
@@ -52,27 +51,6 @@ RefPtr<CSSKeywordValue> consumeIdent(CSSParserTokenRange& range)
     if (range.peek().type() != IdentToken)
         return nullptr;
     return CSSKeywordValue::create(CSS::Keyword { range.consumeIncludingWhitespace().id() });
-}
-
-std::optional<CSSValueID> consumeIdentRangeRaw(CSSParserTokenRange& range, CSSValueID lower, CSSValueID upper)
-{
-    if (range.peek().id() < lower || range.peek().id() > upper)
-        return std::nullopt;
-    return consumeIdentRaw(range);
-}
-
-std::optional<CSS::Keyword> consumeUnresolvedIdentRange(CSSParserTokenRange& range, CSSValueID lower, CSSValueID upper)
-{
-    if (range.peek().id() < lower || range.peek().id() > upper)
-        return std::nullopt;
-    return consumeUnresolvedIdent(range);
-}
-
-RefPtr<CSSKeywordValue> consumeIdentRange(CSSParserTokenRange& range, CSSValueID lower, CSSValueID upper)
-{
-    if (range.peek().id() < lower || range.peek().id() > upper)
-        return nullptr;
-    return consumeIdent(range);
 }
 
 // MARK: <custom-ident>
@@ -168,5 +146,4 @@ std::optional<CSSWideKeyword> consumeCSSWideKeyword(CSSParserTokenRange& range)
     return keyword;
 }
 
-} // namespace CSSPropertyParserHelpers
-} // namespace WebCore
+} // namespace WebCore::CSSPropertyParserHelpers

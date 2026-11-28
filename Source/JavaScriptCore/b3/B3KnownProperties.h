@@ -87,7 +87,7 @@ private:
         Opcode opcode { Oops };
     };
 
-    using Map = UncheckedKeyHashMap<unsigned, Entry, DefaultHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>>;
+    using Map = HashMap<unsigned, Entry, DefaultHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>>;
 
     const Entry* find(const Value*) const;
     Entry& ensure(const Value*);

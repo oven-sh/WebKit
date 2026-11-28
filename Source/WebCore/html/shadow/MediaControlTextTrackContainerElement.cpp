@@ -91,7 +91,7 @@ MediaControlTextTrackContainerElement::MediaControlTextTrackContainerElement(Doc
 
 MediaControlTextTrackContainerElement::~MediaControlTextTrackContainerElement() = default;
 
-RenderPtr<RenderElement> MediaControlTextTrackContainerElement::createElementRenderer(Style::ComputedStyle&& style, const RenderTreePosition&)
+RenderPtr<RenderElement> MediaControlTextTrackContainerElement::createElementRenderer(UniqueRef<Style::ComputedStyle>&& style, const RenderTreePosition&)
 {
     return createRenderer<RenderBlockFlow>(RenderObject::Type::BlockFlow, *this, WTF::move(style));
 }
@@ -609,7 +609,7 @@ VTTCue& MediaControlTextTrackContainerElement::ensurePreviewCue() const
 const Logger& MediaControlTextTrackContainerElement::logger() const
 {
     if (!m_logger)
-        m_logger = protect(document())->logger();
+        lazyInitialize(m_logger, Ref { protect(document())->logger() });
 
     return *m_logger;
 }

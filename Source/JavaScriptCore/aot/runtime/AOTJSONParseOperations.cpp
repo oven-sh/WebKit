@@ -449,15 +449,20 @@ static bool appendPlainCharacters(const JSONWords& words, StringBuilder& builder
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static JSString* tryMakeWideJSONString(VM& vm, std::span<const Latin1Character> latin1)
+{
+    Vector<char16_t, JSONCache::maxLongStringLength> wide;
+    if (!StringImpl::isValidLength<char16_t>(latin1.size()) || !wide.tryGrow(latin1.size()))
+        return nullptr;
+    WTF::copyElements(wide.mutableSpan(), latin1);
+    return vm.jsonCache().tryMakeJSString(vm, wide.span());
+}
+
 static JSString* tryMakeJSONStringOfWideSource(const JSONWords& words, VM& vm, std::span<const uint8_t> latin1)
 {
     if (words.sourceEncoding == JSONSourceEncoding::UTF16)
         return vm.jsonCache().tryMakeJSString(vm, original16BitCharacters(words, latin1));
-    Vector<char16_t, JSONCache::maxLongStringLength> wide;
-    if (!StringImpl::isValidLength<char16_t>(latin1.size()) || !wide.tryGrow(latin1.size()))
-        return nullptr;
-    WTF::copyElements(wide.mutableSpan(), byteCast<Latin1Character>(latin1));
-    return vm.jsonCache().tryMakeJSString(vm, wide.span());
+    return tryMakeWideJSONString(vm, byteCast<Latin1Character>(latin1));
 }
 
 const uint8_t* decodeJSONString(const JSONWords& words, const uint8_t* start, const uint8_t* cursor, StringBuilder& builder)
@@ -506,7 +511,14 @@ NEVER_INLINE ParsedJSONString makeJSONStringWithEscapes(Instance& instance, VM& 
     const uint8_t* end = decodeJSONString(instance.json, afterQuote, firstSpecial, builder);
     if (!end || builder.hasOverflowed())
         return { jsEmptyString(vm) };
-    JSString* string = builder.is8Bit() ? vm.jsonCache().tryMakeJSString(vm, builder.span8()) : vm.jsonCache().tryMakeJSString(vm, builder.span16());
+    // LiteralParser unescapes a string of 16-bit text into 16-bit characters, so a long one is 16-bit whatever its characters are.
+    JSString* string;
+    if (!builder.is8Bit())
+        string = vm.jsonCache().tryMakeJSString(vm, builder.span16());
+    else if (instance.json.sourceEncoding == JSONSourceEncoding::UTF16 && builder.length() > maxLengthOfJSONStringOfEitherWidth)
+        string = tryMakeWideJSONString(vm, builder.span8());
+    else
+        string = vm.jsonCache().tryMakeJSString(vm, builder.span8());
     if (!string)
         return { jsEmptyString(vm) };
     return { string, end };

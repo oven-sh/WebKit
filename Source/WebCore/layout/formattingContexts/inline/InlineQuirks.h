@@ -27,8 +27,7 @@
 
 #include <WebCore/InlineLineBox.h>
 
-namespace WebCore {
-namespace Layout {
+namespace WebCore::Layout {
 
 class InlineFormattingContext;
 class LineBox;
@@ -46,7 +45,6 @@ public:
     std::optional<LayoutUnit> initialLetterAlignmentOffset(const Box& floatBox, const Style::ComputedStyle& lineBoxStyle) const;
     std::optional<InlineRect> adjustedRectForLineGridLineAlign(const InlineRect&) const;
     std::optional<InlineLayoutUnit> adjustmentForLineGridLineSnap(const LineBox&) const;
-    bool shouldCollapseLineBoxHeight(const LineRunList&, size_t numberOfOutsideListMarkers) const;
     bool hasSoftWrapOpportunityAroundImages(std::optional<IntrinsicWidthMode>) const;
 
 private:
@@ -56,5 +54,4 @@ private:
     const InlineFormattingContext& m_inlineFormattingContext;
 };
 
-}
 }

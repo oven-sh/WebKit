@@ -25,6 +25,10 @@
 
 #pragma once
 
+#if !__has_feature(objc_arc)
+#error This header requires ARC. Include it only from files compiled with -fobjc-arc.
+#endif
+
 #import <WebGPU/WebGPUCpp.h>
 #import <utility>
 #import <wtf/CompletionHandler.h>
@@ -70,8 +74,8 @@ private:
     XRSubImage(bool, Device&);
     XRSubImage(Device&);
 
-    HashMap<uint64_t, Ref<Texture>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_colorTextures;
-    HashMap<uint64_t, Ref<Texture>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_depthTextures;
+    HashMap<uint64_t, Ref<Texture>> m_colorTextures;
+    HashMap<uint64_t, Ref<Texture>> m_depthTextures;
     uint64_t m_currentTextureIndex { 0 };
 
     ThreadSafeWeakPtr<Device> m_device;

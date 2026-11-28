@@ -40,7 +40,7 @@ public:
     using SetType = HashSet<KeyType>;
     using AddResult = typename SetType::AddResult;
 
-    class WeakHashSetConstIterator {
+    class WTF_VIEW_TYPE WeakHashSetConstIterator {
     public:
         using iterator_category = std::forward_iterator_tag;
         using value_type = T;
@@ -94,26 +94,26 @@ public:
 
     WeakHashSet() = default;
 
-    const_iterator begin() const { return WeakHashSetConstIterator(*this, m_set.begin()); }
-    const_iterator end() const { return WeakHashSetConstIterator(*this, m_set.end()); }
+    const_iterator begin() const LIFETIME_BOUND { return WeakHashSetConstIterator(*this, m_set.begin()); }
+    const_iterator end() const LIFETIME_BOUND { return WeakHashSetConstIterator(*this, m_set.end()); }
 
-    const_iterator find(const T* value) const
+    const_iterator find(const T* value) const LIFETIME_BOUND
     {
         increaseOperationCountSinceLastCleanup();
         return WeakHashSetConstIterator(*this, m_set.find(value));
     }
 
-    const_iterator find(const T& value) const { return find(&value); }
+    const_iterator find(const T& value) const LIFETIME_BOUND { return find(&value); }
 
-    AddResult add(const T* value)
+    AddResult add(const T* value) LIFETIME_BOUND
     {
         amortizedCleanupIfNeeded();
         return m_set.add(value);
     }
 
-    AddResult add(const T& value) { return add(&value); }
+    AddResult add(const T& value) LIFETIME_BOUND { return add(&value); }
 
-    AddResult add(WeakRef<T>&& value)
+    AddResult add(WeakRef<T>&& value) LIFETIME_BOUND
     {
         amortizedCleanupIfNeeded();
         return m_set.add(WTF::move(value));
@@ -169,13 +169,6 @@ public:
 
     unsigned capacity() const { return m_set.capacity(); }
 
-    bool isEmptyIgnoringNullReferences() const
-    {
-        if (m_set.isEmpty())
-            return true;
-        return begin() == end();
-    }
-
     bool hasNullReferences() const
     {
         unsigned count = 0;
@@ -193,11 +186,26 @@ public:
         return result;
     }
 
-    unsigned computeSize() const
+    unsigned computeSize() const { return m_set.computeSize(); }
+    unsigned computeSize()
     {
-        const_cast<WeakHashSet&>(*this).removeNullReferences();
-        return m_set.size();
+        unsigned result = m_set.computeSize();
+        cleanupHappened();
+        return result;
     }
+
+    bool computeIsEmpty() const { return m_set.computeIsEmpty(); }
+    bool computeIsEmpty()
+    {
+        bool result = m_set.computeIsEmpty();
+        if (result)
+            cleanupHappened();
+        return result;
+    }
+
+    // FIXME: Update Apple-internal code to stop calling these, then remove them.
+    bool isEmptyIgnoringNullReferences() const { return computeIsEmpty(); }
+    bool isEmptyIgnoringNullReferences() { return computeIsEmpty(); }
 
     void forEach(NOESCAPE const Function<void(T&)>& callback) requires HasRefPtrMemberFunctions<T>
     {

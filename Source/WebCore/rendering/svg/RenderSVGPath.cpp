@@ -47,7 +47,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderSVGPath);
 
-RenderSVGPath::RenderSVGPath(SVGGraphicsElement& element, Style::ComputedStyle&& style)
+RenderSVGPath::RenderSVGPath(SVGGraphicsElement& element, UniqueRef<Style::ComputedStyle>&& style)
     : RenderSVGShape(Type::SVGPath, element, WTF::move(style))
 {
     ASSERT(isRenderSVGPath());
@@ -261,10 +261,11 @@ FloatRect RenderSVGPath::computeMarkerBoundingBox(const SVGBoundingBoxComputatio
     if (!markerStart && !markerMid && !markerEnd)
         return { };
 
+    auto strokeWidth = strokeWidthForMarkerUnits();
     FloatRect boundaries;
     for (auto& markerPosition : m_markerPositions) {
         if (CheckedPtr marker = markerForType(markerPosition.type, markerStart.get(), markerMid.get(), markerEnd.get()))
-            boundaries.unite(marker->computeMarkerBoundingBox(options, marker->computeMarkerTransform(markerPosition.origin, markerPosition.angle, strokeWidth())));
+            boundaries.unite(marker->computeMarkerBoundingBox(options, marker->computeMarkerTransform(markerPosition.origin, markerPosition.angle, strokeWidth)));
     }
 
     return boundaries;

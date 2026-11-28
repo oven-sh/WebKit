@@ -1664,15 +1664,15 @@ auto Modules::filesInOrderOfSynchronousLoad(ModuleID root, const Vector<uint32_t
         return inOrder;
     enum class State : uint8_t { Unrequested, Requested, Fetched, Made, Recorded, Settled };
     enum class Job : uint8_t { SettleFetch, MakeRecord, StoreRecord, LoadRequests };
-    UncheckedKeyHashMap<uint32_t, State, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> states;
-    UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> lastWalks;
+    HashMap<uint32_t, State, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> states;
+    HashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> lastWalks;
     constexpr uint32_t hasNoRank = std::numeric_limits<uint32_t>::max();
     struct StepsOfFile {
         uint32_t rank { std::numeric_limits<uint32_t>::max() };
         uint32_t make { 0 };
         uint32_t store { 0 };
     };
-    UncheckedKeyHashMap<uint32_t, StepsOfFile, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> stepsOfFiles;
+    HashMap<uint32_t, StepsOfFile, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> stepsOfFiles;
     auto stateOf = [&](ModuleID module) {
         if (auto found = states.find(module.index()); found != states.end())
             return found->value;
@@ -2737,7 +2737,7 @@ uint32_t Modules::takeMarkOfSearch()
     return m_placesSeenByPlans.takeMark(m_table.size());
 }
 
-bool Modules::tryFindAliasedCompiledModules(ModuleID root, UncheckedKeyHashMap<ModuleID, ModuleID>& aliasedModules)
+bool Modules::tryFindAliasedCompiledModules(ModuleID root, HashMap<ModuleID, ModuleID>& aliasedModules)
 {
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -2786,7 +2786,7 @@ bool Modules::planLevelsOfLoad(ModuleID root)
     using Level = PlanOfLoad::Level;
     if (!m_queuedFetches.isEmpty())
         return false;
-    UncheckedKeyHashMap<ModuleID, ModuleID> aliasedModules;
+    HashMap<ModuleID, ModuleID> aliasedModules;
     if (data(root).reachesUncompiledCode() && !tryFindAliasedCompiledModules(root, aliasedModules))
         return false;
 
@@ -3986,7 +3986,7 @@ unsigned Modules::loaderStepsToMock(ModuleID root, ModuleID mock) const
         uint32_t firstRequester { 0 };
         unsigned level { 0 };
     };
-    UncheckedKeyHashMap<uint32_t, Request, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> requests;
+    HashMap<uint32_t, Request, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> requests;
     Vector<ModuleID, 32> inLevelOrder { root };
     requests.set(root.index(), Request { root.index(), 0 });
     for (size_t next = 0; next < inLevelOrder.size(); ++next) {
@@ -4000,7 +4000,7 @@ unsigned Modules::loaderStepsToMock(ModuleID root, ModuleID mock) const
                 inLevelOrder.append(requested);
         }
     }
-    UncheckedKeyHashMap<uint32_t, std::optional<unsigned>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> steps;
+    HashMap<uint32_t, std::optional<unsigned>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> steps;
     BitVector isOpen(m_table.size());
     auto visit = [&](auto& self, ModuleID module) -> std::optional<unsigned> {
         if (module == mock)
@@ -4049,7 +4049,7 @@ Vector<ModuleID, 2> Modules::evaluationOrderedRoots(const DetachedLoad& load) co
                 visits.append({ requested, module });
         }
     }
-    UncheckedKeyHashMap<uint32_t, Readiness, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> readiness;
+    HashMap<uint32_t, Readiness, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> readiness;
     for (size_t next = visits.size(); next--;) {
         auto [module, firstRequester] = visits[next];
         Readiness own = readiness.get(module.index());

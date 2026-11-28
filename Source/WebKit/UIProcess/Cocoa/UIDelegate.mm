@@ -951,8 +951,7 @@ bool UIDelegate::UIClient::runOpenPanel(WebPageProxy& page, WebFrameProxy* webFr
                 filenames.append(maybeMovedURL.get().path);
         }
 #else
-        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-        for (SUPPRESS_UNRETAINED_LOCAL NSURL *url in URLs)
+        for (NSURL *url in URLs)
             filenames.append(url.path);
 #endif
         listener->chooseFiles(filenames, openPanelParameters->allowedMIMETypes()->toStringVector());
@@ -2281,6 +2280,16 @@ static MTLPixelFormat toMetalFormat(::WebGPU::TextureFormat format)
 static MTLPixelFormat toMetalFormat(std::optional<::WebGPU::TextureFormat> optionalFormat)
 {
     return optionalFormat ? toMetalFormat(*optionalFormat) : MTLPixelFormatInvalid;
+}
+
+bool UIDelegate::UIClient::canRequestPermissionOnXRSessionFeatures() const
+{
+    return m_uiDelegate && m_uiDelegate->m_delegateMethods.webViewRequestPermissionForXRSessionOriginModeAndFeaturesWithCompletionHandler;
+}
+
+bool UIDelegate::UIClient::canStartXRSession() const
+{
+    return m_uiDelegate && m_uiDelegate->m_delegateMethods.webViewStartXRSessionWithCompletionHandler;
 }
 
 void UIDelegate::UIClient::startXRSession(WebPageProxy&, const PlatformXR::Device::FeatureList& sessionFeatures, std::optional<WebCore::XRCanvasConfiguration>&& init, CompletionHandler<void(RetainPtr<id>, PlatformViewController *)>&& completionHandler)

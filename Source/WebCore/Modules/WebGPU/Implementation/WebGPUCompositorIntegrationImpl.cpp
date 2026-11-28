@@ -34,6 +34,7 @@
 #include <WebCore/NativeImage.h>
 #include <WebCore/WebGPUCppAPI.h>
 #include <pal/spi/cg/CoreGraphicsSPI.h>
+#include <wtf/Borrow.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/spi/cocoa/IOSurfaceSPI.h>
 
@@ -46,14 +47,6 @@ WebGPUCompositorIntegrationImpl::WebGPUCompositorIntegrationImpl()
 }
 
 WebGPUCompositorIntegrationImpl::~WebGPUCompositorIntegrationImpl() = default;
-
-void WebGPUCompositorIntegrationImpl::prepareForDisplay(uint32_t frameIndex, CompletionHandler<void()>&& completionHandler)
-{
-    if (RefPtr presentationContext = m_presentationContext)
-        presentationContext->present(frameIndex);
-
-    m_onSubmittedWorkScheduledCallback(WTF::move(completionHandler));
-}
 
 Seconds WebGPUCompositorIntegrationImpl::lastFrameGPUCost() const
 {
@@ -72,7 +65,8 @@ Seconds WebGPUCompositorIntegrationImpl::lastFramePresentStall() const
 void WebGPUCompositorIntegrationImpl::updateContentsHeadroom(float headroom)
 {
 #if HAVE(SUPPORT_HDR_DISPLAY)
-    for (auto& ioSurface : m_renderBuffers)
+    m_contentsHeadroom = headroom;
+    for (auto& ioSurface : borrow(m_renderBuffers))
         ioSurface->setContentEDRHeadroom(headroom);
 #else
     UNUSED_PARAM(headroom);
@@ -80,9 +74,13 @@ void WebGPUCompositorIntegrationImpl::updateContentsHeadroom(float headroom)
 }
 
 #if PLATFORM(COCOA)
-Vector<MachSendRight> WebGPUCompositorIntegrationImpl::recreateRenderBuffers(int width, int height, WebCore::ColorSpace&& colorSpace, WebCore::AlphaPremultiplication alphaMode, WebGPU::TextureFormat textureFormat, unsigned bufferCount, WebGPU::Device& device)
+uint32_t WebGPUCompositorIntegrationImpl::recreateRenderBuffers(int width, int height, WebCore::ColorSpace&& colorSpace, WebCore::AlphaPremultiplication alphaMode, WebGPU::TextureFormat textureFormat, WebGPU::Device& device)
 {
     m_renderBuffers.clear();
+    m_spareRenderBuffers.clear();
+#if HAVE(SUPPORT_HDR_DISPLAY)
+    m_contentsHeadroom = std::nullopt;
+#endif
     m_device = device;
     m_alphaMode = alphaMode;
 
@@ -109,19 +107,87 @@ Vector<MachSendRight> WebGPUCompositorIntegrationImpl::recreateRenderBuffers(int
         break;
     }
 
-    for (unsigned bufferIndex = 0; bufferIndex < std::min<unsigned>(3u, bufferCount); ++bufferIndex) {
-        if (auto buffer = WebCore::IOSurface::create(nullptr, WebCore::IntSize(width, height), colorSpace, IOSurface::Name::WebGPU, colorFormat))
+    m_renderBufferSize = { width, height };
+    m_renderBufferColorSpace = WTF::move(colorSpace);
+    m_renderBufferFormat = colorFormat;
+    for (unsigned bufferIndex = 0; bufferIndex < 3; ++bufferIndex) {
+        if (auto buffer = WebCore::IOSurface::create(nullptr, m_renderBufferSize, m_renderBufferColorSpace, IOSurface::Name::WebGPU, m_renderBufferFormat))
             m_renderBuffers.append(makeUniqueRefFromNonNullUniquePtr(WTF::move(buffer)));
     }
 
     auto renderBuffers = m_renderBuffers.map([](auto& ioSurface) {
         return ioSurface->surface();
     });
-    m_renderBuffersWereRecreatedCallback(renderBuffers.span());
+    m_renderBuffersWereRecreatedCallback(borrow(renderBuffers)->span());
 
-    return m_renderBuffers.map([](const auto& renderBuffer) {
-        return renderBuffer->createSendRight();
+    return m_renderBuffers.size();
+}
+
+void WebGPUCompositorIntegrationImpl::prepareForDisplay(uint32_t frameIndex, CompletionHandler<void(MachSendRight&&, std::optional<uint32_t>)>&& completionHandler)
+{
+    if (RefPtr presentationContext = m_presentationContext)
+        presentationContext->present(frameIndex);
+
+    MachSendRight displayBuffer;
+    std::optional<uint32_t> replacedRenderBufferIndex;
+    if (frameIndex < m_renderBuffers.size()) {
+        displayBuffer = borrow(m_renderBuffers)[frameIndex]->createSendRight();
+        uint32_t nextFrameIndex = (frameIndex + 1) % m_renderBuffers.size();
+        if (nextFrameIndex != frameIndex && replaceRenderBufferIfInUse(nextFrameIndex))
+            replacedRenderBufferIndex = nextFrameIndex;
+    }
+
+    m_onSubmittedWorkScheduledCallback([completionHandler = WTF::move(completionHandler), displayBuffer = WTF::move(displayBuffer), replacedRenderBufferIndex] mutable {
+        completionHandler(WTF::move(displayBuffer), replacedRenderBufferIndex);
     });
+}
+
+bool WebGPUCompositorIntegrationImpl::replaceRenderBufferIfInUse(uint32_t index)
+{
+    updateSpareRenderBuffers();
+    if (!borrow(m_renderBuffers)[index]->isInUse())
+        return false;
+
+    auto replacement = takeSpareRenderBuffer();
+    if (!replacement)
+        replacement = WebCore::IOSurface::create(nullptr, m_renderBufferSize, m_renderBufferColorSpace, IOSurface::Name::WebGPU, m_renderBufferFormat);
+    if (!replacement)
+        return false;
+#if HAVE(SUPPORT_HDR_DISPLAY)
+    if (m_contentsHeadroom)
+        replacement->setContentEDRHeadroom(*m_contentsHeadroom);
+#endif
+
+    m_spareRenderBuffers.append({ std::exchange(borrow(m_renderBuffers)[index], makeUniqueRefFromNonNullUniquePtr(WTF::move(replacement))) });
+    if (m_spareRenderBuffers.size() > maxSpareRenderBuffers)
+        m_spareRenderBuffers.removeAt(0);
+    m_renderBufferWasReplacedCallback(index, RetainPtr { m_renderBuffers[index]->surface() }.get());
+    return true;
+}
+
+std::unique_ptr<WebCore::IOSurface> WebGPUCompositorIntegrationImpl::takeSpareRenderBuffer()
+{
+    auto index = m_spareRenderBuffers.findIf([](auto& spare) {
+        return !spare.surface->isInUse();
+    });
+    if (index == notFound)
+        return nullptr;
+
+    auto spare = WTF::move(m_spareRenderBuffers[index]);
+    m_spareRenderBuffers.removeAt(index);
+    if (spare.isVolatile)
+        spare.surface->setVolatile(false);
+    return spare.surface.moveToUniquePtr();
+}
+
+void WebGPUCompositorIntegrationImpl::updateSpareRenderBuffers()
+{
+    for (auto& spare : borrow(m_spareRenderBuffers)) {
+        if (spare.isVolatile || spare.surface->isInUse())
+            continue;
+        spare.surface->setVolatile(true);
+        spare.isVolatile = true;
+    }
 }
 #endif
 
@@ -147,7 +213,7 @@ void WebGPUCompositorIntegrationImpl::withDisplayBufferAsNativeImage(uint32_t bu
     // composite over the page; an opaque canvas forces the alpha to be ignored.
     // This matters for RGBA16F, whose IOSurface format cannot itself encode opacity.
     auto shouldForceOpaque = m_alphaMode == WebCore::AlphaPremultiplication::Premultiplied ? IOSurface::ShouldForceOpaque::No : IOSurface::ShouldForceOpaque::Yes;
-    m_renderBuffers[bufferIndex]->withNativeImage(shouldForceOpaque, [&](NativeImage* image) {
+    borrow(m_renderBuffers)[bufferIndex]->withNativeImage(shouldForceOpaque, [&](NativeImage* image) {
         if (image)
             CGImageSetCachingFlags(image->platformImage().get(), kCGImageCachingTransient);
         completion(image);

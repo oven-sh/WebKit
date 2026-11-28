@@ -27,8 +27,7 @@
 
 #include <WebCore/LayoutIterator.h>
 
-namespace WebCore {
-namespace Layout {
+namespace WebCore::Layout {
 
 template <typename T>
 class LayoutChildIterator : public LayoutIterator<T> {
@@ -48,7 +47,7 @@ public:
     const T* last() const;
 
 private:
-    const ElementBox& m_parent;
+    const CheckedRef<const ElementBox> m_parent;
 };
 
 template <typename T> LayoutChildIteratorAdapter<T> childrenOfType(const ElementBox&);
@@ -85,7 +84,7 @@ inline LayoutChildIteratorAdapter<T>::LayoutChildIteratorAdapter(const ElementBo
 template <typename T>
 inline LayoutChildIterator<T> LayoutChildIteratorAdapter<T>::begin() const
 {
-    return LayoutChildIterator<T>(m_parent, Traversal::firstChild<T>(m_parent));
+    return LayoutChildIterator<T>(m_parent, Traversal::firstChild<T>(m_parent.get()));
 }
 
 template <typename T>
@@ -97,7 +96,7 @@ inline LayoutChildIterator<T> LayoutChildIteratorAdapter<T>::end() const
 template <typename T>
 inline const T* LayoutChildIteratorAdapter<T>::first() const
 {
-    return Traversal::firstChild<T>(m_parent);
+    return Traversal::firstChild<T>(m_parent.get());
 }
 
 template <typename T>
@@ -106,5 +105,4 @@ inline LayoutChildIteratorAdapter<T> childrenOfType(const ElementBox& parent)
     return LayoutChildIteratorAdapter<T>(parent);
 }
 
-}
 }

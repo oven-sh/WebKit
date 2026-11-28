@@ -53,6 +53,11 @@ Adapter::Adapter(Instance& instance)
 
 Adapter::~Adapter() = default;
 
+RefPtr<WebGPU::Instance> Adapter::instance() const
+{
+    return m_instance.get();
+}
+
 Vector<WebGPU::FeatureName> Adapter::features() const
 {
     return m_capabilities.features;
@@ -88,6 +93,7 @@ WebGPU::AdapterInfo Adapter::info()
         .name = m_device.name,
         // A Metal device is never a fallback (software) adapter.
         .isFallbackAdapter = false,
+        .hasUnifiedMemory = static_cast<bool>(m_device.hasUnifiedMemory),
     };
     if (hasFeature(WebGPU::FeatureName::Subgroups)) {
         // Metal exposes a single SIMD-group (subgroup) width per device, so
@@ -109,14 +115,7 @@ bool Adapter::hasFeature(WebGPU::FeatureName feature)
     return m_capabilities.features.contains(feature);
 }
 
-void Adapter::requestDevice(const WebGPU::DeviceDescriptor& descriptor, CompletionHandler<void(RefPtr<WebGPU::Device>&&)>&& callback)
-{
-    requestDeviceOrError(descriptor, [callback = WTF::move(callback)](std::expected<Ref<Device>, String>&& device) mutable {
-        callback(device ? RefPtr<WebGPU::Device> { WTF::move(*device) } : nullptr);
-    });
-}
-
-void Adapter::requestDeviceOrError(const WebGPU::DeviceDescriptor& descriptor, CompletionHandler<void(std::expected<Ref<Device>, String>&&)>&& callback)
+void Adapter::requestDevice(const WebGPU::DeviceDescriptor& descriptor, CompletionHandler<void(std::expected<Ref<WebGPU::Device>, String>&&)>&& callback)
 {
     if (m_deviceRequested) {
         callback(makeUnexpected("Adapter can only request one device"_s));
@@ -165,146 +164,3 @@ bool Adapter::isXRCompatible() const
 }
 
 } // namespace WebGPU::Metal
-
-#pragma mark WGPU Stubs
-
-// The caller owns the reference to the instance. Null when the instance is gone.
-WGPUInstance wgpuAdapterGetInstance(WGPUAdapter adapter)
-{
-    @autoreleasepool {
-        return WebGPU::Metal::releaseToAPI(protect(WebGPU::Metal::fromAPI(adapter))->instance());
-    }
-}
-
-NODELETE void wgpuAdapterAddRef(WGPUAdapter adapter)
-{
-    WebGPU::Metal::fromAPI(adapter).ref();
-}
-
-void wgpuAdapterRelease(WGPUAdapter adapter)
-{
-    @autoreleasepool {
-        WebGPU::Metal::fromAPI(adapter).deref();
-    }
-}
-
-// The chained structs of limits are not filled in.
-WGPUStatus wgpuAdapterGetLimits(WGPUAdapter adapter, WGPULimits* limits)
-{
-    @autoreleasepool {
-        auto* nextInChain = limits->nextInChain;
-        *limits = WebGPU::Metal::toAPI(protect(WebGPU::Metal::fromAPI(adapter))->limits());
-        limits->nextInChain = nextInChain;
-        return WGPUStatus_Success;
-    }
-}
-
-// The strings of info are freed with wgpuAdapterInfoFreeMembers().
-WGPUStatus wgpuAdapterGetInfo(WGPUAdapter adapter, WGPUAdapterInfo* info)
-{
-    @autoreleasepool {
-        Ref protectedAdapter = WebGPU::Metal::fromAPI(adapter);
-        auto apiInfo = protectedAdapter->info();
-        id<MTLDevice> device = protectedAdapter->device();
-        // FIXME: What should the vendorID and deviceID be?
-        info->vendor = WebGPU::Metal::toAPIAllocated(emptyString());
-        info->architecture = WebGPU::Metal::toAPIAllocated(emptyString());
-        info->device = WebGPU::Metal::toAPIAllocated(apiInfo.name);
-        info->description = WebGPU::Metal::toAPIAllocated(emptyString());
-        info->backendType = WGPUBackendType_Metal;
-        info->adapterType = device.hasUnifiedMemory ? WGPUAdapterType_IntegratedGPU : WGPUAdapterType_DiscreteGPU;
-        info->vendorID = 0;
-        info->deviceID = 0;
-        info->subgroupMinSize = apiInfo.subgroupMinSize;
-        info->subgroupMaxSize = apiInfo.subgroupMaxSize;
-        return WGPUStatus_Success;
-    }
-}
-
-void wgpuAdapterInfoFreeMembers(WGPUAdapterInfo info)
-{
-    @autoreleasepool {
-        WebGPU::Metal::freeAllocated(info.vendor);
-        WebGPU::Metal::freeAllocated(info.architecture);
-        WebGPU::Metal::freeAllocated(info.device);
-        WebGPU::Metal::freeAllocated(info.description);
-    }
-}
-
-WGPUBool wgpuAdapterHasFeature(WGPUAdapter adapter, WGPUFeatureName feature)
-{
-    @autoreleasepool {
-        auto apiFeature = WebGPU::Metal::fromAPI(feature);
-        return apiFeature && protect(WebGPU::Metal::fromAPI(adapter))->hasFeature(*apiFeature);
-    }
-}
-
-// Calls the uncaptured error callback of the C API with each error of the device that no error scope
-// catches, until the device is lost. As in webgpu.h, the callback has no callback mode: it is called
-// in the call that generates the error, on its thread.
-static void listenForUncapturedErrors(WebGPU::Metal::Device& device, const WGPUUncapturedErrorCallbackInfo& callbackInfo)
-{
-    device.resolveUncapturedErrorEvent({ [weakDevice = ThreadSafeWeakPtr { device }, callbackInfo](bool hasUncapturedError, std::optional<WebGPU::Error>&& error) {
-        // There is no error when the device is destroyed.
-        if (!hasUncapturedError || !error)
-            return;
-        RefPtr device = weakDevice;
-        if (!device || device->isLost())
-            return;
-        // The device calls its uncaptured error callback once, so listen for the next error before
-        // the callback can generate one.
-        listenForUncapturedErrors(*device, callbackInfo);
-        auto message = error->message.utf8();
-        WGPUDevice handle = WebGPU::toAPI(*device);
-        callbackInfo.callback(&handle, WebGPU::Metal::toAPI(error), WebGPU::Metal::toAPI(message), callbackInfo.userdata1, callbackInfo.userdata2);
-    }, CompletionHandlerCallThread::AnyThread });
-}
-
-// The features for which wgpuAdapterHasFeature() is true, freed with
-// wgpuSupportedFeaturesFreeMembers().
-void wgpuAdapterGetFeatures(WGPUAdapter adapter, WGPUSupportedFeatures* features)
-{
-    @autoreleasepool {
-        *features = WebGPU::Metal::toAPIAllocated(protect(WebGPU::Metal::fromAPI(adapter))->features());
-    }
-}
-
-void wgpuSupportedFeaturesFreeMembers(WGPUSupportedFeatures features)
-{
-    @autoreleasepool {
-        WebGPU::Metal::freeAllocated(features);
-    }
-}
-
-// The C API reports a device that could not be created with WGPURequestDeviceStatus_Error and no
-// device. A null descriptor is the default one.
-WGPUFuture wgpuAdapterRequestDevice(WGPUAdapter adapter, const WGPUDeviceDescriptor* descriptor, WGPURequestDeviceCallbackInfo callbackInfo)
-{
-    @autoreleasepool {
-        Ref protectedAdapter = WebGPU::Metal::fromAPI(adapter);
-        WebGPU::Metal::CAPIFuture future { protectedAdapter->instance() };
-        auto callback = [callbackInfo, future](WGPURequestDeviceStatus status, WGPUDevice device, WGPUStringView message) {
-            callbackInfo.callback(status, device, message, callbackInfo.userdata1, callbackInfo.userdata2);
-            future.complete();
-        };
-        WGPUDeviceDescriptor defaultDescriptor = WGPU_DEVICE_DESCRIPTOR_INIT;
-        if (!descriptor)
-            descriptor = &defaultDescriptor;
-        WebGPU::Metal::DeviceDescriptorStorage storage;
-        auto apiDescriptor = WebGPU::Metal::fromAPI(*descriptor, storage);
-        if (!apiDescriptor) {
-            callback(WGPURequestDeviceStatus_Error, nullptr, WebGPU::Metal::toAPI("Device does not support requested features"_s));
-            return future.future();
-        }
-        protectedAdapter->requestDeviceOrError(*apiDescriptor, [callback = WTF::move(callback), uncapturedErrorCallbackInfo = descriptor->uncapturedErrorCallbackInfo](std::expected<Ref<WebGPU::Metal::Device>, String>&& device) {
-            if (!device) {
-                auto message = device.error().utf8();
-                return callback(WGPURequestDeviceStatus_Error, nullptr, WebGPU::Metal::toAPI(message));
-            }
-            if (uncapturedErrorCallbackInfo.callback)
-                listenForUncapturedErrors(device->get(), uncapturedErrorCallbackInfo);
-            callback(WGPURequestDeviceStatus_Success, WebGPU::Metal::releaseToAPI(WTF::move(*device)), WebGPU::Metal::toAPI(""_s));
-        });
-        return future.future();
-    }
-}

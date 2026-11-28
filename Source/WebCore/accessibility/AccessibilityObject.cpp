@@ -31,6 +31,7 @@
 
 #include "AccessibilityNodeObjectInlines.h"
 #include "AXAttributeCacheScope.h"
+#include "AXChildIterator.h"
 #include "AXComputedObjectAttributeCache.h"
 #include "AXIsolatedTree.h"
 #include "AXLogger.h"
@@ -107,7 +108,6 @@
 #include "RenderLayer.h"
 #include "RenderLayerInlines.h"
 #include "RenderListItem.h"
-#include "RenderListOutsideMarker.h"
 #include "RenderObjectInlines.h"
 #include "RenderText.h"
 #include "RenderTextControl.h"
@@ -553,6 +553,58 @@ AccessibilityObject* AccessibilityObject::displayContentsParent() const
 
     CheckedPtr cache = axObjectCache();
     return cache ? cache->getOrCreate(*parentNode) : nullptr;
+}
+
+AccessibilityObject::iterator::iterator(const AccessibilityObject* object, const AccessibilityObject* displayContentsParent)
+    : m_current(object)
+    , m_displayContentsParent(displayContentsParent)
+{
+    RefPtr parentNode = displayContentsParent ? dynamicDowncast<ContainerNode>(displayContentsParent->node()) : nullptr;
+    RefPtr node = object ? object->node() : nullptr;
+    if (!parentNode || !node || composedParentIgnoringDocumentFragments(*node) != parentNode)
+        return;
+
+    auto children = composedTreeChildren</* InlineContextCapacity */ 0>(*parentNode);
+    auto child = children.at(*node);
+    auto end = children.end();
+    if (child != end)
+        m_composedTreeChildren = ComposedTreeChildren { WTF::move(child), WTF::move(end) };
+}
+
+RefPtr<AccessibilityObject> AccessibilityObject::iterator::nextSiblingInComposedTree()
+{
+    if (!m_composedTreeChildren)
+        return nullptr;
+
+    CheckedPtr cache = protect(m_displayContentsParent)->axObjectCache();
+    if (!cache)
+        return nullptr;
+
+    auto& [child, end] = *m_composedTreeChildren;
+    for (++child; child != end; ++child) {
+        Ref node = *child;
+        if (RefPtr object = cache->getOrCreate(node.get()))
+            return object;
+    }
+    return nullptr;
+}
+
+RefPtr<AccessibilityObject> AccessibilityObject::iterator::previousSiblingInComposedTree()
+{
+    if (!m_composedTreeChildren)
+        return nullptr;
+
+    CheckedPtr cache = protect(m_displayContentsParent)->axObjectCache();
+    if (!cache)
+        return nullptr;
+
+    auto& [child, end] = *m_composedTreeChildren;
+    for (--child; child != end; --child) {
+        Ref node = *child;
+        if (RefPtr object = cache->getOrCreate(node.get()))
+            return object;
+    }
+    return nullptr;
 }
 
 AccessibilityObject* AccessibilityObject::nextSiblingUnignored(unsigned limit) const
@@ -1397,7 +1449,7 @@ Vector<String> AccessibilityObject::performTextOperation(const AccessibilityText
     return result;
 }
 
-String AccessibilityObject::altTextFromAttributeOrStyle() const
+String AccessibilityObject::altText() const
 {
     const auto& alt = getAttribute(altAttr);
     if (!alt.isNull()) {
@@ -1406,8 +1458,26 @@ String AccessibilityObject::altTextFromAttributeOrStyle() const
         return alt;
     }
 
-    CheckedPtr style = this->style();
-    return style ? style->content().altText() : nullString();
+    return altTextFromContent();
+}
+
+// Alternative text from 'content' only applies where that content is used: a pseudo-element's
+// generated content, or an element replaced by a 'content' image.
+String AccessibilityObject::altTextFromContent() const
+{
+    if (auto contentAlt = altTextFromStyle(); !contentAlt.isNull())
+        return contentAlt;
+    if (CheckedPtr image = dynamicDowncast<RenderImage>(renderer()); image && image->isGeneratedContent())
+        return image->altText();
+    return nullString();
+}
+
+String AccessibilityObject::altTextFromStyle() const
+{
+    CheckedPtr renderer = dynamicDowncast<RenderElement>(this->renderer());
+    if (!renderer || !renderer->style().pseudoElementType())
+        return nullString();
+    return renderer->style().content().altText();
 }
 
 bool AccessibilityObject::isARIAInput(AccessibilityRole ariaRole)
@@ -2289,8 +2359,8 @@ bool AccessibilityObject::shouldCacheStringValue() const
     if (renderer->isAnonymous()) {
         auto* parent = renderer ? renderer->parent() : nullptr;
         if (is<PseudoElement>(parent ? parent->element() : nullptr)) {
-            // RenderTexts descending from pseudo-elements (e.g. ::before) can have alt text that
-            // we don't currently handle via text runs, and thus we must cache the string value.
+            // RenderTexts descending from pseudo-elements (e.g. ::before) have no text runs,
+            // and thus we must cache the string value.
             return true;
         }
     }
@@ -3130,7 +3200,7 @@ bool AccessibilityObject::insertText(const String& text)
 }
 
 using ARIARoleMap = HashMap<String, AccessibilityRole, ASCIICaseInsensitiveHash>;
-using ARIAReverseRoleMap = HashMap<AccessibilityRole, String, DefaultHash<int>, WTF::UnsignedWithZeroKeyHashTraits<int>>;
+using ARIAReverseRoleMap = HashMap<int, String>;
 
 static ARIARoleMap* gAriaRoleMap = nullptr;
 static ARIAReverseRoleMap* gAriaReverseRoleMap = nullptr;
@@ -3887,9 +3957,8 @@ Vector<String> AccessibilityObject::classList() const
         return { };
 
     Ref domClassList = element->classList();
-    Vector<String> classList;
     unsigned length = domClassList->length();
-    classList.reserveInitialCapacity(length);
+    Vector<String> classList(ReserveCapacityTag { }, length);
     for (unsigned k = 0; k < length; k++)
         classList.append(domClassList->item(k).string());
     return classList;

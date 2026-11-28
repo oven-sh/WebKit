@@ -35,8 +35,7 @@
 #include "StyleOrphans.h"
 #include "StyleWidows.h"
 
-namespace WebCore {
-namespace LayoutIntegration {
+namespace WebCore::LayoutIntegration {
 
 NODELETE static LayoutUnit computeFirstLineSnapAdjustment(const InlineDisplay::Line& line, const Layout::BlockLayoutState::LineGrid& lineGrid)
 {
@@ -59,7 +58,7 @@ std::pair<Vector<LineAdjustment>, std::optional<LayoutRestartLine>> computeAdjus
     auto lineCount = inlineContent.displayContent().lines.size();
     Vector<LineAdjustment> adjustments { lineCount };
 
-    HashMap<size_t, LayoutUnit, DefaultHash<size_t>, WTF::UnsignedWithZeroKeyHashTraits<size_t>>  lineFloatBottomMap;
+    HashMap<size_t, LayoutUnit> lineFloatBottomMap;
     for (auto& floatBox : placedFloats.list()) {
         if (!floatBox.layoutBox())
             continue;
@@ -70,15 +69,14 @@ std::pair<Vector<LineAdjustment>, std::optional<LayoutRestartLine>> computeAdjus
         auto placedByLine = floatBox.placedByLine();
         if (!placedByLine) {
             if (isUnsplittable) {
-                auto rect = floatBox.absoluteRectWithMargin();
-                flow.updateMinimumPageHeight(rect.top(), rect.height());
+                flow.updateMinimumPageHeight(floatBox.marginBoxTop().value(), floatBox.marginBoxSize().height());
             }
             continue;
         }
 
         auto floatMinimumBottom = [&] {
             if (isUnsplittable)
-                return floatBox.absoluteRectWithMargin().bottom();
+                return floatBox.marginBoxBottom().value();
 
             if (CheckedPtr block = dynamicDowncast<RenderBlockFlow>(renderer)) {
                 if (auto firstLine = InlineIterator::firstLineBoxFor(*block))
@@ -155,7 +153,7 @@ std::pair<Vector<LineAdjustment>, std::optional<LayoutRestartLine>> computeAdjus
     if (!previousPageBreakIndex)
         return { };
 
-    return { adjustments, layoutRestartLine };
+    return { WTF::move(adjustments), layoutRestartLine };
 }
 
 void adjustLinePositionsForPagination(InlineContent& inlineContent, const Vector<LineAdjustment>& adjustments)
@@ -183,5 +181,4 @@ void adjustLinePositionsForPagination(InlineContent& inlineContent, const Vector
     }
 }
 
-}
 }

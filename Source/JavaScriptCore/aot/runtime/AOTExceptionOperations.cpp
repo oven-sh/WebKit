@@ -442,7 +442,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCheckFreshResult, void, (Instance*
     Heap& heap = vm.heap;
     uint64_t collections = heap.objectSpace().newlyAllocatedVersion();
     struct FreshResults {
-        UncheckedKeyHashSet<JSCell*> cells;
+        HashSet<JSCell*> cells;
         std::optional<VMIdentifier> vm;
         uint64_t collections { 0 };
     };

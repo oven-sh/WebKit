@@ -246,10 +246,9 @@ void EventPath::retargetTouchLists(const TouchEvent& event)
 // we decrease the *allowed depth* whenever we moved to a "shallower" (closer-to-document) tree.
 Vector<Ref<EventTarget>> EventPath::computePathUnclosedToTarget(const EventTarget& target) const
 {
-    Vector<Ref<EventTarget>> path;
     auto pathSize = m_path.size();
     RELEASE_ASSERT(pathSize);
-    path.reserveInitialCapacity(pathSize);
+    Vector<Ref<EventTarget>> path(ReserveCapacityTag { }, pathSize);
 
     // The last match is the use element's own context, not its shadow tree's.
     auto currentTargetIndex = m_path.reverseFindIf([&target](auto& context) {
@@ -285,10 +284,9 @@ Vector<Ref<EventTarget>> EventPath::computePathUnclosedToTarget(const EventTarge
 
 Vector<Ref<EventTarget>> EventPath::computePathTreatingAllShadowRootsAsOpen() const
 {
-    Vector<Ref<EventTarget>> path;
     auto pathSize = m_path.size();
     RELEASE_ASSERT(pathSize);
-    path.reserveInitialCapacity(pathSize);
+    Vector<Ref<EventTarget>> path(ReserveCapacityTag { }, pathSize);
     for (auto& currentContext : m_path) {
         if (auto* currentNode = currentContext.node(); currentNode && currentNode->hasBeenInUserAgentShadowTree())
             continue;
@@ -302,7 +300,7 @@ EventPath::EventPath(std::span<EventTarget* const> targets)
     m_path = WTF::map(targets, [&](auto* target) {
         ASSERT(target);
         ASSERT(!is<Node>(target));
-        return EventContext { EventContext::Type::Normal, nullptr, target, *targets.begin(), 0 };
+        return EventContext { EventContext::Type::Normal, nullptr, target, protect(*targets.begin()), 0 };
     });
 }
 

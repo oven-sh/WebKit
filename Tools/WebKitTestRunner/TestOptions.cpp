@@ -80,6 +80,7 @@ const TestFeatures& TestOptions::defaults()
             { "AsyncOverflowScrollingEnabled", false },
             { "BuiltInNotificationsEnabled", false },
             { "CSSUnprefixedBackdropFilterEnabled", true },
+            { "CanvasColorTypeEnabled", true },
             { "CaptureAudioInGPUProcessEnabled", captureAudioInGPUProcessEnabledValue },
             { "CaptureVideoInGPUProcessEnabled", captureVideoInGPUProcessEnabledValue },
             { "ContentChangeObserverEnabled", false },
@@ -142,6 +143,7 @@ const TestFeatures& TestOptions::defaults()
 #if ENABLE(UNIFIED_PDF)
             { "UnifiedPDFEnabled", unifiedPDFEnabledValue },
 #endif
+            { "UnloadEventEnabled", true },
             { "UsesBackForwardCache", false },
             { "WebAuthenticationEnabled", true },
 #if ENABLE(WEBGL)

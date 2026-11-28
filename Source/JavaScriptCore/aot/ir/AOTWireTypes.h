@@ -61,7 +61,7 @@ private:
     BitVector m_typeParametersWithoutFamily;
     BitVector m_viewsWithoutLayouts;
     Vector<TypeID> m_typesExpectedBesideViews;
-    UncheckedKeyHashMap<uint32_t, TypeID> m_typesOfRecordsMadeForFields;
+    HashMap<uint32_t, TypeID> m_typesOfRecordsMadeForFields;
     Vector<ObjectSetID> m_functionFamilies;
     std::optional<InternalError> m_errorInFunctionFamilies;
     BitVector m_modulesNamedByBodies;

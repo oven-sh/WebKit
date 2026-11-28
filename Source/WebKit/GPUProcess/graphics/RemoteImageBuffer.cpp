@@ -121,8 +121,7 @@ RemoteImageBuffer::~RemoteImageBuffer()
     // Unwind the context's state stack before destruction, since calls to restore may not have
     // been flushed yet, or the web process may have terminated.
     auto& context = m_imageBuffer->context();
-    while (context.stackSize())
-        context.restore();
+    context.unwindStateStack();
 }
 
 void RemoteImageBuffer::startListeningForIPC()
@@ -150,7 +149,6 @@ void RemoteImageBuffer::getPixelBuffer(WebCore::PixelBufferFormat destinationFor
     auto memory = m_renderingBackend->sharedMemoryForGetPixelBuffer();
     MESSAGE_CHECK(memory, "No shared memory for getPixelBufferForImageBuffer");
     MESSAGE_CHECK(WebCore::ImageBuffer::supportedPixelBufferFormats(destinationFormat.pixelFormat), "Pixel format not supported");
-    MESSAGE_CHECK(m_imageBuffer->renderingMode() != RenderingMode::PDFDocument && m_imageBuffer->renderingMode() != RenderingMode::DisplayList, "Backend does not hold pixels");
     MESSAGE_CHECK(m_imageBuffer->renderingPurpose() != RenderingPurpose::LayerBacking, "We should not interact with the pixelBuffer for LayerBacking");
     WebCore::IntRect srcRect(srcPoint, srcSize);
     if (auto pixelBuffer = m_imageBuffer->getPixelBuffer(destinationFormat, srcRect)) {
@@ -176,7 +174,6 @@ void RemoteImageBuffer::putPixelBuffer(const WebCore::PixelBufferSourceView& pix
     assertIsCurrent(workQueue());
 
     MESSAGE_CHECK(m_imageBuffer->resolutionScale() == 1, "putPixelBuffer() should not be called if (resolutionScale() != 1)");
-    MESSAGE_CHECK(m_imageBuffer->renderingMode() != RenderingMode::PDFDocument && m_imageBuffer->renderingMode() != RenderingMode::DisplayList, "Backend does not hold pixels");
     MESSAGE_CHECK(m_imageBuffer->renderingPurpose() != RenderingPurpose::LayerBacking, "We should not interact with the pixelBuffer for LayerBacking");
 
     WebCore::IntRect srcRect(srcPoint, srcSize);

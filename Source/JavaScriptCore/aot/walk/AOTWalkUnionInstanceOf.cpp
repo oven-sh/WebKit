@@ -66,7 +66,7 @@ struct FormOfInstanceOf {
 };
 
 
-using NumbersOfClassesForInstanceOf = UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+using NumbersOfClassesForInstanceOf = HashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
 
 struct ClassHierarchyNumbering {
     Vector<LayoutID> candidates;
@@ -74,12 +74,12 @@ struct ClassHierarchyNumbering {
     Vector<uint32_t> classPreorderNumbers;
     Vector<uint32_t> classSubtreeEnds;
     Vector<MemberConditionRecord> links;
-    UncheckedKeyHashMap<uint32_t, std::pair<uint32_t, uint32_t>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> subtreeRanges;
+    HashMap<uint32_t, std::pair<uint32_t, uint32_t>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> subtreeRanges;
 };
 
 struct KeptByInstanceOf final : Walker::KeptForBuild {
-    UncheckedKeyHashMap<uint32_t, std::unique_ptr<ClassHierarchyNumbering>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> numberingsByFamily;
-    UncheckedKeyHashMap<uint32_t, Vector<std::unique_ptr<ClassHierarchyNumbering>, 1>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> numberingsByLayoutList;
+    HashMap<uint32_t, std::unique_ptr<ClassHierarchyNumbering>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> numberingsByFamily;
+    HashMap<uint32_t, Vector<std::unique_ptr<ClassHierarchyNumbering>, 1>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> numberingsByLayoutList;
 };
 
 struct BuiltinTestedByInstanceOf {

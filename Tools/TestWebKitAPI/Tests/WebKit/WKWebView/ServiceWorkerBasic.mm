@@ -26,15 +26,16 @@
 #import "config.h"
 
 #import "Helpers/DeprecatedGlobalValues.h"
-#import "Helpers/cocoa/HTTPServer.h"
 #import "Helpers/PlatformUtilities.h"
-#import "ServiceWorkerPageProtocol.h"
 #import "Helpers/Test.h"
+#import "Helpers/cocoa/HTTPServer.h"
+#import "Helpers/cocoa/HTTPServer/TestCertificates.h"
 #import "Helpers/cocoa/TestDownloadDelegate.h"
 #import "Helpers/cocoa/TestNavigationDelegate.h"
 #import "Helpers/cocoa/TestUIDelegate.h"
 #import "Helpers/cocoa/TestWKWebView.h"
 #import "Helpers/cocoa/WKWebViewConfigurationExtras.h"
+#import "ServiceWorkerPageProtocol.h"
 #import <WebCore/CertificateInfo.h>
 #import <WebKit/WKContextPrivate.h>
 #import <WebKit/WKPreferencesPrivate.h>
@@ -3837,7 +3838,7 @@ TEST(ServiceWorker, ExtensionServiceWorkerDisableCORS)
     auto testJS = makeString("fetch('http://127.0.0.1:"_s, server.port(), "/bar.xml', { headers: { 'Custom-Header': 'CustomHeaderValue' } });"_s);
 
     RetainPtr schemeHandler = adoptNS([ServiceWorkerSchemeHandler new]);
-    [schemeHandler addMappingFromURLString:@"sw-ext://ABC/sw.js" toData:testJS.utf8()];
+    [schemeHandler addMappingFromURLString:@"sw-ext://ABC/sw.js" toData:makeUTF8CString(testJS)];
 
     WKWebViewConfiguration *webViewConfiguration = [WKWebViewConfiguration _test_configurationWithTestPlugInClassName:@"ServiceWorkerPagePlugIn"];
     [webViewConfiguration setURLSchemeHandler:schemeHandler.get() forURLScheme:@"sw-ext"];

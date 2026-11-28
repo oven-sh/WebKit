@@ -29,8 +29,10 @@
 #include <WebCore/Color.h>
 #include <WebCore/ColorConversion.h>
 #include <WebCore/ColorSerialization.h>
+#include <WebCore/ColorSpace.h>
 #include <WebCore/ColorTypes.h>
 #include <WebCore/ColorUtilities.h>
+#include <wtf/EnumTraits.h>
 #include <wtf/Hasher.h>
 #include <wtf/MathExtras.h>
 
@@ -664,8 +666,89 @@ TEST(Color, ConvertComponentTypeOfPremultiplied)
 
 TEST(Color, ColorComponentsOfPremultiplied)
 {
-    EXPECT_EQ(asColorComponents(premultiplied(SRGBA<float> { 1.0f, 0.5f, 0.25f, 0.5f }.unresolved())), (ColorComponents<float, 4> { 0.5f, 0.25f, 0.125f, 0.5f }));
-    EXPECT_EQ(asColorComponents(premultiplied(SRGBA<float> { 1.0f, 0.5f, 0.25f, 0.5f }.resolved())), (ColorComponents<float, 4> { 0.5f, 0.25f, 0.125f, 0.5f }));
+    EXPECT_TRUE((asColorComponents(premultiplied(SRGBA<float> { 1.0f, 0.5f, 0.25f, 0.5f }.unresolved())) == Premultiplied { unresolvedColor(ColorComponents<float, 4> { 0.5f, 0.25f, 0.125f, 0.5f }) }));
+    EXPECT_TRUE((asColorComponents(premultiplied(SRGBA<float> { 1.0f, 0.5f, 0.25f, 0.5f }.resolved())) == Premultiplied { resolvedColor(ColorComponents<float, 4> { 0.5f, 0.25f, 0.125f, 0.5f }) }));
+}
+
+using ResolvedComponents = ResolvedColorType<ColorComponents<float, 4>>;
+using UnresolvedComponents = UnresolvedColorType<ColorComponents<float, 4>>;
+
+static_assert(std::same_as<decltype(resolvedColor(std::declval<ColorComponents<float, 4>>())), ResolvedComponents>);
+static_assert(std::same_as<decltype(unresolvedColor(std::declval<ColorComponents<float, 4>>())), UnresolvedComponents>);
+
+static_assert(CanWrapInPremultiplied<ResolvedComponents>);
+static_assert(CanWrapInPremultiplied<UnresolvedComponents>);
+static_assert(!CanWrapInPremultiplied<ColorComponents<float, 4>>);
+
+static_assert(CanResolve<ResolvedComponents>);
+static_assert(!CanResolve<UnresolvedComponents>);
+static_assert(CanResolve<ResolvedPremultiplied<ColorComponents<float, 4>>>);
+static_assert(!CanResolve<UnresolvedPremultiplied<ColorComponents<float, 4>>>);
+
+// Components don't say which one is a hue, so they can't be premultiplied, only tagged as premultiplied.
+static_assert(!CanPremultiply<ResolvedComponents>);
+static_assert(!CanPremultiply<UnresolvedComponents>);
+
+static_assert(!std::is_convertible_v<ColorComponents<float, 4>, ResolvedComponents>);
+static_assert(!std::is_convertible_v<ColorComponents<float, 4>, UnresolvedComponents>);
+static_assert(!std::is_convertible_v<UnresolvedComponents, ResolvedComponents>);
+static_assert(std::is_convertible_v<ResolvedComponents, ColorComponents<float, 4>>);
+static_assert(!std::is_convertible_v<ResolvedComponents, ResolvedPremultiplied<ColorComponents<float, 4>>>);
+static_assert(!std::is_convertible_v<ResolvedPremultiplied<ColorComponents<float, 4>>, ColorComponents<float, 4>>);
+
+// The components of a color keep its tags.
+static_assert(std::same_as<decltype(asColorComponents(std::declval<ResolvedSRGBA>())), ResolvedComponents>);
+static_assert(std::same_as<decltype(asColorComponents(std::declval<UnresolvedSRGBA>())), UnresolvedComponents>);
+static_assert(std::same_as<decltype(asColorComponents(std::declval<ResolvedColorType<SRGBA<uint8_t>>>())), ResolvedColorType<ColorComponents<uint8_t, 4>>>);
+static_assert(std::same_as<decltype(asColorComponents(std::declval<ResolvedColorType<LCHA<float>>>())), ResolvedComponents>);
+static_assert(std::same_as<decltype(asColorComponents(std::declval<ResolvedPremultiplied<SRGBA<float>>>())), ResolvedPremultiplied<ColorComponents<float, 4>>>);
+static_assert(std::same_as<decltype(asColorComponents(std::declval<UnresolvedPremultiplied<SRGBA<float>>>())), UnresolvedPremultiplied<ColorComponents<float, 4>>>);
+static_assert(std::same_as<decltype(asColorComponents(std::declval<ResolvedComponents>())), ResolvedComponents>);
+static_assert(std::same_as<decltype(asColorComponents(std::declval<UnresolvedComponents>())), UnresolvedComponents>);
+static_assert(std::same_as<decltype(asColorComponents(std::declval<ResolvedPremultiplied<ColorComponents<float, 4>>>())), ResolvedPremultiplied<ColorComponents<float, 4>>>);
+
+TEST(Color, ResolvedColorComponents)
+{
+    auto [c1, c2, c3, alpha] = resolvedColor(ColorComponents<float, 4> { std::numeric_limits<float>::quiet_NaN(), 0.5f, 0.25f, std::numeric_limits<float>::quiet_NaN() });
+    EXPECT_FLOAT_EQ(c1, 0.0f);
+    EXPECT_FLOAT_EQ(c2, 0.5f);
+    EXPECT_FLOAT_EQ(c3, 0.25f);
+    EXPECT_FLOAT_EQ(alpha, 0.0f);
+}
+
+TEST(Color, UnresolvedColorComponents)
+{
+    auto color = unresolvedColor(ColorComponents<float, 4> { std::numeric_limits<float>::quiet_NaN(), 0.5f, 0.25f, 1.0f });
+    EXPECT_TRUE(color.anyComponentIsNone());
+
+    auto [c1, c2, c3, alpha] = color;
+    EXPECT_TRUE(std::isnan(c1));
+    EXPECT_FLOAT_EQ(c2, 0.5f);
+    EXPECT_FLOAT_EQ(c3, 0.25f);
+    EXPECT_FLOAT_EQ(alpha, 1.0f);
+
+    EXPECT_FALSE(unresolvedColor(ColorComponents<float, 4> { 1.0f, 0.5f, 0.25f, 1.0f }).anyComponentIsNone());
+}
+
+TEST(Color, PremultipliedColorComponents)
+{
+    auto color = Premultiplied { resolvedColor(ColorComponents<float, 4> { 0.5f, 0.25f, 0.125f, 0.5f }) };
+    EXPECT_EQ(asColorComponents(color.resolved()), (ColorComponents<float, 4> { 0.5f, 0.25f, 0.125f, 0.5f }));
+
+    auto [c1, c2, c3, alpha] = color;
+    EXPECT_FLOAT_EQ(c1, 0.5f);
+    EXPECT_FLOAT_EQ(c2, 0.25f);
+    EXPECT_FLOAT_EQ(c3, 0.125f);
+    EXPECT_FLOAT_EQ(alpha, 0.5f);
+}
+
+TEST(Color, ConvertComponentTypeOfPremultipliedColorComponents)
+{
+    auto bytes = convertComponentType<uint8_t>(Premultiplied { resolvedColor(ColorComponents<float, 4> { 0.5f, 0.25f, 0.0f, 0.5f }) });
+    EXPECT_TRUE((bytes == Premultiplied { asColorComponents(SRGBA<uint8_t> { 128, 64, 0, 128 }.resolved()) }));
+
+    auto floats = convertComponentType<float>(bytes);
+    EXPECT_EQ(asColorComponents(floats.resolved()), (ColorComponents<float, 4> { 128 / 255.0f, 64 / 255.0f, 0.0f, 128 / 255.0f }));
 }
 
 TEST(Color, PackedColorFromPremultiplied)
@@ -676,7 +759,7 @@ TEST(Color, PackedColorFromPremultiplied)
 
 TEST(Color, TransferFunctionsKeepTheSignOfExtendedComponents)
 {
-    auto expectRoundTrip = [&]<typename ColorType>() {
+    auto expectRoundTrip = [&]<typename ColorType> {
         using TransferFunction = typename ColorType::TransferFunction;
         for (float component : { -0.01f, -0.09f, -0.5f, -1.5f, 0.5f, 1.5f })
             EXPECT_NEAR(TransferFunction::toGammaEncoded(TransferFunction::toLinear(component)), component, 0.0001f);
@@ -686,6 +769,126 @@ TEST(Color, TransferFunctionsKeepTheSignOfExtendedComponents)
     expectRoundTrip.template operator()<ExtendedProPhotoRGB<float>>();
     expectRoundTrip.template operator()<ExtendedRec2020<float>>();
     expectRoundTrip.template operator()<ExtendedSRGBA<float>>();
+}
+
+TEST(Color, Rec2020TransferFunctionIsGamma24)
+{
+    for (float component : { 0.05f, 0.35f, 0.65f, 0.95f, 1.25f, -0.5f }) {
+        EXPECT_NEAR(ExtendedRec2020<float>::TransferFunction::toLinear(component), std::copysign(std::pow(std::abs(component), 2.4f), component), 0.000001f);
+        EXPECT_NEAR(ExtendedRec2020<float>::TransferFunction::toGammaEncoded(std::copysign(std::pow(std::abs(component), 2.4f), component)), component, 0.00001f);
+    }
+
+    // The BT.2020 inverse OETF would give 0.011111 here.
+    EXPECT_NEAR(ExtendedRec2020<float>::TransferFunction::toLinear(0.05f), 0.000754f, 0.000001f);
+
+    EXPECT_NEAR(Rec2020<float>::TransferFunction::toLinear(1.25f), 1.0f, 0.000001f);
+    EXPECT_NEAR(Rec2020<float>::TransferFunction::toLinear(-0.5f), 0.0f, 0.000001f);
+}
+
+TEST(Color, Rec2020Conversions)
+{
+    auto expectComponentsNear = [](ColorComponents<float, 4> components, ColorComponents<float, 4> expected) {
+        for (size_t i = 0; i < 4; ++i)
+            EXPECT_NEAR(components[i], expected[i], 0.00001f);
+    };
+
+    expectComponentsNear(asColorComponents(convertColor<Rec2020<float>>(SRGBA<float> { 0.0f, 128.0f / 255.0f, 0.0f, 1.0f }).resolved()), { 0.332322f, 0.509792f, 0.191779f, 1.0f });
+    expectComponentsNear(asColorComponents(convertColor<ExtendedRec2020<float>>(DisplayP3<float> { 0.0f, 1.0f, 0.0f, 1.0f }).resolved()), { 0.509905f, 0.975315f, 0.185772f, 1.0f });
+    expectComponentsNear(asColorComponents(convertColor<ExtendedSRGBA<float>>(Rec2020<float> { 0.25f, 0.5f, 0.75f, 1.0f }).resolved()), { -0.328686f, 0.491201f, 0.761852f, 1.0f });
+    expectComponentsNear(asColorComponents(convertColor<Rec2020<float>>(SRGBA<float> { 0.25f, 0.5f, 0.75f, 1.0f }).resolved()), { 0.420493f, 0.518024f, 0.741381f, 1.0f });
+}
+
+#if USE(CG)
+TEST(Color, Rec2020ConversionsMatchCoreGraphics)
+{
+    auto expectComponentsNear = [](ColorComponents<float, 4> components, ColorComponents<float, 4> expected) {
+        for (size_t i = 0; i < 4; ++i)
+            EXPECT_NEAR(components[i], expected[i], 0.0001f);
+    };
+
+#if ENABLE(DESTINATION_COLOR_SPACE_EXTENDED_REC_2020)
+    for (auto green : { DisplayP3<float> { 0.0f, 1.0f, 0.0f, 1.0f }, DisplayP3<float> { 0.0f, 0.5f, 0.0f, 1.0f } })
+        expectComponentsNear(platformConvertColorComponents(ColorSpaceName::DisplayP3, asColorComponents(green.resolved()), ColorSpace::ExtendedRec2020()), asColorComponents(convertColor<ExtendedRec2020<float>>(green).resolved()));
+#endif
+
+#if ENABLE(DESTINATION_COLOR_SPACE_EXTENDED_SRGB)
+    for (auto rec2020 : { Rec2020<float> { 0.25f, 0.5f, 0.75f, 1.0f }, Rec2020<float> { 0.05f, 0.1f, 0.02f, 1.0f } })
+        expectComponentsNear(platformConvertColorComponents(ColorSpaceName::Rec2020, asColorComponents(rec2020.resolved()), ColorSpace::ExtendedSRGB()), asColorComponents(convertColor<ExtendedSRGBA<float>>(rec2020).resolved()));
+#endif
+}
+#endif
+
+// Components in the range of each component of `ColorType`, some of them missing.
+template<typename ColorType> static Vector<ColorComponents<float, 4>> sampleComponents()
+{
+    constexpr std::array fractions { 0.0f, 0.3f, 0.65f, 1.0f };
+    auto component = [&](unsigned index, float fraction) {
+        auto info = ColorType::Model::componentInfo[index];
+        if (std::isinf(info.min) || std::isinf(info.max))
+            return std::isinf(info.min) ? fraction * 2 - 0.6f : info.min + fraction * 1.3f;
+        return info.min + fraction * (info.max - info.min);
+    };
+
+    Vector<ColorComponents<float, 4>> samples;
+    for (unsigned i = 0; i < fractions.size(); ++i) {
+        ColorComponents<float, 4> sample { component(0, fractions[i]), component(1, fractions[(i + 1) % 4]), component(2, fractions[(i + 2) % 4]), i % 2 ? 0.5f : 1.0f };
+        samples.append(sample);
+        for (unsigned missing = 0; missing < 4; ++missing) {
+            auto withMissing = sample;
+            withMissing[missing] = std::numeric_limits<float>::quiet_NaN();
+            samples.append(withMissing);
+        }
+    }
+    ColorComponents<float, 4> allNonAlphaMissing { std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::quiet_NaN(), 1.0f };
+    samples.append(allNonAlphaMissing);
+    return samples;
+}
+
+TEST(Color, ConvertColorComponentsIsIdenticalToConvertColor)
+{
+    WTF::EnumTraits<ColorSpaceName>::values::forEach([&](auto inputColorSpace) {
+        callWithColorType<float>(inputColorSpace, [&]<typename Input> {
+            for (auto& components : sampleComponents<Input>()) {
+                auto input = makeFromComponents<Input>(components);
+                WTF::EnumTraits<ColorSpaceName>::values::forEach([&](auto outputColorSpace) {
+                    callWithColorType<float>(outputColorSpace, [&]<typename Output> {
+                        SCOPED_TRACE(testing::Message() << "from " << static_cast<int>(inputColorSpace) << " to " << static_cast<int>(outputColorSpace) << ": " << components[0] << ' ' << components[1] << ' ' << components[2] << ' ' << components[3]);
+
+                        auto direct = asColorComponents(convertColor<Output>(input).unresolved());
+                        auto splitAtXYZ = asColorComponents(convertColorComponents<Output>(inputColorSpace, components).unresolved());
+                        EXPECT_TRUE(direct == splitAtXYZ) << direct[0] << ' ' << direct[1] << ' ' << direct[2] << ' ' << direct[3] << " vs " << splitAtXYZ[0] << ' ' << splitAtXYZ[1] << ' ' << splitAtXYZ[2] << ' ' << splitAtXYZ[3];
+
+                        auto directCarryingForwardMissing = asColorComponents(convertColorCarryingForwardMissing<Output>(input).unresolved());
+                        auto splitAtXYZCarryingForwardMissing = asColorComponents(convertColorComponentsCarryingForwardMissing<Output>(inputColorSpace, components).unresolved());
+                        EXPECT_TRUE(directCarryingForwardMissing == splitAtXYZCarryingForwardMissing) << directCarryingForwardMissing[0] << ' ' << directCarryingForwardMissing[1] << ' ' << directCarryingForwardMissing[2] << ' ' << directCarryingForwardMissing[3] << " vs " << splitAtXYZCarryingForwardMissing[0] << ' ' << splitAtXYZCarryingForwardMissing[1] << ' ' << splitAtXYZCarryingForwardMissing[2] << ' ' << splitAtXYZCarryingForwardMissing[3];
+                    });
+                });
+
+                auto directBytes = convertColor<SRGBA<uint8_t>>(input);
+                auto splitAtXYZBytes = convertColorComponents<SRGBA<uint8_t>>(inputColorSpace, components);
+                EXPECT_EQ(directBytes, splitAtXYZBytes);
+            }
+        });
+    });
+}
+
+TEST(Color, ConvertsWithoutXYZ)
+{
+    static_assert(ConvertsWithoutXYZ<HSLA<float>, SRGBA<float>>);
+    static_assert(ConvertsWithoutXYZ<HWBA<float>, LinearSRGBA<float>>);
+    static_assert(ConvertsWithoutXYZ<SRGBA<uint8_t>, ExtendedSRGBA<float>>);
+    static_assert(ConvertsWithoutXYZ<LCHA<float>, Lab<float>>);
+    static_assert(ConvertsWithoutXYZ<OKLCHA<float>, OKLab<float>>);
+    static_assert(ConvertsWithoutXYZ<DisplayP3<float>, ExtendedLinearDisplayP3<float>>);
+    static_assert(!ConvertsWithoutXYZ<SRGBA<float>, DisplayP3<float>>);
+    static_assert(!ConvertsWithoutXYZ<Lab<float>, XYZA<float, WhitePoint::D50>>);
+    static_assert(!ConvertsWithoutXYZ<OKLab<float>, Lab<float>>);
+    static_assert(!ConvertsWithoutXYZ<HSLA<float>, OKLCHA<float>>);
+
+    static_assert(std::same_as<XYZForColorType<HSLA<float>>, XYZA<float, WhitePoint::D65>>);
+    static_assert(std::same_as<XYZForColorType<LCHA<float>>, XYZA<float, WhitePoint::D50>>);
+    static_assert(std::same_as<XYZForColorType<ProPhotoRGB<float>>, XYZA<float, WhitePoint::D50>>);
+    static_assert(std::same_as<XYZForColorType<OKLCHA<float>>, XYZA<float, WhitePoint::D65>>);
 }
 
 } // namespace TestWebKitAPI

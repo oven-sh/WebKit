@@ -1,7 +1,7 @@
 /*
  * Copyright (C) 2004, 2005, 2006, 2019 Nikolas Zimmermann <zimmermann@kde.org>
  * Copyright (C) 2004, 2005, 2006, 2007, 2008, 2010 Rob Buis <buis@kde.org>
- * Copyright (C) 2007-2025 Apple Inc. All rights reserved.
+ * Copyright (C) 2007-2026 Apple Inc. All rights reserved.
  * Copyright (C) 2015-2022 Google Inc. All rights reserved.
  * Copyright (C) 2014 Adobe Systems Incorporated. All rights reserved.
  *
@@ -83,10 +83,10 @@ inline SVGSVGElement::SVGSVGElement(const QualifiedName& tagName, Document& docu
     static bool didRegistration = false;
     if (!didRegistration) [[unlikely]] {
         didRegistration = true;
-        PropertyRegistry::registerProperty<SVGNames::xAttr, &SVGSVGElement::m_x>();
-        PropertyRegistry::registerProperty<SVGNames::yAttr, &SVGSVGElement::m_y>();
-        PropertyRegistry::registerProperty<SVGNames::widthAttr, &SVGSVGElement::m_width>();
-        PropertyRegistry::registerProperty<SVGNames::heightAttr, &SVGSVGElement::m_height>();
+        PropertyRegistry::registerProperty<SVGNames::xAttr, &SVGSVGElement::m_x>(SVGLengthMode::Width);
+        PropertyRegistry::registerProperty<SVGNames::yAttr, &SVGSVGElement::m_y>(SVGLengthMode::Height);
+        PropertyRegistry::registerProperty<SVGNames::widthAttr, &SVGSVGElement::m_width>(SVGLengthMode::Width, SVGLengthNegativeValuesMode::Forbid, "100%"_s);
+        PropertyRegistry::registerProperty<SVGNames::heightAttr, &SVGSVGElement::m_height>(SVGLengthMode::Height, SVGLengthNegativeValuesMode::Forbid, "100%"_s);
     }
 }
 
@@ -514,7 +514,7 @@ AffineTransform SVGSVGElement::localCoordinateSpaceTransform(CTMScope mode) cons
                 // contributions on this element or its ancestors in the result to match
                 // the rendered transform (bug #96361).
                 float effectiveZoom = renderer->style().usedZoom();
-                pageZoomFactor = renderer->view().pageZoomFactor();
+                pageZoomFactor = renderer->frame().pageZoomFactor();
                 float cssZoomScale = effectiveZoom / pageZoomFactor;
 
                 TransformState transformState(TransformState::ApplyTransformDirection, FloatPoint());
@@ -578,7 +578,7 @@ bool SVGSVGElement::rendererIsNeeded(const Style::ComputedStyle& style)
     return StyledElement::rendererIsNeeded(style);
 }
 
-RenderPtr<RenderElement> SVGSVGElement::createElementRenderer(Style::ComputedStyle&& style, const RenderTreePosition&)
+RenderPtr<RenderElement> SVGSVGElement::createElementRenderer(UniqueRef<Style::ComputedStyle>&& style, const RenderTreePosition&)
 {
     if (isOutermostSVGSVGElement()) {
         if (document().settings().layerBasedSVGEngineEnabled()) {
@@ -700,8 +700,11 @@ bool SVGSVGElement::hasSynthesizedViewBoxForSVGImage() const
 {
     // An SVG document embedded through SVGImage is resized to the container size chosen by the
     // embedder. Without an explicit viewBox the content has to stretch to that size, which is
-    // modeled by synthesizing a viewBox from the intrinsic size, see currentViewBoxRect().
-    return !m_useCurrentView && viewBox().isEmpty() && isEmbeddedThroughSVGImage(*this);
+    // modeled by synthesizing a viewBox from the width and height, see synthesizedViewBoxForSVGImage().
+    // A view that sets no viewBox of its own keeps the synthesized one.
+    if (m_useCurrentView && m_viewSpec && m_viewSpec->hasValidViewBox())
+        return false;
+    return viewBox().isEmpty() && isEmbeddedThroughSVGImage(*this);
 }
 
 bool SVGSVGElement::viewBoxDisablesPainting() const
@@ -714,13 +717,9 @@ bool SVGSVGElement::viewBoxDisablesPainting() const
 FloatRect SVGSVGElement::currentViewBoxRect() const
 {
     if (m_useCurrentView) {
-        if (auto* viewSpec = m_viewSpec.get())
+        if (auto* viewSpec = m_viewSpec.get(); viewSpec && viewSpec->hasValidViewBox())
             return viewSpec->viewBox();
-        return { };
-    }
-
-    auto viewBox = this->viewBox();
-    if (!viewBox.isEmpty())
+    } else if (auto viewBox = this->viewBox(); !viewBox.isEmpty())
         return viewBox;
 
     if (!hasSynthesizedViewBoxForSVGImage())
@@ -729,6 +728,21 @@ FloatRect SVGSVGElement::currentViewBoxRect() const
     // If no viewBox is specified but non-relative width/height values, then we
     // should always synthesize a viewBox if we're embedded through a SVGImage.
     return { 0, 0, intrinsicWidth(), intrinsicHeight() };
+}
+
+FloatRect SVGSVGElement::synthesizedViewBoxForSVGImage(float viewWidth, float viewHeight) const
+{
+    ASSERT(hasSynthesizedViewBoxForSVGImage());
+
+    // Unlike currentViewBoxRect(), which feeds intrinsic sizing, this depends on the viewport.
+    auto synthesizeAxis = [&](const SVGLengthValue& length, float viewportLength) -> float {
+        if (length.lengthType() == SVGLengthType::Percentage)
+            return viewportLength * length.valueInSpecifiedUnits() / 100;
+        SVGLengthContext lengthContext(this);
+        return length.value(lengthContext);
+    };
+
+    return { 0, 0, synthesizeAxis(width(), viewWidth), synthesizeAxis(height(), viewHeight) };
 }
 
 FloatSize SVGSVGElement::currentViewportSizeExcludingZoom() const
@@ -746,6 +760,11 @@ FloatSize SVGSVGElement::currentViewportSizeExcludingZoom() const
 FloatSize SVGSVGElement::viewportSizeForLengthResolution() const
 {
     auto compute = [&]() -> FloatSize {
+        if (hasSynthesizedViewBoxForSVGImage()) {
+            auto viewportSize = currentViewportSizeExcludingZoom();
+            auto viewBoxSize = synthesizedViewBoxForSVGImage(viewportSize.width(), viewportSize.height()).size();
+            return viewBoxSize.isEmpty() ? viewportSize : viewBoxSize;
+        }
         auto viewBoxSize = currentViewBoxRect().size();
         return viewBoxSize.isEmpty() ? currentViewportSizeExcludingZoom() : viewBoxSize;
     };
@@ -845,18 +864,24 @@ AffineTransform SVGSVGElement::viewBoxToViewTransform(float viewWidth, float vie
     SVGPreserveAspectRatioValue none { SVGPreserveAspectRatioValue::SVG_PRESERVEASPECTRATIO_NONE, SVGPreserveAspectRatioValue::SVG_MEETORSLICE_MEET };
 
     if (!m_useCurrentView || !m_viewSpec) {
-        auto currentViewBox = currentViewBoxRect();
-
         // If we synthesized a viewBox (no explicit viewBox but embedded through SVGImage),
         // we should also synthesize preserveAspectRatio="none" to allow stretching.
-        if (hasSynthesizedViewBoxForSVGImage() || m_ignoresPreserveAspectRatioForSVGImage)
+        if (hasSynthesizedViewBoxForSVGImage())
+            return SVGFitToViewBox::viewBoxToViewTransform(synthesizedViewBoxForSVGImage(viewWidth, viewHeight), none, viewWidth, viewHeight);
+
+        auto currentViewBox = currentViewBoxRect();
+        if (m_ignoresPreserveAspectRatioForSVGImage)
             return SVGFitToViewBox::viewBoxToViewTransform(currentViewBox, none, viewWidth, viewHeight);
 
         return SVGFitToViewBox::viewBoxToViewTransform(currentViewBox, preserveAspectRatio(), viewWidth, viewHeight);
     }
 
     RefPtr viewSpec = m_viewSpec;
-    AffineTransform transform = SVGFitToViewBox::viewBoxToViewTransform(currentViewBoxRect(), m_ignoresPreserveAspectRatioForSVGImage ? none : viewSpec->preserveAspectRatio(), viewWidth, viewHeight);
+    AffineTransform transform;
+    if (hasSynthesizedViewBoxForSVGImage())
+        transform = SVGFitToViewBox::viewBoxToViewTransform(synthesizedViewBoxForSVGImage(viewWidth, viewHeight), none, viewWidth, viewHeight);
+    else
+        transform = SVGFitToViewBox::viewBoxToViewTransform(currentViewBoxRect(), m_ignoresPreserveAspectRatioForSVGImage ? none : viewSpec->preserveAspectRatio(), viewWidth, viewHeight);
     transform *= protect(viewSpec->transform())->concatenate().value_or(identity);
     return transform;
 }
@@ -910,6 +935,8 @@ bool SVGSVGElement::setViewForFragment(StringView fragmentIdentifier)
     if (fragmentIdentifier.startsWith("svgView("_s)) {
         if (!view)
             view = currentView(); // Create the SVGViewSpec.
+        // Spec: Unspecified parameters of the svgView specification don't reset the values defined on the root 'svg' element.
+        copyViewAttributesTo(*view);
         if (view->parseViewSpec(fragmentIdentifier))
             m_useCurrentView = true;
         else
@@ -983,27 +1010,31 @@ void SVGSVGElement::resetViewToDefault()
     LegacyRenderSVGResource::markForLayoutAndParentResourceInvalidation(*renderer);
 }
 
+void SVGSVGElement::copyViewAttributesTo(SVGViewSpec& view) const
+{
+    if (hasValidViewBox())
+        view.setViewBox(viewBox());
+    else
+        view.resetViewBox();
+    view.setPreserveAspectRatio(preserveAspectRatio());
+    view.setZoomAndPan(zoomAndPan());
+}
+
 void SVGSVGElement::inheritViewAttributes(const SVGViewElement& viewElement)
 {
     Ref view = currentView();
     m_useCurrentView = true;
 
+    copyViewAttributesTo(view);
+
     if (viewElement.hasValidViewBox())
         view->setViewBox(viewElement.viewBox());
-    else if (hasValidViewBox())
-        view->setViewBox(viewBox());
-    else
-        view->resetViewBox();
 
     if (viewElement.hasAttribute(SVGNames::preserveAspectRatioAttr))
         view->setPreserveAspectRatio(viewElement.preserveAspectRatio());
-    else
-        view->setPreserveAspectRatio(preserveAspectRatio());
 
     if (viewElement.hasAttribute(SVGNames::zoomAndPanAttr))
         view->setZoomAndPan(viewElement.zoomAndPan());
-    else
-        view->setZoomAndPan(zoomAndPan());
 }
 
 void SVGSVGElement::prepareForDocumentSuspension()
@@ -1048,6 +1079,17 @@ RefPtr<Element> SVGSVGElement::getElementById(const AtomString& id)
 bool SVGSVGElement::isValid() const
 {
     return SVGTests::isValid();
+}
+
+bool SVGSVGElement::supportsFocus() const
+{
+    // Per the SVG focus model, the document root element of an interactive document is
+    // focusable and has its tabindex focus flag set, even without an explicit tabindex
+    // attribute. SVG images are not interactive documents.
+    // https://w3c.github.io/svgwg/svg2-draft/interact.html#Focus
+    if (document().documentElement() == this && !isInSVGImage(this))
+        return true;
+    return SVGGraphicsElement::supportsFocus();
 }
 
 }

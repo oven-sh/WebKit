@@ -120,7 +120,6 @@ enum class DOMPasteRequiresInteraction : bool;
 struct NodeIdentifierType;
 enum class MouseEventPolicy : uint8_t;
 enum class RouteSharingPolicy : uint8_t;
-enum class TextIndicatorDismissalAnimation : uint8_t;
 
 #if ENABLE(DRAG_SUPPORT)
 struct DragItem;
@@ -145,7 +144,6 @@ enum class PickerDismissalReason : uint8_t;
 @class QLPreviewController;
 @class VKCImageAnalysisInteraction;
 @class WebEvent;
-@class WebTextIndicatorLayer;
 @class WKActionSheetAssistant;
 @class WKContextMenuElementInfo;
 @class WKDataListSuggestionsControl;
@@ -155,6 +153,7 @@ enum class PickerDismissalReason : uint8_t;
 @class WKHighlightLongPressGestureRecognizer;
 @class WKImageAnalysisGestureRecognizer;
 @class WKInspectorNodeSearchGestureRecognizer;
+@class WKSelectPicker;
 @class WKTargetedPreviewContainer;
 @class WKTextInteractionWrapper;
 @class WKTextRange;
@@ -474,9 +473,6 @@ struct ImageAnalysisContextMenuActionData {
     __weak UIGestureRecognizer *_cachedTextInteractionLoupeGestureRecognizer;
     __weak UIGestureRecognizer *_cachedTextInteractionTapGestureRecognizer;
 
-    RefPtr<WebCore::TextIndicator> _textIndicator;
-    RetainPtr<WebTextIndicatorLayer> _textIndicatorLayer;
-
 #if USE(UICONTEXTMENU)
     BOOL _isPreparingToDisplayContextMenu;
     BOOL _isDisplayingContextMenuWithAnimation;
@@ -615,6 +611,7 @@ struct ImageAnalysisContextMenuActionData {
     NSInteger _dropAnimationCount;
 
     BOOL _waitingForEditorStateAfterScrollingSelectionContainer;
+    BOOL _hasPendingSiteIsolatedSelectionRefreshDuringScrolling;
     std::optional<WebCore::IntPoint> _lastSelectionChildScrollViewContentOffset;
     std::optional<CGPoint> _lastSelectionContainerViewOrigin;
 
@@ -862,6 +859,7 @@ FOR_EACH_PRIVATE_WKCONTENTVIEW_ACTION(DECLARE_WKCONTENTVIEW_ACTION_FOR_WEB_VIEW)
 - (void)dismissFilePicker;
 - (void)_didHandleKeyEvent:(::WebEvent *)event eventWasHandled:(BOOL)eventWasHandled;
 - (Vector<WebKit::OptionItem>&) focusedSelectElementOptions;
+@property (nonatomic, readonly) WKSelectPicker *visibleSelectPicker;
 - (void)_enableInspectorNodeSearch;
 - (void)_disableInspectorNodeSearch;
 - (void)_becomeFirstResponderWithSelectionMovingForward:(BOOL)selectingForward completionHandler:(void (^)(BOOL didBecomeFirstResponder))completionHandler;
@@ -948,10 +946,6 @@ FOR_EACH_PRIVATE_WKCONTENTVIEW_ACTION(DECLARE_WKCONTENTVIEW_ACTION_FOR_WEB_VIEW)
 - (void)_didStartProvisionalLoadForMainFrame;
 - (void)_didCommitLoadForMainFrame;
 
-- (void)setUpTextIndicator:(Ref<WebCore::TextIndicator>)textIndicator;
-- (void)updateTextIndicator:(Ref<WebCore::TextIndicator>)textIndicator;
-- (void)setTextIndicatorAnimationProgress:(float)NSAnimationProgress;
-- (void)clearTextIndicator:(WebCore::TextIndicatorDismissalAnimation)animation;
 - (CALayer *)textIndicatorInstallationLayer;
 
 #if ENABLE(WRITING_TOOLS)

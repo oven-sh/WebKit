@@ -35,7 +35,7 @@ class RenderSVGResourceClipper final : public RenderSVGResourceContainer {
     WTF_MAKE_TZONE_ALLOCATED(RenderSVGResourceClipper);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderSVGResourceClipper);
 public:
-    RenderSVGResourceClipper(SVGClipPathElement&, Style::ComputedStyle&&);
+    RenderSVGResourceClipper(SVGClipPathElement&, UniqueRef<Style::ComputedStyle>&&);
     virtual ~RenderSVGResourceClipper();
 
     RefPtr<SVGGraphicsElement> shouldApplyPathClipping() const;
@@ -66,7 +66,7 @@ private:
     void repaintAllClients() const final;
     void clearCacheBeforeLayout() final;
 
-    AffineTransform clipContentTransform(const FloatRect& objectBoundingBox) const;
+    AffineTransform computeClipContentTransform(const FloatRect& objectBoundingBox) const;
     const Path& cachedPathClip(RenderSVGModelObject& clipRenderer) const;
 
     mutable std::optional<Path> m_cachedPathClip;

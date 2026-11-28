@@ -33,6 +33,7 @@
 #include <utility>
 #include <variant>
 #include <wtf/ArgumentCoder.h>
+#include <wtf/Borrow.h>
 #include <wtf/Box.h>
 #include <wtf/CheckedArithmetic.h>
 #include <wtf/Forward.h>
@@ -47,6 +48,7 @@
 #include "ArgumentCodersAndroid.h"
 #endif
 #if USE(GLIB)
+#include "ArgumentCodersGLib.h"
 #include "RendererBufferFormat.h"
 #endif
 #if USE(UNIX_DOMAIN_SOCKETS)
@@ -89,7 +91,8 @@ template<typename T, size_t Extent> struct ArgumentCoder<std::span<T, Extent>> {
                 return std::span<T, Extent> { };
         }
 
-        auto data = decoder.template decodeSpan<T>(size);
+        Borrow borrowedDecoder { decoder };
+        auto data = borrowedDecoder->template decodeSpan<T>(size);
         if (!data.data() || data.size() != size)
             return std::nullopt;
 
@@ -144,7 +147,8 @@ struct ArgumentCoder<ArrayReferenceTuple<Types...>> {
 
         if constexpr (Index < sizeof...(Types)) {
             using ElementType = std::tuple_element_t<Index, std::tuple<Types...>>;
-            auto data = decoder.template decodeSpan<ElementType>(size);
+            Borrow borrowedDecoder { decoder };
+            auto data = borrowedDecoder->template decodeSpan<ElementType>(size);
             if (!data.data())
                 return std::nullopt;
             return decode(decoder, size, std::forward<DataPointerTypes>(dataPointers)..., data.data());
@@ -320,10 +324,17 @@ template<typename T> struct ArgumentCoder<std::unique_ptr<T>> {
             return std::nullopt;
 
         if (*isEngaged) {
-            auto object = decoder.template decode<T>();
-            if (!object)
-                return std::nullopt;
-            SUPPRESS_UNCHECKED_ARG return std::make_optional<std::unique_ptr<T>>(makeUnique<T>(WTF::move(*object)));
+            if constexpr (std::is_same_v<decltype(ArgumentCoder<T>::decode(decoder)), std::optional<UniqueRef<T>>>) {
+                auto object = ArgumentCoder<T>::decode(decoder);
+                if (!object)
+                    return std::nullopt;
+                return std::make_optional<std::unique_ptr<T>>(object->moveToUniquePtr());
+            } else {
+                auto object = decoder.template decode<T>();
+                if (!object)
+                    return std::nullopt;
+                SUPPRESS_UNCHECKED_ARG return std::make_optional<std::unique_ptr<T>>(makeUnique<T>(WTF::move(*object)));
+            }
         }
         return std::make_optional<std::unique_ptr<T>>();
     }
@@ -334,16 +345,22 @@ template<typename T> struct ArgumentCoder<UniqueRef<T>> {
     static void encode(Encoder& encoder, U&& object)
     {
         static_assert(std::is_same_v<std::remove_cvref_t<U>, UniqueRef<T>>);
-        encoder << WTF::forward_like<U>(object.get());
+        // The caller's UniqueRef owns the object for the duration of the call.
+        SUPPRESS_UNCHECKED_ARG encoder << WTF::forward_like<U>(object.get());
     }
 
     template<typename Decoder>
     static std::optional<UniqueRef<T>> decode(Decoder& decoder)
     {
-        auto object = decoder.template decode<T>();
-        if (!object)
-            return std::nullopt;
-        return makeUniqueRef<T>(WTF::move(*object));
+        // Decoders of heap allocated types return std::optional<UniqueRef<T>> instead of std::optional<T>.
+        if constexpr (std::is_same_v<decltype(ArgumentCoder<T>::decode(decoder)), std::optional<UniqueRef<T>>>)
+            return ArgumentCoder<T>::decode(decoder);
+        else {
+            auto object = decoder.template decode<T>();
+            if (!object)
+                return std::nullopt;
+            return makeUniqueRef<T>(WTF::move(*object));
+        }
     }
 };
 
@@ -502,7 +519,7 @@ template<typename T, size_t inlineCapacity, typename OverflowHandler, size_t min
     template<typename Encoder>
     static void encode(Encoder& encoder, const Vector<T, inlineCapacity, OverflowHandler, minCapacity>& vector)
     {
-        encoder << vector.span();
+        encoder << borrow(vector)->span();
     }
 
     template<typename Decoder>
@@ -625,8 +642,8 @@ template<typename KeyArg, typename MappedArg, typename HashArg, typename KeyTrai
     }
 };
 
-template<typename KeyArg, typename HashArg, typename KeyTraitsArg, typename HashTableTraits, WTF::ShouldValidateKey shouldValidateKey> struct ArgumentCoder<HashSet<KeyArg, HashArg, KeyTraitsArg, HashTableTraits, shouldValidateKey>> {
-    typedef HashSet<KeyArg, HashArg, KeyTraitsArg, HashTableTraits, shouldValidateKey> HashSetType;
+template<typename KeyArg, typename HashArg, typename KeyTraitsArg, typename HashTableTraits> struct ArgumentCoder<HashSet<KeyArg, HashArg, KeyTraitsArg, HashTableTraits>> {
+    typedef HashSet<KeyArg, HashArg, KeyTraitsArg, HashTableTraits> HashSetType;
 
     template<typename Encoder>
     static void encode(Encoder& encoder, const HashSetType& hashSet)

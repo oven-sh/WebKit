@@ -29,7 +29,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderTableCaption);
 
-RenderTableCaption::RenderTableCaption(Element& element, Style::ComputedStyle&& style)
+RenderTableCaption::RenderTableCaption(Element& element, UniqueRef<Style::ComputedStyle>&& style)
     : RenderBlockFlow(Type::TableCaption, element, WTF::move(style))
 {
     ASSERT(isRenderTableCaption());
@@ -40,13 +40,13 @@ RenderTableCaption::~RenderTableCaption() = default;
 void RenderTableCaption::insertedIntoTree()
 {
     RenderBlockFlow::insertedIntoTree();
-    table()->addCaption(*this);
+    protect(table())->addCaption(*this);
 }
 
 void RenderTableCaption::willBeRemovedFromTree()
 {
     RenderBlockFlow::willBeRemovedFromTree();
-    table()->removeCaption(*this);
+    protect(table())->removeCaption(*this);
 }
 
 NODELETE RenderTable* RenderTableCaption::table() const
@@ -56,8 +56,9 @@ NODELETE RenderTable* RenderTableCaption::table() const
 
 LayoutUnit RenderTableCaption::containingBlockLogicalWidthForContent() const
 {
-    if (auto* containingBlock = this->containingBlock())
-        return containingBlock->logicalWidth();
+    // A caption is an in-flow child of its table.
+    if (CheckedPtr table = this->table())
+        return table->logicalWidth();
     return { };
 }
 

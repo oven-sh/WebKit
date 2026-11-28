@@ -26,7 +26,10 @@
 #include "ElementInlines.h"
 #include "Event.h"
 #include "EventNames.h"
+#include "HTMLParserIdioms.h"
+#include "ReferrerPolicy.h"
 #include "SVGElementTypeHelpers.h"
+#include "SVGNames.h"
 #include "ScriptElement.h"
 #include <wtf/TZoneMallocInlines.h>
 
@@ -144,6 +147,21 @@ void SVGScriptElement::didMoveToNewDocument(Document& oldDocument, Document& new
 void SVGScriptElement::eventListenersDidChange()
 {
     setHasRelevantLoadEventsListener(hasEventListeners(eventNames().errorEvent) || hasEventListeners(eventNames().loadEvent));
+}
+
+String SVGScriptElement::crossOrigin() const
+{
+    return parseCORSSettingsAttribute(attributeWithoutSynchronization(SVGNames::crossoriginAttr));
+}
+
+String SVGScriptElement::referrerPolicyForBindings() const
+{
+    return referrerPolicyToString(referrerPolicy());
+}
+
+ReferrerPolicy SVGScriptElement::referrerPolicy() const
+{
+    return parseReferrerPolicy(attributeWithoutSynchronization(SVGNames::referrerpolicyAttr), ReferrerPolicySource::ReferrerPolicyAttribute).value_or(ReferrerPolicy::EmptyString);
 }
 
 }

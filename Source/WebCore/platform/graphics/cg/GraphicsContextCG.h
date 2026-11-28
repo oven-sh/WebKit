@@ -52,16 +52,15 @@ public:
     const ColorSpace& colorSpace() const final;
 
     void save(GraphicsContextState::Purpose = GraphicsContextState::Purpose::SaveRestore) final;
-    void restore(GraphicsContextState::Purpose = GraphicsContextState::Purpose::SaveRestore) final;
+    bool restore(GraphicsContextState::Purpose = GraphicsContextState::Purpose::SaveRestore) final;
 
     using GraphicsContext::drawNativeImage;
     void drawNativeImage(const NativeImage&, const FloatRect& destRect, const FloatRect& srcRect, RasterDrawingOptions = { }) final;
+    void drawGlyphsImmediate(const FontBase&, std::span<const GlyphBufferGlyph>, std::span<const GlyphBufferAdvance>, const FloatPoint&, FontSmoothingMode) final;
     void drawRect(const FloatRect&, float borderThickness = 1) final;
     void drawLine(const FloatPoint&, const FloatPoint&) final;
     void drawEllipse(const FloatRect&) final;
 
-    void applyStrokePattern() final;
-    void applyFillPattern() final;
     void drawPath(const Path&) final;
     void fillPath(const Path&) final;
     void strokePath(const Path&) final;
@@ -75,7 +74,7 @@ public:
     using GraphicsContext::fillRect;
     void fillRect(const FloatRect&, RequiresClipToRect = RequiresClipToRect::Yes) final;
     void fillRect(const FloatRect&, const Color&) final;
-    void fillRect(const FloatRect&, Gradient&, const AffineTransform&, RequiresClipToRect = RequiresClipToRect::Yes) final;
+    void fillRect(const FloatRect&, const Gradient&, const AffineTransform&, RequiresClipToRect = RequiresClipToRect::Yes) final;
     void fillRoundedRectImpl(const FloatRoundedRect&, const Color&) final;
     void fillRectWithRoundedHole(const FloatRect&, const FloatRoundedRect& roundedHoleRect, const Color&) final;
     void clearRect(const FloatRect&) final;
@@ -100,7 +99,7 @@ public:
     void clipPath(const Path&, WindRule = WindRule::EvenOdd) final;
     void clipTransformedPath(const AffineTransform&, const Path&, WindRule = WindRule::EvenOdd) final;
 
-    void clipToImageBuffer(ImageBuffer&, const FloatRect&) final;
+    void clipToNativeImage(const NativeImage&, const FloatRect&) final;
 
     IntRect clipBounds() const final;
 
@@ -138,19 +137,26 @@ public:
 
     bool supportsInternalLinks() const final;
 
-    void didUpdateState(GraphicsContextState&) final;
-
     virtual bool canUseShadowBlur() const;
 
     FloatRect roundToDevicePixels(const FloatRect&) const;
 
-    // Returns the platform context for draws.
+    // Returns the platform context for draws. Any pending GraphicsContextState changes are
+    // applied first, since a draw must observe the current state.
     const RetainPtr<CGContextRef>& contextForDraw() const
     {
         ASSERT(m_cgContext);
         m_hasDrawn = true;
+        // Applying the pending state does not change the observable state of the context.
+        if (m_state.changes())
+            const_cast<GraphicsContextCG&>(*this).updatePlatformContextState();
         return m_cgContext;
     }
+
+    // Returns the platform context for purposes of context state change, not draws. Pending
+    // GraphicsContextState changes are not applied, so this must not be used by anything that
+    // observes the state.
+    NODELETE const RetainPtr<CGContextRef>& contextForState() const;
 
     // Returns false if there has not been any potential draws since last call.
     // Returns true if there has been potential draws since last call.
@@ -161,6 +167,11 @@ public:
 #endif
 
 private:
+    // Applying the pending state does not change the observable state of the context, so this is
+    // usable from the const accessors.
+    void updatePlatformContextStateIfNeeded() const;
+    void updatePlatformContextState();
+
     void setCGDropShadow(const std::optional<GraphicsDropShadow>&, bool shadowsIgnoreTransforms);
     void clearCGDropShadow();
 #if HAVE(CGSTYLE_COLORMATRIX_BLUR)
@@ -170,13 +181,13 @@ private:
     void setCGStyle(const std::optional<GraphicsStyle>&, bool shadowsIgnoreTransforms);
 
     FloatRect boundsIncludingDropShadow(const FloatRect&);
-    void paintGradientInClip(Gradient&, const AffineTransform& gradientSpaceTransform, NOESCAPE const Invocable<FloatRect()> auto& computeContentBounds, NOESCAPE const Invocable<void(CGContextRef)> auto& clip);
+    void paintGradientInClip(const Gradient&, const AffineTransform& gradientSpaceTransform, NOESCAPE const Invocable<FloatRect()> auto& computeContentBounds, NOESCAPE const Invocable<void(CGContextRef)> auto& clip);
 #if !HAVE(CGSTYLE_FIXES_DROP_SHADOW_BLUR)
-    void paintGradientInCGLayer(Gradient&, const AffineTransform& gradientSpaceTransform, const FloatRect& contentBounds, NOESCAPE const Invocable<void(CGContextRef)> auto& clip);
+    void paintGradientInCGLayer(const Gradient&, const AffineTransform& gradientSpaceTransform, const FloatRect& contentBounds, NOESCAPE const Invocable<void(CGContextRef)> auto& clip);
 #endif
 
-    // Returns the platform context for purposes of context state change, not draws.
-    NODELETE const RetainPtr<CGContextRef>& contextForState() const;
+    void applyStrokePattern();
+    void applyFillPattern();
 
     const RetainPtr<CGContextRef> m_cgContext;
     mutable std::optional<ColorSpace> m_colorSpace;

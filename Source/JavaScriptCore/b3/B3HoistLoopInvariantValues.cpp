@@ -152,10 +152,10 @@ bool hoistLoopInvariantValues(Procedure& proc)
         bool writesPinned { false };
         bool exitsSideways { false };
         BasicBlock* preHeader { nullptr };
-        UncheckedKeyHashSet<BasicBlock*> blocksOnEveryLikelyPath;
-        UncheckedKeyHashSet<BasicBlock*> likelyBlocks;
+        HashSet<BasicBlock*> blocksOnEveryLikelyPath;
+        HashSet<BasicBlock*> likelyBlocks;
         RegisterBudget registerBudget;
-        UncheckedKeyHashSet<Value*> loadsLiveThroughLoop;
+        HashSet<Value*> loadsLiveThroughLoop;
         std::array<unsigned, numBanks> numberOfLoadsLiveThroughLoop { };
         unsigned numberOfHoistedLoads { 0 };
         bool didReachLoadLimit { false };
@@ -183,7 +183,7 @@ bool hoistLoopInvariantValues(Procedure& proc)
             data[loop].preHeader = predecessor;
         }
         if (hoistsOnlyFromLikelyPaths) {
-            auto keepBlocksOfLoop = [&](const IndexSet<BasicBlock*>& blocks, UncheckedKeyHashSet<BasicBlock*>& result) {
+            auto keepBlocksOfLoop = [&](const IndexSet<BasicBlock*>& blocks, HashSet<BasicBlock*>& result) {
                 for (unsigned index = loop.size(); index--;) {
                     if (blocks.contains(loop.at(index)))
                         result.add(loop.at(index));

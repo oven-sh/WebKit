@@ -105,7 +105,7 @@ public:
     bool isPointInScrollbar(WebCore::FloatPoint);
 
     // Called externally when native views move around.
-    void viewportChangedViaDelegatedScrolling(const WebCore::FloatPoint& scrollPosition, const WebCore::FloatRect& layoutViewport, double scale);
+    virtual void viewportChangedViaDelegatedScrolling(const WebCore::FloatPoint& scrollPosition, const WebCore::FloatRect& layoutViewport, double scale, WebCore::DeferViewportConstrainedLayerRepositioning = WebCore::DeferViewportConstrainedLayerRepositioning::No);
 
     virtual void applyScrollingTreeLayerPositionsAfterCommit();
     virtual void flushMainThreadTransactionIfNeeded() { }
@@ -115,7 +115,7 @@ public:
     virtual void cacheWheelEventScrollingAccelerationCurve(const NativeWebWheelEvent&) { }
     virtual void handleWheelEvent(Ref<WebWheelEvent>&&, WebCore::RectEdges<WebCore::RubberBandingBehavior> rubberBandableEdges);
     void continueWheelEventHandling(Ref<WebWheelEvent>&&, WebCore::WheelEventHandlingResult);
-    virtual void wheelEventHandlingCompleted(const WebCore::PlatformWheelEvent&, std::optional<WebCore::ScrollingNodeID>, std::optional<WebCore::WheelScrollGestureState>, bool /* wasHandled */) { }
+    virtual void wheelEventHandlingCompleted(const WebCore::PlatformWheelEvent&, std::optional<WebCore::FrameIdentifier> /* defaultHandlingFrameID */, std::optional<WebCore::ScrollingNodeID>, std::optional<WebCore::WheelScrollGestureState>, bool /* wasHandled */) { }
 
     virtual WebCore::PlatformWheelEvent filteredWheelEvent(const WebCore::PlatformWheelEvent& wheelEvent) { return wheelEvent; }
 
@@ -177,6 +177,9 @@ public:
     virtual HashSet<Ref<RemoteProgressBasedTimeline>> timelinesForScrollingNodeIDForTesting(WebCore::ScrollingNodeID) const { return { }; }
     virtual HashSet<Ref<RemoteMonotonicTimeline>> monotonicTimelinesForProcessForTesting(WebCore::ProcessIdentifier) const { return { }; }
     virtual bool hasHighImpactMonotonicAnimations() const { return false; }
+    virtual bool hasVisibleMonotonicAnimations() const { return false; }
+    virtual void setAnimatedContentVisibilityNeedsUpdate() { }
+    virtual void updateAnimatedContentVisibilityIfNeeded() { }
 #endif
 
     String scrollingTreeAsText() const;

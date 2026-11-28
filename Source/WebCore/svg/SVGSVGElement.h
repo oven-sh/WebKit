@@ -1,7 +1,7 @@
 /*
  * Copyright (C) 2004, 2005, 2006 Nikolas Zimmermann <zimmermann@kde.org>
  * Copyright (C) 2004, 2005, 2006, 2007, 2010 Rob Buis <buis@kde.org>
- * Copyright (C) 2015-2019 Apple Inc. All rights reserved.
+ * Copyright (C) 2015-2026 Apple Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -152,9 +152,10 @@ private:
     void collectExtraStyleForPresentationalHints(MutableStyleProperties&) final;
     bool selfHasRelativeLengths() const override;
     bool isValid() const override;
+    bool supportsFocus() const final;
 
     bool rendererIsNeeded(const Style::ComputedStyle&) override;
-    RenderPtr<RenderElement> createElementRenderer(Style::ComputedStyle&&, const RenderTreePosition&) override;
+    RenderPtr<RenderElement> createElementRenderer(UniqueRef<Style::ComputedStyle>&&, const RenderTreePosition&) override;
     bool isReplaced(const Style::ComputedStyle* = nullptr) const final;
     NeedsPostConnectionSteps insertionSteps(InsertionType, ContainerNode&) override;
     void removingSteps(RemovalType, ContainerNode&) override;
@@ -167,10 +168,12 @@ private:
     Ref<NodeList> collectIntersectionOrEnclosureList(SVGRect&, SVGElement*, bool (*checkFunction)(SVGElement&, SVGRect&));
 
     FloatSize computeCurrentViewportSizeExcludingZoom() const;
+    FloatRect synthesizedViewBoxForSVGImage(float viewWidth, float viewHeight) const;
 
     RefPtr<SVGViewElement> findViewAnchor(StringView fragmentIdentifier) const;
     NODELETE SVGSVGElement* findRootAnchor(const SVGViewElement*) const;
     SVGSVGElement* findRootAnchor(StringView) const;
+    void copyViewAttributesTo(SVGViewSpec&) const;
 
     const Ref<SMILTimeContainer> m_timeContainer;
     const RefPtr<SVGViewSpec> m_viewSpec;

@@ -36,8 +36,7 @@
 #include <ranges>
 #include <wtf/TZoneMallocInlines.h>
 
-namespace WebCore {
-namespace Layout {
+namespace WebCore::Layout {
 
 Line::Line(const InlineFormattingContext& inlineFormattingContext)
     : m_inlineFormattingContext(inlineFormattingContext)
@@ -722,8 +721,8 @@ bool Line::restoreTrimmedTrailingWhitespace(InlineLayoutUnit trimmedTrailingWhit
 
 bool LineRun::isListMarkerOrItsContent() const
 {
-    // A marker's contents inherit the ::marker style, so the marker and its text answer alike.
-    return isListMarker() || m_layoutBox->style().isListMarkerStyle();
+    // An inside marker's inline box and its contents carry the ::marker style.
+    return m_layoutBox->style().isListMarkerStyle();
 }
 
 bool Line::hasTrailingForcedLineBreak(const RunList& runs)
@@ -737,7 +736,7 @@ bool Line::hasContentOrDecoration() const
         return false;
     auto& formattingContext = this->formattingContext();
     for (auto& run : m_runs | std::views::reverse) {
-        if (Line::Run::isContentfulOrHasDecoration(run, formattingContext) && !run.isListMarker())
+        if (Line::Run::isContentfulOrHasDecoration(run, formattingContext))
             return true;
     }
     return false;
@@ -826,8 +825,6 @@ NODELETE inline static Line::Run::Type toLineRunType(const InlineItem& inlineIte
     case InlineItem::Type::WordBreakOpportunity:
         return Line::Run::Type::WordBreakOpportunity;
     case InlineItem::Type::AtomicInlineBox:
-        if (inlineItem.layoutBox().isListMarkerBox())
-            return Line::Run::Type::ListMarker;
         return Line::Run::Type::AtomicInlineBox;
     case InlineItem::Type::InlineBoxStart:
         return Line::Run::Type::InlineBoxStart;
@@ -1011,7 +1008,7 @@ InlineLayoutUnit LineRun::removeTrailingWhitespace()
         auto endPosition = m_textContent.start + m_textContent.length;
         RELEASE_ASSERT(startPosition < endPosition - trailingTrimmableContentLength);
         if (inlineTextBox->content()[endPosition - 1] == space)
-            trimmedWidth = TextUtil::trailingWhitespaceWidth(inlineTextBox, m_style.fontCascade(), startPosition, endPosition);
+            trimmedWidth = TextUtil::trailingWhitespaceWidth(inlineTextBox, protect(m_style->fontCascade()), startPosition, endPosition);
     }
     m_textContent.length -= trailingTrimmableContentLength;
     m_trailingWhitespace = { };
@@ -1045,14 +1042,12 @@ bool LineRun::isContentfulOrHasDecoration(const LineRun& run, const InlineFormat
 
 bool LineRun::hasTextCombine() const
 {
-    return m_style.textCombine() != TextCombine::None;
+    return m_style->textCombine() != TextCombine::None;
 }
 
 InlineLayoutUnit LineRun::letterSpacing() const
 {
-    return m_style.usedLetterSpacing();
+    return m_style->usedLetterSpacing();
 }
 
 }
-}
-

@@ -12,7 +12,7 @@
 #include <limits>
 #include <vector>
 
-#include "common/unsafe_buffers.h"
+#include "common/span.h"
 #include "test_utils/ANGLETest.h"
 
 #include "test_utils/gl_raii.h"
@@ -583,7 +583,7 @@ class CopyTextureVariationsTest : public ANGLETest<CopyTextureVariationsTestPara
                                      GLenum destFormat,
                                      bool premultiplyAlpha,
                                      bool unmultiplyAlpha,
-                                     const uint8_t *sourceColor,
+                                     Span<const uint8_t> sourceColor,
                                      GLColor *destColor)
     {
         GLColor color;
@@ -591,12 +591,10 @@ class CopyTextureVariationsTest : public ANGLETest<CopyTextureVariationsTestPara
         switch (sourceFormat)
         {
             case GL_RGB:
-                color =
-                    ANGLE_UNSAFE_TODO(GLColor(sourceColor[0], sourceColor[1], sourceColor[2], 255));
+                color = GLColor(sourceColor[0], sourceColor[1], sourceColor[2], 255);
                 break;
             case GL_RGBA:
-                color = ANGLE_UNSAFE_TODO(
-                    GLColor(sourceColor[0], sourceColor[1], sourceColor[2], sourceColor[3]));
+                color = GLColor(sourceColor[0], sourceColor[1], sourceColor[2], sourceColor[3]);
                 break;
             case GL_LUMINANCE:
                 color = GLColor(sourceColor[0], sourceColor[0], sourceColor[0], 255);
@@ -605,12 +603,10 @@ class CopyTextureVariationsTest : public ANGLETest<CopyTextureVariationsTestPara
                 color = GLColor(0, 0, 0, sourceColor[0]);
                 break;
             case GL_LUMINANCE_ALPHA:
-                color = GLColor(sourceColor[0], sourceColor[0], sourceColor[0],
-                                ANGLE_UNSAFE_TODO(sourceColor[1]));
+                color = GLColor(sourceColor[0], sourceColor[0], sourceColor[0], sourceColor[1]);
                 break;
             case GL_BGRA_EXT:
-                color = ANGLE_UNSAFE_TODO(
-                    GLColor(sourceColor[2], sourceColor[1], sourceColor[0], sourceColor[3]));
+                color = GLColor(sourceColor[2], sourceColor[1], sourceColor[0], sourceColor[3]);
                 break;
             default:
                 EXPECT_EQ(true, false);
@@ -649,7 +645,9 @@ class CopyTextureVariationsTest : public ANGLETest<CopyTextureVariationsTestPara
         *destColor = color;
     }
 
-    const uint8_t *getSourceColors(GLenum sourceFormat, size_t *colorCount, uint8_t *componentCount)
+    Span<const uint8_t> getSourceColors(GLenum sourceFormat,
+                                        size_t *colorCount,
+                                        uint8_t *componentCount)
     {
         // Note: in all the following values, alpha is larger than RGB so unmultiply alpha doesn't
         // overflow
@@ -725,13 +723,13 @@ class CopyTextureVariationsTest : public ANGLETest<CopyTextureVariationsTestPara
                 return kLumaColors;
             default:
                 EXPECT_EQ(true, false);
-                return nullptr;
+                return {};
         }
     }
 
     void initializeSourceTexture(GLenum target,
                                  GLenum sourceFormat,
-                                 const uint8_t *srcColors,
+                                 Span<const uint8_t> srcColors,
                                  uint8_t componentCount)
     {
         // The texture is initialized as 2x2.  If the componentCount is 1 or 3, then the input data
@@ -742,8 +740,9 @@ class CopyTextureVariationsTest : public ANGLETest<CopyTextureVariationsTestPara
         size_t inputRowPitch = 2 * componentCount;
         for (size_t row = 0; row < 2; ++row)
         {
-            ANGLE_UNSAFE_TODO(memcpy(srcColorsPadded.data() + row * srcRowPitch,
-                                     srcColors + row * inputRowPitch, inputRowPitch));
+            Span(srcColorsPadded)
+                .subspan(row * srcRowPitch, inputRowPitch)
+                .copy_from(srcColors.subspan(row * inputRowPitch, inputRowPitch));
         }
 
         glBindTexture(target, mTextures[0]);
@@ -780,20 +779,20 @@ class CopyTextureVariationsTest : public ANGLETest<CopyTextureVariationsTestPara
 
         size_t colorCount;
         uint8_t componentCount;
-        const uint8_t *srcColors = getSourceColors(sourceFormat, &colorCount, &componentCount);
+        Span<const uint8_t> srcColors = getSourceColors(sourceFormat, &colorCount, &componentCount);
 
         std::vector<GLColor> destColors(colorCount);
         for (size_t i = 0; i < colorCount; ++i)
         {
             calculateCopyTextureResults(sourceFormat, destFormat, premultiplyAlpha, unmultiplyAlpha,
-                                        &ANGLE_UNSAFE_TODO(srcColors[i * componentCount]),
+                                        srcColors.subspan(i * componentCount, componentCount),
                                         &destColors[i]);
         }
 
         for (size_t i = 0; i < colorCount - 3; ++i)
         {
             initializeSourceTexture(sourceTarget, sourceFormat,
-                                    &ANGLE_UNSAFE_TODO(srcColors[i * componentCount]),
+                                    srcColors.subspan(i * componentCount, 4 * componentCount),
                                     componentCount);
 
             if (hasMesaFbFlipYExt)
@@ -877,20 +876,20 @@ class CopyTextureVariationsTest : public ANGLETest<CopyTextureVariationsTestPara
 
         size_t colorCount;
         uint8_t componentCount;
-        const uint8_t *srcColors = getSourceColors(sourceFormat, &colorCount, &componentCount);
+        Span<const uint8_t> srcColors = getSourceColors(sourceFormat, &colorCount, &componentCount);
 
         std::vector<GLColor> destColors(colorCount);
         for (size_t i = 0; i < colorCount; ++i)
         {
             calculateCopyTextureResults(sourceFormat, destFormat, premultiplyAlpha, unmultiplyAlpha,
-                                        &ANGLE_UNSAFE_TODO(srcColors[i * componentCount]),
+                                        srcColors.subspan(i * componentCount, componentCount),
                                         &destColors[i]);
         }
 
         for (size_t i = 0; i < colorCount - 3; ++i)
         {
             initializeSourceTexture(sourceTarget, sourceFormat,
-                                    &ANGLE_UNSAFE_TODO(srcColors[i * componentCount]),
+                                    srcColors.subspan(i * componentCount, 4 * componentCount),
                                     componentCount);
 
             glBindTexture(GL_TEXTURE_2D, mTextures[1]);
@@ -3263,6 +3262,15 @@ TEST_P(CopyTextureTestES3, CopyBetweenMips)
 
     ASSERT_GL_NO_ERROR();
 
+    // CopyTextureCHROMIUM redefines the destination level and is not allowed between mips of the
+    // same texture.
+    glCopyTextureCHROMIUM(texture, 1, GL_TEXTURE_2D, texture, 0, GL_RGBA, GL_UNSIGNED_BYTE, false,
+                          false, false);
+    EXPECT_GL_ERROR(GL_INVALID_OPERATION);
+    glCopyTextureCHROMIUM(texture, 0, GL_TEXTURE_2D, texture, 1, GL_RGBA, GL_UNSIGNED_BYTE, false,
+                          false, false);
+    EXPECT_GL_ERROR(GL_INVALID_OPERATION);
+
     // Copy from mip 0 to mip 1.  The level is not redefined, so a direct copy can potentially be
     // done.
     glCopySubTextureCHROMIUM(texture, 0, GL_TEXTURE_2D, texture, 1, 0, 0, 1, 1, 2, 2, false, false,
@@ -3379,12 +3387,12 @@ TEST_P(CopyTextureTestES3, PBOSynchronization)
     // Read pixels again, should still go to the PBO
     glReadPixels(0, 0, 16, 16, GL_RGBA, GL_UNSIGNED_BYTE, reinterpret_cast<GLvoid *>(1024));
 
-    uint8_t *mappedPtr =
-        static_cast<uint8_t *>(glMapBufferRangeEXT(GL_PIXEL_PACK_BUFFER, 0, 4096, GL_MAP_READ_BIT));
+    auto mappedColors =
+        MapBufferRangeEXT<const GLColor>(GL_PIXEL_PACK_BUFFER, 0, 4096, GL_MAP_READ_BIT);
     EXPECT_GL_NO_ERROR();
 
-    EXPECT_EQ(GLColor::red, *reinterpret_cast<GLColor *>(mappedPtr));
-    ANGLE_UNSAFE_TODO(EXPECT_EQ(GLColor::red, *reinterpret_cast<GLColor *>(mappedPtr + 1024)));
+    EXPECT_EQ(GLColor::red, mappedColors[0]);
+    EXPECT_EQ(GLColor::red, mappedColors[1024 / sizeof(GLColor)]);
 
     glUnmapBufferOES(GL_PIXEL_PACK_BUFFER);
     EXPECT_GL_NO_ERROR();
@@ -5367,22 +5375,26 @@ TEST_P(CopyTextureYUVTest, HintsRequireYUVFormat)
 #endif
 }
 
-ANGLE_INSTANTIATE_TEST_ES2(CopyTextureTest);
-ANGLE_INSTANTIATE_TEST_COMBINE_7(CopyTextureVariationsTest,
-                                 CopyTextureVariationsTestPrint,
-                                 testing::ValuesIn(kCopyTextureVariationsSrcFormats),
-                                 testing::ValuesIn(kCopyTextureVariationsDstFormats),
-                                 testing::Bool(),  // flipY
-                                 testing::Bool(),  // premultiplyAlpha
-                                 testing::Bool(),  // unmultiplyAlpha
-                                 testing::ValuesIn(kMesaYFlips),
-                                 testing::Values(CopyTexCS::None),  // colorspace (N/A for non-YUV)
-                                 ES2_D3D11(),
-                                 ES2_OPENGL(),
-                                 ES2_OPENGLES(),
-                                 ES2_VULKAN(),
-                                 ES2_METAL(),
-                                 ES2_WEBGPU());
+ANGLE_INSTANTIATE_TEST_ES2_AND(
+    CopyTextureTest,
+    ES2_VULKAN_SWIFTSHADER().enable(Feature::ForceRenderableFallbackFormat));
+ANGLE_INSTANTIATE_TEST_COMBINE_7(
+    CopyTextureVariationsTest,
+    CopyTextureVariationsTestPrint,
+    testing::ValuesIn(kCopyTextureVariationsSrcFormats),
+    testing::ValuesIn(kCopyTextureVariationsDstFormats),
+    testing::Bool(),  // flipY
+    testing::Bool(),  // premultiplyAlpha
+    testing::Bool(),  // unmultiplyAlpha
+    testing::ValuesIn(kMesaYFlips),
+    testing::Values(CopyTexCS::None),  // colorspace (N/A for non-YUV)
+    ES2_D3D11(),
+    ES2_OPENGL(),
+    ES2_OPENGLES(),
+    ES2_VULKAN(),
+    ES2_METAL(),
+    ES2_WEBGPU(),
+    ES2_VULKAN_SWIFTSHADER().enable(Feature::ForceRenderableFallbackFormat));
 
 // YUV-source variant: Metal-only, RGBA destination, alpha ops off, all colorspaces.  Platform and
 // parameter restrictions are expressed by the instantiation lists rather than runtime skips.
@@ -5421,13 +5433,16 @@ ANGLE_INSTANTIATE_TEST_COMBINE_7(CopyTextureRectangleVariationsTest,
                                  ES2_VULKAN(),
                                  ES2_METAL(),
                                  ES2_WEBGPU());
-ANGLE_INSTANTIATE_TEST_ES2(CopyTextureTestWebGL);
+ANGLE_INSTANTIATE_TEST_ES2_AND(
+    CopyTextureTestWebGL,
+    ES2_VULKAN_SWIFTSHADER().enable(Feature::ForceRenderableFallbackFormat));
 ANGLE_INSTANTIATE_TEST(CopyTextureTestDest,
                        ES2_D3D11(),
                        ES2_OPENGL(),
                        ES2_OPENGLES(),
                        ES2_VULKAN(),
-                       ES2_METAL());
+                       ES2_METAL(),
+                       ES2_VULKAN_SWIFTSHADER().enable(Feature::ForceRenderableFallbackFormat));
 
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(CopyTextureYUVOrientationTest);
 ANGLE_INSTANTIATE_TEST(CopyTextureYUVOrientationTest, ES2_METAL());
@@ -5436,5 +5451,7 @@ GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(CopyTextureYUVTest);
 ANGLE_INSTANTIATE_TEST(CopyTextureYUVTest, ES2_METAL(), ES3_METAL());
 
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(CopyTextureTestES3);
-ANGLE_INSTANTIATE_TEST_ES3(CopyTextureTestES3);
+ANGLE_INSTANTIATE_TEST_ES3_AND(
+    CopyTextureTestES3,
+    ES3_VULKAN_SWIFTSHADER().enable(Feature::ForceRenderableFallbackFormat));
 }  // namespace angle

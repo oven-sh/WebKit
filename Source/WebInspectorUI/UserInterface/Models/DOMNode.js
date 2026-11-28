@@ -229,6 +229,7 @@ WI.DOMNode = class DOMNode extends WI.Object
     get owningTarget() { return this._owningTarget || this.parentNode?.owningTarget || null; }
     get frameIdentifier() { return this._frameIdentifier; }
     get contentFrameIdentifier() { return this._contentFrameIdentifier; }
+    get contentDocument() { return this._contentDocument || null; }
     get backendNodeId() { return this._rawNodeId ?? this.id; }
     get nextSibling() { return this._nextSibling; }
     get previousSibling() { return this._previousSibling; }
@@ -825,6 +826,20 @@ WI.DOMNode = class DOMNode extends WI.Object
         });
     }
 
+    async snapshot()
+    {
+        // Under Site Isolation only the backend target can draw frames that other processes host.
+        if (WI.backendTarget && WI.networkManager.enabledPageForSiteIsolation && WI.backendTarget.hasCommand("Page.snapshotNode", "targetId")) {
+            let {dataURL} = await WI.backendTarget.PageAgent.snapshotNode(this.backendNodeId, this.owningTarget?.identifier);
+            return dataURL;
+        }
+
+        console.assert(!this.owningTarget, this);
+        let target = WI.assumingMainTarget();
+        let {dataURL} = await target.PageAgent.snapshotNode(this.id);
+        return dataURL;
+    }
+
     getChildNodes(callback)
     {
         if (this.children) {
@@ -970,6 +985,8 @@ WI.DOMNode = class DOMNode extends WI.Object
                 listener.owningTarget = owningTarget;
                 if (listener.nodeId)
                     listener.node = owningTarget ? WI.domManager.nodeForIdInFrameTarget(listener.nodeId, owningTarget) : WI.domManager.nodeForId(listener.nodeId);
+                if (listener.onWindow)
+                    listener.windowNode = this;
             }
             return result;
         });
@@ -1420,12 +1437,8 @@ WI.DOMNode = class DOMNode extends WI.Object
     // COMPATIBILITY (macOS 14.4, iOS 17.4): `DOM.getMediaStats` did not exist yet.
     async getMediaStats()
     {
-        // FIXME: <https://webkit.org/b/298980> Media stats for cross-origin frame nodes are not yet supported.
-        if (this.owningTarget)
-            return null;
-
-        let target = WI.assumingMainTarget();
-        let {mediaStats} = await target.DOMAgent.getMediaStats(this.id);
+        let target = this.owningTarget || WI.assumingMainTarget();
+        let {mediaStats} = await target.DOMAgent.getMediaStats(this.backendNodeId);
         return mediaStats;
     }
 };

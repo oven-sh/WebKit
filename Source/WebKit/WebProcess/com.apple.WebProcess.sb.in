@@ -64,10 +64,10 @@
 
 (allow fs-quota-get)
 
-;; Allow development dylibs to be loaded
+;; Load WebKitSwift in local development builds and in STP.
 (when (equal? (param "WK_FRAMEWORKS_ARE_RELOCATED") "YES")
     (allow file-read* file-map-executable
-        (literal (string-append (param "WEBKIT2_FRAMEWORK_DIR") "/libWebKitSwift.dylib"))))
+        (literal (string-append (param "WEBKIT2_FRAMEWORK_DIR") "/WebKit.framework/Versions/A/Frameworks/libWebKitSwift.dylib"))))
 
 #if HAVE(SANDBOX_STATE_FLAGS)
 (with-filter (require-not (webcontent-process-launched))
@@ -142,11 +142,13 @@
     (literal "/dev/null")
     (literal "/dev/zero"))
 
+#if !ENABLE(BLOCKING_OF_WEBCONTENT_FILE_WRITE)
 (allow file-write-data (with report) (with telemetry)
 #if !PLATFORM(MAC) || __MAC_OS_X_VERSION_MIN_REQUIRED <= 150400
     (literal "/dev/zero")
 #endif
     (literal "/dev/null"))
+#endif
 
 (allow file-read*
        file-write-data
@@ -156,13 +158,6 @@
         (require-any
             (csr CSR_ALLOW_APPLE_INTERNAL)
             (csr CSR_ALLOW_UNRESTRICTED_DTRACE))))
-
-#if !PLATFORM(MAC) || __MAC_OS_X_VERSION_MIN_REQUIRED <= 150400
-;;; Allow creation of core dumps.
-(allow file-write-create (with report) (with telemetry)
-    (require-all (prefix "/cores/")
-        (vnode-type REGULAR-FILE)))
-#endif
 
 #if !ENABLE(CFPREFS_DIRECT_MODE)
 (allow ipc-posix-shm-read*
@@ -742,8 +737,10 @@
 #endif
 
 (read-only-and-issue-extensions (extension "com.apple.app-sandbox.read"))
-(define (read-write-extension-with-telemetry) (with report) (with telemetry) (extension "com.apple.app-sandbox.read-write"))
+#if !ENABLE(BLOCKING_OF_WEBCONTENT_FILE_WRITE)
+(define (read-write-extension-with-telemetry) (with report) (with telemetry-backtrace) (with message "file-write with extension") (extension "com.apple.app-sandbox.read-write"))
 (read-write-and-issue-extensions (read-write-extension-with-telemetry))
+#endif
 
 ;; Allow certain Mach extensions. See <rdar://87850345>.
 (allow mach-lookup
@@ -758,14 +755,13 @@
     (allow mach-register
         (global-name-regex #"^_oglprof_attach_<[0-9]+>$")))
 
-#if USE(SANDBOX_PARAMS)
+#if USE(SANDBOX_PARAMS) && !ENABLE(BLOCKING_OF_WEBCONTENT_FILE_WRITE)
 (when (positive? (string-length (param "DARWIN_USER_CACHE_DIR")))
     (allow file-read* (subpath (param "DARWIN_USER_CACHE_DIR")))
     (allow file-write* (with telemetry-backtrace) (subpath (param "DARWIN_USER_CACHE_DIR"))))
-
 (when (positive? (string-length (param "DARWIN_USER_TEMP_DIR")))
     (allow file-read* (subpath (param "DARWIN_USER_TEMP_DIR")))
-    (allow file-write* (with telemetry-backtrace) (subpath (param "DARWIN_USER_TEMP_DIR"))))
+    (allow file-write* (with report) (with telemetry-backtrace) (with message "file-write to temp directory") (subpath (param "DARWIN_USER_TEMP_DIR"))))
 #endif
 
 ;; IOKit user clients
@@ -1088,6 +1084,9 @@
             F_RDADVISE ;; CoreNLP::ReadOnlyFile <- +[DDScannerService scanString:range:configuration:] <- WebCore::DictionaryLookup::rangeAtHitTestResult(WebCore::HitTestResult const&)
             F_SETCONFINED
             F_SETFD ;; libwebrtc.dylib (no backtrace)
+#if UBSAN_ENABLED
+            F_SETFL
+#endif
             F_SETPROTECTIONCLASS)))
 
 (when (defined? 'process-codesigning*)
@@ -1171,6 +1170,9 @@
         SYS_open
         SYS_open_nocancel
         SYS_openat
+#if UBSAN_ENABLED
+        SYS_pipe
+#endif
         SYS_pread
         SYS_proc_info
         SYS_psynch_cvbroad

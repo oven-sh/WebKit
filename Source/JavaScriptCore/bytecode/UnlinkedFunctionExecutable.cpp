@@ -68,7 +68,7 @@ static UnlinkedFunctionCodeBlock* generateUnlinkedFunctionCodeBlock(
         return nullptr;
     }
 
-    function->finishParsing(executable->name(), executable->functionMode());
+    function->finishParsing(executable->name().impl(), executable->functionMode());
     executable->recordParse(function->features(), function->lexicallyScopedFeatures(), function->hasCapturedVariables());
 
     bool isClassContext = executable->superBinding() == SuperBinding::Needed || executable->parseMode() == SourceParseMode::ClassFieldInitializerMode;
@@ -115,17 +115,17 @@ UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(VM& vm, Structure* struct
     , m_derivedContextType(static_cast<unsigned>(derivedContextType))
     , m_inlineAttribute(static_cast<unsigned>(inlineAttribute))
     , m_evalContextType(static_cast<unsigned>(evalContextType))
-    , m_hasName(!node->ident().isNull())
+    , m_hasName(!!node->ident())
     , m_isClass(false)
     , m_nameIsDeferred(false)
     , m_membersAreDeferred(false)
     , m_scalarsAreDeferred(false)
     , m_unlinkedCodeBlockForCall()
     , m_unlinkedCodeBlockForConstruct()
-    , m_ecmaName(node->ecmaName())
+    , m_ecmaName(Identifier::fromUid(vm, node->ecmaName()))
     , m_members(WTF::move(parentScopeTDZVariables))
 {
-    ASSERT(node->ident().isNull() || node->ident() == node->ecmaName());
+    ASSERT(!node->ident() || node->ident() == node->ecmaName());
     // Make sure these bitfields are adequately wide.
     ASSERT(m_implementationVisibility == static_cast<unsigned>(node->implementationVisibility()));
     ASSERT(m_constructAbility == static_cast<unsigned>(constructAbility));
@@ -345,7 +345,7 @@ void UnlinkedFunctionExecutable::decodeCachedCodeBlocks(VM& vm)
     vm.writeBarrier(this);
 }
 
-bool UnlinkedFunctionExecutable::returnCodeToCache(VM& vm, const UncheckedKeyHashSet<UnlinkedCodeBlock*>& linkedAgainst)
+bool UnlinkedFunctionExecutable::returnCodeToCache(VM& vm, const HashSet<UnlinkedCodeBlock*>& linkedAgainst)
 {
     if (m_isCached)
         return false;

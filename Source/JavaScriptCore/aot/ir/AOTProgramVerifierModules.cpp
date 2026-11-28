@@ -946,7 +946,7 @@ void ProgramVerifier::verifyModuleInstances()
         if (!isSorted || !hasLayout || instance.namespaceField == instance.deferredNamespaceField || !isUntyped(instance, instance.namespaceField) || !isUntyped(instance, instance.deferredNamespaceField))
             return failAt(index);
     }
-    UncheckedKeyHashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> resolvedLinks;
+    HashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> resolvedLinks;
     auto keyOf = [](ModuleID module, uint32_t field) {
         return static_cast<uint64_t>(module.index()) << 32 | field;
     };

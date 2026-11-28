@@ -173,9 +173,11 @@ private:
     bool addToEntryBuffer(PerformanceEntry&);
     void clearEntryBuffer(PerformanceEntry::Type, const String& name = { });
 
+    std::optional<uint64_t> signpostTime(DOMHighResTimeStamp) const;
+
     const std::unique_ptr<EventCounts> m_eventCounts;
-    mutable RefPtr<PerformanceNavigation> m_navigation;
-    mutable RefPtr<PerformanceTiming> m_timing;
+    const RefPtr<PerformanceNavigation> m_navigation;
+    const RefPtr<PerformanceTiming> m_timing;
 
     Timer m_resourceTimingBufferFullTimer;
     Vector<Ref<PerformanceEntry>> m_backupResourceTimingBuffer;

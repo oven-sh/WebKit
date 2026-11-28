@@ -33,6 +33,7 @@
 #include <WebCore/NodeInlinesLight.h>
 #include <WebCore/PseudoElement.h>
 #include <WebCore/RenderBox.h>
+#include <WebCore/RenderObjectNode.h>
 #include <WebCore/ShadowRoot.h>
 #include <WebCore/TreeScopeInlines.h>
 
@@ -46,7 +47,7 @@ inline bool Node::isUserAgentShadowRoot() const
 
 inline ContainerNode* Node::parentOrShadowHostNode() const
 {
-    ASSERT(isMainThreadOrGCThread());
+    ASSERT_WITH_SECURITY_IMPLICATION(isMainThreadOrGCThread());
     if (auto* shadowRoot = dynamicDowncast<ShadowRoot>(*this))
         return shadowRoot->host();
     return parentNode();
@@ -83,6 +84,8 @@ inline NamedNodeMap* Node::attributesMap() const
 
 inline void Node::setRenderer(RenderObject* renderer)
 {
+    // RenderObject::willBeDestroyed() relies on this to clear m_renderer.
+    ASSERT(!renderer || renderer->node() == this || (isDocumentNode() && renderer->isRenderView()));
     m_renderer = renderer;
 
     if (InspectorInstrumentationPublic::hasFrontends()) [[unlikely]]
@@ -172,7 +175,7 @@ inline Node& Node::rootNode() const
 
 inline void Node::setParentNode(ContainerNode* parent)
 {
-    ASSERT(isMainThread());
+    ASSERT_WITH_SECURITY_IMPLICATION(isMainThread());
     m_parentNode = parent;
     m_refCountAndParentBit = (m_refCountAndParentBit & s_refCountMask) | !!parent;
 }
@@ -210,7 +213,7 @@ inline void Node::setHasValidStyle()
 inline void Node::setTreeScopeRecursively(TreeScope& newTreeScope)
 {
     ASSERT(!isDocumentNode());
-    ASSERT(!deletionHasBegun());
+    ASSERT_WITH_SECURITY_IMPLICATION(!deletionHasBegun());
     if (m_treeScope != &newTreeScope) {
         Ref oldTreeScope = *m_treeScope;
         moveTreeToNewScope(*this, oldTreeScope, newTreeScope);

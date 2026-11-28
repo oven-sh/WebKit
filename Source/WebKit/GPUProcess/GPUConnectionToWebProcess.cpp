@@ -72,7 +72,6 @@
 
 #if PLATFORM(COCOA)
 #include "RemoteLayerTreeDrawingAreaProxyMessages.h"
-#include <WebCore/AVVideoCaptureSource.h>
 #include <WebCore/MediaSessionManagerCocoa.h>
 #include <WebCore/MediaSessionManagerIOS.h>
 #endif
@@ -223,6 +222,7 @@ private:
         case CaptureDevice::DeviceType::Screen:
             return process->allowsDisplayCapture();
         case CaptureDevice::DeviceType::Window:
+        case CaptureDevice::DeviceType::BrowserTab:
             return process->allowsDisplayCapture();
         }
     }
@@ -266,12 +266,8 @@ private:
         if (type == CaptureDevice::DeviceType::Microphone)
             process->startCapturingAudio();
 #if PLATFORM(IOS_FAMILY)
-        else if (type == CaptureDevice::DeviceType::Camera) {
+        else if (type == CaptureDevice::DeviceType::Camera)
             providePresentingApplicationPID(pageIdentifier);
-#if HAVE(AVCAPTUREDEVICEROTATIONCOORDINATOR)
-            AVVideoCaptureSource::setUseAVCaptureDeviceRotationCoordinatorAPI(process->sharedPreferencesForWebProcess() && process->sharedPreferencesForWebProcess()->useAVCaptureDeviceRotationCoordinatorAPI);
-#endif
-        }
 #endif
     }
 
@@ -798,7 +794,7 @@ VideoReceiverEndpointManager& GPUConnectionToWebProcess::videoReceiverEndpointMa
 }
 #endif
 
-void GPUConnectionToWebProcess::createGPU(WebGPUIdentifier identifier, RemoteRenderingBackendIdentifier renderingBackendIdentifier, IPC::StreamServerConnection::Handle&& connectionHandle)
+void GPUConnectionToWebProcess::createGPU(RemoteGPUIdentifier identifier, RemoteRenderingBackendIdentifier renderingBackendIdentifier, IPC::StreamServerConnection::Handle&& connectionHandle)
 {
     MESSAGE_CHECK(m_sharedPreferencesForWebProcess.webGPUEnabled);
 
@@ -820,7 +816,7 @@ void GPUConnectionToWebProcess::createGPU(WebGPUIdentifier identifier, RemoteRen
     ASSERT_UNUSED(addResult, addResult.isNewEntry);
 }
 
-void GPUConnectionToWebProcess::releaseGPU(WebGPUIdentifier identifier)
+void GPUConnectionToWebProcess::releaseGPU(RemoteGPUIdentifier identifier)
 {
     bool result = m_remoteGPUMap.remove(identifier);
     ASSERT_UNUSED(result, result);
@@ -1198,12 +1194,6 @@ bool GPUConnectionToWebProcess::dispatchSyncMessage(IPC::Connection& connection,
     }
     if (decoder.messageReceiverName() == Messages::RemoteMediaPlayerProxy::messageReceiverName()) {
         protect(remoteMediaPlayerManagerProxy())->didReceiveSyncPlayerMessage(connection, decoder, replyEncoder);
-        return true;
-    }
-#endif
-#if PLATFORM(COCOA) && ENABLE(MEDIA_STREAM)
-    if (decoder.messageReceiverName() == Messages::UserMediaCaptureManagerProxy::messageReceiverName()) {
-        protect(userMediaCaptureManagerProxy())->didReceiveSyncMessage(connection, decoder, replyEncoder);
         return true;
     }
 #endif

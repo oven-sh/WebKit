@@ -731,7 +731,7 @@ ModuleTable::PathInUTF8 ModuleTable::pathInUTF8(ModuleID module) const
         if (piece.is8Bit() && charactersAreAllASCII(piece.span8()))
             path.append(byteCast<char>(piece.span8()));
         else
-            path.append(piece.utf8().span());
+            path.append(makeUTF8CString(piece).span());
     };
     if (data(module).directory == Number24::max)
         append(ProgramStrings::viewInImage(*m_tables, StringID(data(module).publicPathOrName)));

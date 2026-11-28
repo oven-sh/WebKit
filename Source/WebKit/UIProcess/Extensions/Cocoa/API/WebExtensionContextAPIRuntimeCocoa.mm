@@ -476,8 +476,10 @@ void WebExtensionContext::runtimeConnectNative(const String& applicationID, WebE
         completionHandler({ });
 
         sendQueuedNativePortMessagesIfNeeded(channelIdentifier);
+        fireQueuedPortMessageEventsIfNeeded(sourceContentWorldType, channelIdentifier);
         firePortDisconnectEventIfNeeded(sourceContentWorldType, targetContentWorldType, channelIdentifier);
         clearQueuedPortMessages(targetContentWorldType, channelIdentifier);
+        clearQueuedPortMessages(sourceContentWorldType, channelIdentifier);
     }).get()];
 }
 
@@ -491,7 +493,8 @@ void WebExtensionContext::runtimeWebPageSendMessage(const String& extensionID, c
 
     RefPtr destinationExtension = extensionController->extensionContext(extensionID);
     RefPtr tab = getTab(senderParameters.pageProxyIdentifier);
-    if (!destinationExtension || !tab) {
+    bool isOffscreenSender = isOffscreenPage(senderParameters.pageProxyIdentifier);
+    if (!destinationExtension || (!tab && !isOffscreenSender)) {
         callAfterRandomDelay([completionHandler = WTF::move(completionHandler)]() mutable {
             completionHandler({ });
         });
@@ -500,7 +503,7 @@ void WebExtensionContext::runtimeWebPageSendMessage(const String& extensionID, c
     }
 
     WebExtensionMessageSenderParameters completeSenderParameters = senderParameters;
-    completeSenderParameters.tabParameters = tab->parameters();
+    completeSenderParameters.tabParameters = tab ? std::optional(tab->parameters()) : std::nullopt;
     completeSenderParameters.windowIdentifier = windowIdentifierForPage(senderParameters.pageProxyIdentifier);
 
     auto url = completeSenderParameters.url;
@@ -556,7 +559,8 @@ void WebExtensionContext::runtimeWebPageConnect(const String& extensionID, WebEx
 
     RefPtr destinationExtension = extensionController->extensionContext(extensionID);
     RefPtr tab = getTab(senderParameters.pageProxyIdentifier);
-    if (!destinationExtension || !tab) {
+    bool isOffscreenSender = isOffscreenPage(senderParameters.pageProxyIdentifier);
+    if (!destinationExtension || (!tab && !isOffscreenSender)) {
         callAfterRandomDelay([=, this, protectedThis = Ref { *this }, completionHandler = WTF::move(completionHandler)]() mutable {
             completionHandler({ });
             firePortDisconnectEventIfNeeded(sourceContentWorldType, targetContentWorldType, channelIdentifier);
@@ -567,7 +571,7 @@ void WebExtensionContext::runtimeWebPageConnect(const String& extensionID, WebEx
     }
 
     WebExtensionMessageSenderParameters completeSenderParameters = senderParameters;
-    completeSenderParameters.tabParameters = tab->parameters();
+    completeSenderParameters.tabParameters = tab ? std::optional(tab->parameters()) : std::nullopt;
     completeSenderParameters.windowIdentifier = windowIdentifierForPage(senderParameters.pageProxyIdentifier);
 
     auto url = completeSenderParameters.url;

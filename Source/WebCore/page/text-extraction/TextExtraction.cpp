@@ -29,6 +29,7 @@
 #include "AXObjectCache.h"
 #include "AccessibilityObject.h"
 #include "BoundaryPointInlines.h"
+#include "CachedImage.h"
 #include "CommonVM.h"
 #include "ComposedTreeIterator.h"
 #include "ContainerNodeInlines.h"
@@ -58,6 +59,7 @@
 #include "HTMLImageElement.h"
 #include "HTMLInputElement.h"
 #include "HTMLLIElement.h"
+#include "HTMLLabelElement.h"
 #include "HTMLMediaElement.h"
 #include "HTMLNames.h"
 #include "HTMLOptionElement.h"
@@ -77,6 +79,7 @@
 #include "PlatformKeyboardEvent.h"
 #include "PlatformMouseEvent.h"
 #include "PositionInlines.h"
+#include "PseudoElement.h"
 #include "RenderBox.h"
 #include "RenderDescendantIterator.h"
 #include "RenderElementInlines.h"
@@ -95,6 +98,7 @@
 #include "SimpleRange.h"
 #include "StaticRange.h"
 #include "StringEntropyHelpers.h"
+#include "StyleImage.h"
 #include "StyleTextDecorationLine.h"
 #include "Text.h"
 #include "TextIterator.h"
@@ -122,8 +126,7 @@
 #include "DataDetection.h"
 #endif
 
-namespace WebCore {
-namespace TextExtraction {
+namespace WebCore::TextExtraction {
 
 using namespace JSC;
 
@@ -320,6 +323,8 @@ struct TraversalContext {
     NodeIdentifierInclusion nodeIdentifierInclusion { NodeIdentifierInclusion::None };
     bool includeAccessibilityAttributes { false };
     unsigned visibleTextLength { 0 };
+    HashSet<Ref<ContainerNode>> treeScopeRootsWithIndexedLabels { };
+    HashMap<Ref<HTMLElement>, Vector<Ref<HTMLLabelElement>>> labelsByControl { };
 
     NODELETE inline bool shouldIncludeNodeWithRect(const FloatRect& rect) const
     {
@@ -348,6 +353,23 @@ struct TraversalContext {
     void popEnclosingBlock()
     {
         enclosingBlocks.removeLast();
+    }
+
+    std::span<const Ref<HTMLLabelElement>> labelsForControl(HTMLElement& control)
+    {
+        Ref treeScopeRoot = control.treeScope().rootNode();
+        if (treeScopeRootsWithIndexedLabels.add(treeScopeRoot).isNewEntry) {
+            for (Ref label : descendantsOfType<HTMLLabelElement>(treeScopeRoot)) {
+                if (RefPtr labeledControl = label->control())
+                    labelsByControl.ensure(labeledControl.releaseNonNull(), [] { return Vector<Ref<HTMLLabelElement>> { }; }).iterator->value.append(WTF::move(label));
+            }
+        }
+
+        auto iterator = labelsByControl.find(control);
+        if (iterator == labelsByControl.end())
+            return { };
+
+        return iterator->value.span();
     }
 };
 
@@ -520,16 +542,25 @@ static inline FloatRect rootViewBounds(const Node& node)
     return view->contentsToRootView(absoluteBoundsForNode(*renderer));
 }
 
-static inline String labelText(HTMLElement& element)
+static Vector<Ref<HTMLLabelElement>> associatedLabels(HTMLElement& element)
 {
     RefPtr labels = element.labels();
     if (!labels)
         return { };
 
-    StringBuilder builder;
+    Vector<Ref<HTMLLabelElement>> result;
     for (unsigned index = 0; index < labels->length(); ++index) {
-        RefPtr label = dynamicDowncast<Element>(labels->item(index));
-        if (!label || !label->renderer())
+        if (RefPtr label = dynamicDowncast<HTMLLabelElement>(labels->item(index)))
+            result.append(label.releaseNonNull());
+    }
+    return result;
+}
+
+static inline String labelText(std::span<const Ref<HTMLLabelElement>> labels)
+{
+    StringBuilder builder;
+    for (auto& label : labels) {
+        if (!label->renderer())
             continue;
 
         auto text = label->textContent().simplifyWhiteSpace(isASCIIWhitespace);
@@ -543,17 +574,9 @@ static inline String labelText(HTMLElement& element)
     return builder.toString();
 }
 
-static inline std::optional<FloatRect> visibleAssociatedLabelBounds(HTMLElement& element)
+static inline std::optional<FloatRect> visibleAssociatedLabelBounds(HTMLElement& element, TraversalContext& context)
 {
-    RefPtr labels = element.labels();
-    if (!labels)
-        return std::nullopt;
-
-    for (unsigned index = 0; index < labels->length(); ++index) {
-        RefPtr label = dynamicDowncast<Element>(labels->item(index));
-        if (!label)
-            continue;
-
+    for (auto& label : context.labelsForControl(element)) {
         CheckedPtr renderer = label->renderer();
         if (!renderer)
             continue;
@@ -564,7 +587,7 @@ static inline std::optional<FloatRect> visibleAssociatedLabelBounds(HTMLElement&
         if (renderer->style().opacity() < minOpacityToConsiderVisible)
             continue;
 
-        auto bounds = mainFrameViewBounds(*label);
+        auto bounds = mainFrameViewBounds(label);
         if (!bounds.isEmpty())
             return bounds;
     }
@@ -735,7 +758,7 @@ static String normalizedLabelText(Element& element, IncludeAssociatedLabels incl
 
     if (includeAssociatedLabels == IncludeAssociatedLabels::Yes) {
         if (RefPtr htmlElement = dynamicDowncast<HTMLElement>(element))
-            return normalizeText(labelText(*htmlElement));
+            return normalizeText(labelText(associatedLabels(*htmlElement).span()));
     }
 
     return { };
@@ -816,7 +839,7 @@ static inline Variant<SkipExtraction, ItemData, URL, Editable> extractItemData(N
         if (!input)
             return { SkipExtraction::SelfAndSubtree };
 
-        if (!visibleAssociatedLabelBounds(*input)) {
+        if (!visibleAssociatedLabelBounds(*input, context)) {
             RefPtr proxy = visualProxyForTransparentControl(*input);
             if (!proxy)
                 return { SkipExtraction::SelfAndSubtree };
@@ -971,7 +994,7 @@ static inline Variant<SkipExtraction, ItemData, URL, Editable> extractItemData(N
     if (RefPtr control = dynamicDowncast<HTMLTextFormControlElement>(element)) {
         RefPtr input = dynamicDowncast<HTMLInputElement>(control);
         Editable editable {
-            labelText(*control),
+            labelText(context.labelsForControl(*control)),
             input ? input->placeholder() : nullString(),
             shouldTreatAsPasswordField(element.get()),
             protect(element->document())->activeElement() == control
@@ -1290,6 +1313,81 @@ static bool looksVisuallyClickable(const RenderObject& renderer)
     return parentStyle->cursorType() != CursorType::Pointer || parentStyle->pointerEvents() == PointerEvents::None;
 }
 
+static void extractPseudoElementBackgroundImage(PseudoElement* pseudoElement, Item& parentItem, TraversalContext& context)
+{
+    if (!pseudoElement || context.onlyCollectTextAndLinksCount)
+        return;
+
+    CheckedPtr renderer = pseudoElement->renderer();
+    if (!renderer)
+        return;
+
+    CheckedRef style = renderer->style();
+    if (renderer->usedStyle().visibility() != UsedVisibility::Visible || style->opacity() < minOpacityToConsiderVisible)
+        return;
+
+    RefPtr<Style::Image> image;
+    for (auto& layer : style->backgroundLayers().usedValues()) {
+        if (RefPtr layerImage = layer.image().tryStyleImage(); layerImage && !layerImage->url().resolved.isEmpty()) {
+            image = WTF::move(layerImage);
+            break;
+        }
+    }
+
+    if (!image)
+        return;
+
+    auto url = image->url().resolved;
+    if (StringEntropyHelpers::humanReadableLastPathComponent(url).isEmpty())
+        return;
+
+    auto bounds = mainFrameViewBounds(*pseudoElement);
+    if (isNearlyEmpty(bounds))
+        return;
+
+    if (!context.originalRequest.includeClippedContent && isClippedOutByAncestors(*pseudoElement, bounds))
+        return;
+
+    if (!context.inAdditionalContainerToCollectCount && !context.shouldIncludeNodeWithRect(bounds)) {
+        if (!context.hasOverflowItemsStack.isEmpty())
+            context.hasOverflowItemsStack.last() = true;
+        return;
+    }
+
+    String mimeType;
+    if (RefPtr cachedImage = image->cachedImage()) {
+        if (RefPtr underlyingImage = cachedImage->image())
+            mimeType = underlyingImage->mimeType();
+    }
+
+    if (mimeType.isEmpty())
+        mimeType = "image/png"_s;
+
+    auto shortenedName = StringEntropyHelpers::lowEntropyLastPathComponent(url, "image"_s, mimeType);
+    Item item {
+        ImageItemData {
+            .completedSource = WTF::move(url),
+            .shortenedName = WTF::move(shortenedName),
+            .altText = { },
+        },
+        WTF::move(bounds),
+        { },
+        "IMG"_s,
+        { },
+        { context.frameIdentifier },
+        { },
+        { },
+        { },
+        { },
+        { },
+        { },
+        { },
+        context.enclosingBlockNumber(),
+    };
+    item.visualBlockContainerNumber = context.currentVisualBlockContainerNumber();
+    parentItem.children.append(WTF::move(item));
+}
+
 static inline void extractRecursive(Node& node, Item& parentItem, TraversalContext& context)
 {
     if (context.depth >= maxExtractionRecursionDepth)
@@ -1527,7 +1625,7 @@ static inline void extractRecursive(Node& node, Item& parentItem, TraversalConte
             auto bounds = mainFrameViewBounds(node);
             if (bounds.isEmpty()) {
                 if (RefPtr input = dynamicDowncast<HTMLInputElement>(node)) {
-                    if (auto labelBounds = visibleAssociatedLabelBounds(*input))
+                    if (auto labelBounds = visibleAssociatedLabelBounds(*input, context))
                         bounds = *labelBounds;
                 }
             }
@@ -1613,8 +1711,16 @@ static inline void extractRecursive(Node& node, Item& parentItem, TraversalConte
         context.hasOverflowItemsStack.append(false);
 
     if (RefPtr container = dynamicDowncast<ContainerNode>(node)) {
+        auto& itemForChildren = item ? *item : parentItem;
+        RefPtr element = dynamicDowncast<Element>(*container);
+        if (element)
+            extractPseudoElementBackgroundImage(protect(element->beforePseudoElement()), itemForChildren, context);
+
         for (Ref child : composedTreeChildren<0>(*container))
-            extractRecursive(child.get(), item ? *item : parentItem, context);
+            extractRecursive(child.get(), itemForChildren, context);
+
+        if (element)
+            extractPseudoElementBackgroundImage(protect(element->afterPseudoElement()), itemForChildren, context);
 
         if (RefPtr iframe = dynamicDowncast<HTMLIFrameElement>(node); iframe && item && context.originalRequest.includeSameOriginSubframes) {
             if (RefPtr frame = dynamicDowncast<LocalFrame>(iframe->contentFrame())) {
@@ -1747,6 +1853,30 @@ static void collapseRedundantFormWrappersRecursive(Item& item)
         auto button = WTF::move(child.children.first());
         child = WTF::move(button);
     }
+}
+
+static bool isClickableWrapperAroundSingleButtonOrLink(const Item& item)
+{
+    if (!item.nodeIdentifier || item.children.size() != 1)
+        return false;
+
+    if (auto containerType = item.dataAs<ContainerType>(); !containerType || *containerType == ContainerType::Button)
+        return false;
+
+    auto& child = item.children.first();
+    if (!child.nodeIdentifier)
+        return false;
+
+    return child.hasData<LinkItemData>() || child.dataAs<ContainerType>() == ContainerType::Button;
+}
+
+static void elideClickableWrapperIdentifiersRecursive(Item& item, std::optional<NodeIdentifier> contextMenuTargetNodeIdentifier)
+{
+    for (auto& child : item.children)
+        elideClickableWrapperIdentifiersRecursive(child, contextMenuTargetNodeIdentifier);
+
+    if (item.nodeIdentifier != contextMenuTargetNodeIdentifier && isClickableWrapperAroundSingleButtonOrLink(item))
+        item.nodeIdentifier = std::nullopt;
 }
 
 static Node* nodeFromJSHandle(JSHandleIdentifier identifier)
@@ -1978,6 +2108,8 @@ Result extractItem(Request&& request, LocalFrame& frame)
     pruneWhitespaceRecursive(root);
     pruneEmptyContainersRecursive(root);
     collapseRedundantFormWrappersRecursive(root);
+    if (request.nodeIdentifierInclusion == NodeIdentifierInclusion::Interactive)
+        elideClickableWrapperIdentifiersRecursive(root, request.contextMenuTargetNodeIdentifier);
 
     return { WTF::move(root), visibleTextLength };
 }
@@ -2447,15 +2579,15 @@ static constexpr auto interactedWithSelectElementDescription = "Successfully upd
 static void dispatchSimulatedClick(LocalFrame& frame, IntPoint location, CompletionHandler<void(bool, String&&)>&& completion)
 {
     frame.eventHandler().handleMouseMoveEvent({
-        location, location, MouseButton::Left, PlatformEvent::Type::MouseMoved, 0, { }, MonotonicTime::now(), ForceAtClick, SyntheticClickType::NoTap, MouseEventInputSource::UserDriven
+        location, location, MouseButton::Left, PlatformEvent::Type::MouseMoved, 0, { }, MonotonicTime::now(), ForceAtClick, SyntheticClickType::NoTap, MouseEventInputSource::Default
     }, nullptr, false, HitTestRequest::Type::IgnoreClipping);
 
     frame.eventHandler().handleMousePressEvent({
-        location, location, MouseButton::Left, PlatformEvent::Type::MousePressed, 1, { }, MonotonicTime::now(), ForceAtClick, SyntheticClickType::NoTap, MouseEventInputSource::UserDriven
+        location, location, MouseButton::Left, PlatformEvent::Type::MousePressed, 1, { }, MonotonicTime::now(), ForceAtClick, SyntheticClickType::NoTap, MouseEventInputSource::Default
     }, HitTestRequest::Type::IgnoreClipping);
 
     frame.eventHandler().handleMouseReleaseEvent({
-        location, location, MouseButton::Left, PlatformEvent::Type::MouseReleased, 1, { }, MonotonicTime::now(), ForceAtClick, SyntheticClickType::NoTap, MouseEventInputSource::UserDriven
+        location, location, MouseButton::Left, PlatformEvent::Type::MouseReleased, 1, { }, MonotonicTime::now(), ForceAtClick, SyntheticClickType::NoTap, MouseEventInputSource::Default
     }, HitTestRequest::Type::IgnoreClipping);
 
     completion(true, { });
@@ -2464,7 +2596,7 @@ static void dispatchSimulatedClick(LocalFrame& frame, IntPoint location, Complet
 static void dispatchSimulatedHover(LocalFrame& frame, IntPoint location, CompletionHandler<void(bool, String&&)>&& completion)
 {
     frame.eventHandler().handleMouseMoveEvent({
-        location, location, std::unexpected { MouseButtonState::None }, PlatformEvent::Type::MouseMoved, 0, { }, MonotonicTime::now(), ForceAtClick, SyntheticClickType::NoTap, MouseEventInputSource::UserDriven
+        location, location, std::unexpected { MouseButtonState::None }, PlatformEvent::Type::MouseMoved, 0, { }, MonotonicTime::now(), ForceAtClick, SyntheticClickType::NoTap, MouseEventInputSource::Default
     });
 
     completion(true, { });
@@ -2916,13 +3048,34 @@ static bool containsMultipleWords(StringView text)
     return false;
 }
 
+static String normalizedAltText(const Element& element)
+{
+    if (RefPtr image = dynamicDowncast<HTMLImageElement>(element))
+        return normalizeText(image->attributeWithoutSynchronization(HTMLNames::altAttr));
+
+    if (RefPtr input = dynamicDowncast<HTMLInputElement>(element)) {
+        if (input->isImageButton())
+            return normalizeText(input->attributeWithoutSynchronization(HTMLNames::altAttr));
+    }
+
+    return { };
+}
+
+static String labelTextForDescription(Element& element, IncludeAssociatedLabels includeAssociatedLabels = IncludeAssociatedLabels::No)
+{
+    if (auto text = normalizedLabelText(element, includeAssociatedLabels); !text.isEmpty())
+        return text;
+
+    return normalizedAltText(element);
+}
+
 static bool hasNoRenderedTextOrLabeledChild(Element& element)
 {
     if (containsLetterOrDigit(normalizeText(plainText(makeRangeSelectingNodeContents(element), behaviorsForTextExtraction))))
         return false;
 
     for (Ref child : descendantsOfType<Element>(element)) {
-        if (!normalizedLabelText(child).isEmpty())
+        if (!labelTextForDescription(child).isEmpty())
             return false;
     }
 
@@ -2984,7 +3137,7 @@ static String textDescription(Element& element, Vector<String>& stringsToValidat
         hasAccessibleName = true;
     }
 
-    if (auto text = normalizedLabelText(element, IncludeAssociatedLabels::Yes); !text.isEmpty()) {
+    if (auto text = labelTextForDescription(element, IncludeAssociatedLabels::Yes); !text.isEmpty()) {
         description.append(makeString(" labeled "_s, wrapWithDoubleQuotes(WTF::move(text))));
         stringsToValidate.append(WTF::move(text));
         needsParentContext = false;
@@ -3129,7 +3282,7 @@ static String textDescription(Node* node, Vector<String>& stringsToValidate)
         String labeledChildSuffix;
         if (RefPtr container = dynamicDowncast<ContainerNode>(node)) {
             for (Ref child : descendantsOfType<Element>(*container)) {
-                auto label = normalizedLabelText(child);
+                auto label = labelTextForDescription(child);
                 if (label.isEmpty())
                     continue;
 
@@ -3896,5 +4049,4 @@ Vector<FilterRule> extractRules(Vector<FilterRuleData>&& data)
     });
 }
 
-} // namespace TextExtraction
-} // namespace WebCore
+} // namespace WebCore::TextExtraction

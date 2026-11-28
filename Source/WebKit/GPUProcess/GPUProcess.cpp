@@ -188,7 +188,7 @@ bool GPUProcess::shouldTerminate()
 
 bool GPUProcess::canExitUnderMemoryPressure() const
 {
-    ASSERT(isMainRunLoop());
+    RELEASE_ASSERT(isMainRunLoop());
 #if ENABLE(MEDIA_STREAM) && PLATFORM(COCOA)
     if (m_capturePreviewManager)
         return false;
@@ -211,7 +211,7 @@ void GPUProcess::tryExitIfUnusedAndUnderMemoryPressure()
 
 void GPUProcess::tryExitIfUnused()
 {
-    ASSERT(isMainRunLoop());
+    RELEASE_ASSERT(isMainRunLoop());
     if (!canExitUnderMemoryPressure()) {
         m_idleExitTimer.stop();
         return;
@@ -901,7 +901,7 @@ void GPUProcess::startCapturePreview(std::optional<WebCore::CaptureDevice>&& vid
 
     // Do not consumePermanently(): the preview's extensions are revoked when the prompt is dismissed. If the user
     // gives permission to capture the sandbox will be extended as necessary.
-    for (auto& handle : sandboxExtensions) {
+    for (auto& handle : borrow(sandboxExtensions)) {
         if (RefPtr extension = SandboxExtension::create(WTF::move(handle)); extension && extension->consume())
             m_capturePreviewSandboxExtensions.append(extension.releaseNonNull());
     }
@@ -1122,6 +1122,11 @@ void GPUProcess::setShouldListenToVoiceActivity(bool shouldListen)
 void GPUProcess::promptForGetDisplayMedia(WebCore::DisplayCapturePromptType type, CompletionHandler<void(std::optional<WebCore::CaptureDevice>)>&& completionHandler)
 {
     WebCore::ScreenCaptureKitSharingSessionManager::singleton().promptForGetDisplayMedia(type, WTF::move(completionHandler));
+}
+
+void GPUProcess::selectWindowForCapture(uint32_t windowID, CompletionHandler<void(std::optional<WebCore::CaptureDevice>)>&& completionHandler)
+{
+    WebCore::ScreenCaptureKitSharingSessionManager::singleton().selectWindowForCapture(windowID, WTF::move(completionHandler));
 }
 
 void GPUProcess::cancelGetDisplayMediaPrompt()

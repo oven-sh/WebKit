@@ -84,6 +84,8 @@ STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(JSObjectWithButterfly);
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(JSFinalObject);
 
 const ASCIILiteral NonExtensibleObjectPropertyDefineError { "Attempting to define property on object that is not extensible."_s };
+const ASCIILiteral NonExtensibleObjectPrivateFieldDefineError { "Attempting to define private field on object that is not extensible."_s };
+const ASCIILiteral NonExtensibleObjectPrivateMethodDefineError { "Attempting to define private method on object that is not extensible."_s };
 const ASCIILiteral ImmutablePropertyDefineError { "Attempting to define property on object with immutable properties."_s };
 
 // Where a rejected write to a locked property came from, which decides whether it throws.
@@ -3413,11 +3415,6 @@ bool JSObject::isExtensible(JSObject* obj, JSGlobalObject*)
     return obj->isStructureExtensible();
 }
 
-bool JSObject::isExtensible(JSGlobalObject* globalObject)
-{ 
-    return methodTable()->isExtensible(this, globalObject);
-}
-
 void JSObject::reifyAllStaticProperties(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -5109,7 +5106,7 @@ constexpr unsigned butterflyInButterflySpace = 10; // out-of-line only: in vm.au
 constexpr unsigned butterflyOutOfLineStorageIsZeroFilled = 11; // out-of-line only
 constexpr unsigned structureIsDictionary = 12;
 constexpr unsigned structureIsUncacheableDictionary = 13; // the kind flattenDictionaryStructure() renumbers
-constexpr unsigned structureHasBeenFlattenedBefore = 14; // ineligible for further flattening
+constexpr unsigned structureHasBeenFlattenedBefore = 14;
 constexpr unsigned structureInlineCapacity = 15; // saturated to 4 bits
 }
 

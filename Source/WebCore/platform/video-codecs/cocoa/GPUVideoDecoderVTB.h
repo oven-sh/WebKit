@@ -44,16 +44,13 @@ public:
     ~GPUVideoDecoderVTB();
 
 private:
+    bool setVideoInfo(Ref<VideoInfo>&&) final;
     void flush() final;
-    void setFormat(std::span<const uint8_t>, uint16_t width, uint16_t height, RefPtr<VideoInfo>&&) final;
-    int32_t decodeFrame(int64_t timeStamp, std::span<const uint8_t>, RefPtr<VideoInfo>&&) final;
-    void setFrameSize(uint16_t width, uint16_t height) final;
+    int32_t decodeFrame(int64_t timeStamp, std::span<const uint8_t>) final;
     void colorSpaceOverrideChanged() final;
 
-    int32_t decodeFrameInternal(int64_t timeStamp, std::span<const uint8_t> data);
-    void setVideoInfo(Ref<VideoInfo>&&);
-
     void updateFormat(const VideoInfo&);
+    bool ensureDecoder();
 
     WorkQueue& queue() const { return m_workQueue; }
 
@@ -63,9 +60,7 @@ private:
     RefPtr<VideoInfo> m_videoInfo WTF_GUARDED_BY_CAPABILITY(queue());
     RetainPtr<CMVideoFormatDescriptionRef> m_format WTF_GUARDED_BY_CAPABILITY(queue());
     RefPtr<VideoDecoderVTBSession> m_decoder WTF_GUARDED_BY_CAPABILITY(queue());
-    RefPtr<GPUVideoDecoderVTBQueue> m_queue WTF_GUARDED_BY_CAPABILITY(queue());
-    uint16_t m_width WTF_GUARDED_BY_CAPABILITY(queue()) { 0 };
-    uint16_t m_height WTF_GUARDED_BY_CAPABILITY(queue()) { 0 };
+    const RefPtr<GPUVideoDecoderVTBQueue> m_queue WTF_GUARDED_BY_CAPABILITY(queue());
     uint8_t m_reorderQueueMaxSize WTF_GUARDED_BY_CAPABILITY(queue()) { 0 };
 };
 

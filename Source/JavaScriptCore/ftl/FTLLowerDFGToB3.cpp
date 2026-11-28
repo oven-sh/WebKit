@@ -134,7 +134,6 @@
 #include <atomic>
 #include <span>
 #include <wtf/Box.h>
-#include <wtf/GenericHashKey.h>
 #include <wtf/RecursableLambda.h>
 #include <wtf/text/MakeString.h>
 
@@ -886,6 +885,9 @@ private:
         case ArithAbs:
             compileArithAbs();
             break;
+        case ArithSign:
+            compileArithSign();
+            break;
         case ValuePow:
             compileValuePow();
             break;
@@ -1346,6 +1348,9 @@ private:
             break;
         case GetPrototypeOf:
             compileGetPrototypeOf();
+            break;
+        case GetTypedArrayBuffer:
+            compileGetTypedArrayBuffer();
             break;
         case GetWebAssemblyInstanceExports:
             compileGetWebAssemblyInstanceExports();
@@ -2454,26 +2459,31 @@ private:
         return nullptr;
     }
 
-    LValue unboxRealNumberDouble(LValue boxed, Node* node = nullptr)
+    LValue unboxNumberAsDouble(LValue boxed, Node* node)
     {
+        LBasicBlock nanCase = m_out.newBlock();
         LBasicBlock intCase = m_out.newBlock();
         LBasicBlock continuation = m_out.newBlock();
 
-        LBasicBlock lastNext = m_out.insertNewBlocksBefore(intCase);
+        LBasicBlock lastNext = m_out.insertNewBlocksBefore(nanCase);
 
         LValue doubleValue = unboxDoubleAsDouble(boxed);
         ValueFromBlock fastResult = m_out.anchor(doubleValue);
-        m_out.branch(m_out.doubleEqual(doubleValue, doubleValue), usually(continuation), rarely(intCase));
+        m_out.branch(m_out.doubleEqual(doubleValue, doubleValue), usually(continuation), rarely(nanCase));
+
+        m_out.appendTo(nanCase, intCase);
+        LValue boxedJSValue = m_out.bitCast(boxed, Int64);
+        speculate(BadType, noValue(), node, isNotNumber(boxedJSValue));
+        ValueFromBlock nanResult = m_out.anchor(doubleValue);
+        m_out.branch(isInt32(boxedJSValue), unsure(intCase), unsure(continuation));
 
         m_out.appendTo(intCase, continuation);
-        LValue boxedJSValue = m_out.bitCast(boxed, Int64);
-        speculate(BadType, noValue(), node, isNotInt32(boxedJSValue));
-        ValueFromBlock slowResult = m_out.anchor(m_out.intToDouble(unboxInt32(boxedJSValue)));
+        ValueFromBlock intResult = m_out.anchor(m_out.intToDouble(unboxInt32(boxedJSValue)));
         m_out.jump(continuation);
 
         m_out.appendTo(continuation, lastNext);
 
-        return m_out.phi(Double, fastResult, slowResult);
+        return m_out.phi(Double, fastResult, nanResult, intResult);
     }
 
     void compileValueRep()
@@ -2913,7 +2923,7 @@ private:
                 mathIC->m_generator = Generator(params[0].gpr(), params[1].gpr(), params.gpScratch(0));
 
                 bool shouldEmitProfiling = false;
-                bool generatedInline = mathIC->generateInline(jit, *mathICGenerationState, shouldEmitProfiling);
+                bool generatedInline = mathIC->generateInline(jit, *mathICGenerationState, JITType::FTLJIT, shouldEmitProfiling);
 
                 if (generatedInline) {
                     ASSERT(!mathICGenerationState->slowPathJumps.empty());
@@ -3010,7 +3020,7 @@ private:
                     params.fpScratch(1), params.gpScratch(0));
 
                 bool shouldEmitProfiling = false;
-                bool generatedInline = mathIC->generateInline(jit, *mathICGenerationState, shouldEmitProfiling);
+                bool generatedInline = mathIC->generateInline(jit, *mathICGenerationState, JITType::FTLJIT, shouldEmitProfiling);
 
                 if (generatedInline) {
                     ASSERT(!mathICGenerationState->slowPathJumps.empty());
@@ -3510,6 +3520,35 @@ private:
         default:
             DFG_CRASH(m_graph, m_node, "Bad use kind"_s);
             break;
+        }
+    }
+
+    void compileArithSign()
+    {
+        JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
+        switch (m_node->child1().useKind()) {
+        case Int32Use: {
+            LValue value = lowInt32(m_node->child1());
+            LValue negative = m_out.aShr(value, m_out.constInt32(31));
+            LValue positive = m_out.lShr(m_out.neg(value), m_out.constInt32(31));
+            setInt32(m_out.bitOr(negative, positive));
+            break;
+        }
+
+        case DoubleRepUse: {
+            LValue value = lowDouble(m_node->child1());
+            LValue zero = m_out.constDouble(0);
+            LValue notPositive = m_out.select(m_out.doubleLessThan(value, zero), m_out.constDouble(-1), value);
+            setDouble(m_out.select(m_out.doubleGreaterThan(value, zero), m_out.constDouble(1), notPositive));
+            break;
+        }
+
+        default: {
+            DFG_ASSERT(m_graph, m_node, m_node->child1().useKind() == UntypedUse, m_node->child1().useKind());
+            LValue argument = lowJSValue(m_node->child1());
+            setDouble(vmCall(Double, operationArithSign, weakPointer(globalObject), argument));
+            break;
+        }
         }
     }
 
@@ -6090,6 +6129,42 @@ IGNORE_CLANG_WARNINGS_END
 
         m_out.appendTo(continuation, lastNext);
         setJSValue(m_out.phi(Int64, monoProto, polyProto, slowResult));
+    }
+
+    void compileGetTypedArrayBuffer()
+    {
+        JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
+        LValue base = lowCell(m_node->child1());
+
+        LBasicBlock hasBufferCase = m_out.newBlock();
+        LBasicBlock hasWrapperCase = m_out.newBlock();
+        LBasicBlock isLiveCase = m_out.newBlock();
+        LBasicBlock slowCase = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+
+        LValue mode = m_out.load8ZeroExt32(base, m_heaps.JSArrayBufferView_mode);
+        m_out.branch(m_out.testNonZero32(mode, m_out.constInt32(isWastefulTypedArrayMode)), usually(hasBufferCase), rarely(slowCase));
+
+        LBasicBlock lastNext = m_out.appendTo(hasBufferCase, hasWrapperCase);
+        LValue butterfly = m_out.loadPtr(base, m_heaps.JSObject_butterfly);
+        LValue buffer = m_out.loadPtr(butterfly, m_heaps.Butterfly_arrayBuffer);
+        LValue weakImpl = m_out.loadPtr(buffer, m_heaps.ArrayBuffer_wrapper);
+        m_out.branch(m_out.notNull(weakImpl), usually(hasWrapperCase), rarely(slowCase));
+
+        m_out.appendTo(hasWrapperCase, isLiveCase);
+        LValue weakHandleOwner = m_out.loadPtr(weakImpl, m_heaps.WeakImpl_weakHandleOwner);
+        m_out.branch(m_out.testIsZeroPtr(weakHandleOwner, m_out.constIntPtr(WeakImpl::StateMask)), usually(isLiveCase), rarely(slowCase));
+
+        m_out.appendTo(isLiveCase, slowCase);
+        ValueFromBlock fastResult = m_out.anchor(m_out.loadPtr(weakImpl, m_heaps.WeakImpl_jsValue));
+        m_out.jump(continuation);
+
+        m_out.appendTo(slowCase, continuation);
+        ValueFromBlock slowResult = m_out.anchor(vmCall(pointerType(), operationGetTypedArrayBuffer, weakPointer(globalObject), base));
+        m_out.jump(continuation);
+
+        m_out.appendTo(continuation, lastNext);
+        setJSValue(m_out.phi(pointerType(), fastResult, slowResult));
     }
 
     void compileGetWebAssemblyInstanceExports()
@@ -8746,12 +8821,23 @@ IGNORE_CLANG_WARNINGS_END
             LBasicBlock loopNext = m_out.newBlock();
             LBasicBlock notFound = m_out.newBlock();
             LBasicBlock continuation = m_out.newBlock();
+            LBasicBlock slowCaseFromLoop = m_out.newBlock();
             LBasicBlock slowCase = m_out.newBlock();
+            LBasicBlock definitelyAtomCheckSearch = m_out.newBlock();
+            LBasicBlock definitelyAtomLoopHeader = m_out.newBlock();
+            LBasicBlock definitelyAtomCheckEmpty = m_out.newBlock();
+            LBasicBlock definitelyAtomCheckCell = m_out.newBlock();
+            LBasicBlock definitelyAtomCheckString = m_out.newBlock();
+            LBasicBlock definitelyAtomCheckFlag = m_out.newBlock();
+            LBasicBlock definitelyAtomCompareImpl = m_out.newBlock();
+            LBasicBlock definitelyAtomLoopNext = m_out.newBlock();
+            LBasicBlock definitelyAtomBailout = m_out.newBlock();
+            LBasicBlock definitelyAtomNotFound = m_out.newBlock();
 
             startIndex = m_out.zeroExtPtr(startIndex);
             length = m_out.zeroExtPtr(length);
 
-            ValueFromBlock initialStartIndex = m_out.anchor(startIndex);
+            ValueFromBlock slowCaseInitialIndex = m_out.anchor(startIndex);
 
             auto operation = operationArrayIndexOfString;
 
@@ -8789,22 +8875,65 @@ IGNORE_CLANG_WARNINGS_END
             }
             m_out.jump(checkSearchRopeString);
 
-            LBasicBlock lastNext = m_out.appendTo(checkSearchRopeString, checkSearchElement8Bit);
+            LBasicBlock lastNext = m_out.appendTo(checkSearchRopeString, isOnlyAtomStrings ? checkAtomStructure : definitelyAtomCheckSearch);
             LValue searchElementImpl = m_out.loadPtr(searchElement, m_heaps.JSString_value);
-            m_out.branch(isRopeString(searchElement, searchElementEdge), rarely(slowCase), usually(isOnlyAtomStrings ? checkAtomStructure : checkSearchElement8Bit));
+            m_out.branch(isRopeString(searchElement, searchElementEdge), rarely(slowCase), usually(isOnlyAtomStrings ? checkAtomStructure : definitelyAtomCheckSearch));
 
             if (isOnlyAtomStrings) {
-                m_out.appendTo(checkAtomStructure, checkSearchElement8Bit);
+                m_out.appendTo(checkAtomStructure, definitelyAtomCheckSearch);
                 LValue targetStructureID = weakStructureID(m_graph.registerStructure(vm().cellButterflyOnlyAtomStringsStructure.get()));
                 LValue butterflyStructureID = m_out.load32(m_out.add(storage, m_out.constIntPtr(-JSCellButterfly::offsetOfData())), m_heaps.JSCell_structureID);
-                m_out.branch(m_out.equal(butterflyStructureID, targetStructureID), unsure(atomCheckSearchIsAtom), unsure(checkSearchElement8Bit));
+                m_out.branch(m_out.equal(butterflyStructureID, targetStructureID), unsure(atomCheckSearchIsAtom), unsure(definitelyAtomCheckSearch));
             }
 
+            // A definitely-atom element equals an atom search string exactly when their StringImpl pointers
+            // match, so its characters are never read. The first string without that bit goes to the generic loop.
+            m_out.appendTo(definitelyAtomCheckSearch, definitelyAtomLoopHeader);
+            ValueFromBlock definitelyAtomInitialIndex = m_out.anchor(startIndex);
+            ValueFromBlock searchNotAtomIndex = m_out.anchor(startIndex);
+            m_out.branch(m_out.testIsZero32(m_out.load32(searchElementImpl, m_heaps.StringImpl_hashAndFlags), m_out.constInt32(StringImpl::flagIsAtom())), unsure(checkSearchElement8Bit), unsure(definitelyAtomLoopHeader));
+
+            m_out.appendTo(definitelyAtomLoopHeader, definitelyAtomCheckEmpty);
+            LValue definitelyAtomIndex = m_out.phi(pointerType(), definitelyAtomInitialIndex);
+            m_out.branch(m_out.notEqual(definitelyAtomIndex, length), usually(definitelyAtomCheckEmpty), rarely(definitelyAtomNotFound));
+
+            m_out.appendTo(definitelyAtomCheckEmpty, definitelyAtomCheckCell);
+            LValue definitelyAtomElement = m_out.load64(m_out.baseIndex(m_heaps.indexedContiguousProperties, storage, definitelyAtomIndex));
+            m_out.branch(m_out.isZero64(definitelyAtomElement), rarely(definitelyAtomLoopNext), usually(definitelyAtomCheckCell));
+
+            m_out.appendTo(definitelyAtomCheckCell, definitelyAtomCheckString);
+            m_out.branch(isCell(definitelyAtomElement), usually(definitelyAtomCheckString), rarely(definitelyAtomLoopNext));
+
+            m_out.appendTo(definitelyAtomCheckString, definitelyAtomCheckFlag);
+            m_out.branch(isString(definitelyAtomElement), usually(definitelyAtomCheckFlag), rarely(definitelyAtomLoopNext));
+
+            m_out.appendTo(definitelyAtomCheckFlag, definitelyAtomCompareImpl);
+            m_out.branch(isDefinitelyAtomString(definitelyAtomElement), usually(definitelyAtomCompareImpl), rarely(definitelyAtomBailout));
+
+            m_out.appendTo(definitelyAtomCompareImpl, definitelyAtomLoopNext);
+            ValueFromBlock definitelyAtomFoundResult = isArrayIncludes ? m_out.anchor(m_out.constBool(true)) : m_out.anchor(definitelyAtomIndex);
+            m_out.branch(m_out.equal(m_out.loadPtr(definitelyAtomElement, m_heaps.JSString_value), searchElementImpl), rarely(continuation), usually(definitelyAtomLoopNext));
+
+            m_out.appendTo(definitelyAtomLoopNext, definitelyAtomBailout);
+            m_out.addIncomingToPhi(definitelyAtomIndex, m_out.anchor(m_out.add(definitelyAtomIndex, m_out.intPtrOne)));
+            m_out.jump(definitelyAtomLoopHeader);
+
+            m_out.appendTo(definitelyAtomBailout, definitelyAtomNotFound);
+            ValueFromBlock definitelyAtomBailoutIndex = m_out.anchor(definitelyAtomIndex);
+            m_out.jump(checkSearchElement8Bit);
+
+            m_out.appendTo(definitelyAtomNotFound, checkSearchElement8Bit);
+            ValueFromBlock definitelyAtomNotFoundResult = isArrayIncludes ? m_out.anchor(m_out.constBool(false)) : m_out.anchor(m_out.constIntPtr(-1));
+            m_out.jump(continuation);
+
             m_out.appendTo(checkSearchElement8Bit, loopHeader);
+            LValue resumeIndex = m_out.phi(pointerType(), searchNotAtomIndex, definitelyAtomBailoutIndex);
+            ValueFromBlock loopInitialIndex = m_out.anchor(resumeIndex);
+            ValueFromBlock slowCaseResumeIndex = m_out.anchor(resumeIndex);
             m_out.branch(m_out.testIsZero32(m_out.load32(searchElementImpl, m_heaps.StringImpl_hashAndFlags), m_out.constInt32(StringImpl::flagIs8Bit())), unsure(slowCase), unsure(loopHeader));
 
             m_out.appendTo(loopHeader, fastCheckElementEmpty);
-            LValue index = m_out.phi(pointerType(), initialStartIndex);
+            LValue index = m_out.phi(pointerType(), loopInitialIndex);
             m_out.branch(m_out.notEqual(index, length), usually(fastCheckElementEmpty), rarely(notFound));
 
             m_out.appendTo(fastCheckElementEmpty, fastCheckElementCell);
@@ -8832,7 +8961,7 @@ IGNORE_CLANG_WARNINGS_END
                 unsure(loopNext), unsure(slowCheckElement8Bit));
 
             m_out.appendTo(slowCheckElement8Bit, checkNonEmpty);
-            m_out.branch(m_out.testIsZero32(m_out.load32(elementImpl, m_heaps.StringImpl_hashAndFlags), m_out.constInt32(StringImpl::flagIs8Bit())), rarely(slowCase), usually(checkNonEmpty));
+            m_out.branch(m_out.testIsZero32(m_out.load32(elementImpl, m_heaps.StringImpl_hashAndFlags), m_out.constInt32(StringImpl::flagIs8Bit())), rarely(slowCaseFromLoop), usually(checkNonEmpty));
 
             m_out.appendTo(checkNonEmpty, loadBytes);
             m_out.branch(m_out.isZero32(elementLength), rarely(continuation), usually(loadBytes));
@@ -8887,25 +9016,32 @@ IGNORE_CLANG_WARNINGS_END
             m_out.appendTo(ropeElementLengthCheck, loopNext);
             m_out.branch(
                 m_out.notEqual(m_out.load32NonNegative(element, m_heaps.JSRopeString_length), m_out.load32(searchElementImpl, m_heaps.StringImpl_length)),
-                usually(loopNext), rarely(slowCase));
+                usually(loopNext), rarely(slowCaseFromLoop));
 
-            m_out.appendTo(loopNext,  notFound);
+            m_out.appendTo(loopNext, notFound);
             LValue nextIndex = m_out.add(index, m_out.intPtrOne);
             m_out.addIncomingToPhi(index, m_out.anchor(nextIndex));
             m_out.jump(loopHeader);
 
-            m_out.appendTo(notFound, continuation);
+            m_out.appendTo(notFound, slowCaseFromLoop);
             ValueFromBlock notFoundResult = isArrayIncludes ? m_out.anchor(m_out.constBool(false)) : m_out.anchor(m_out.constIntPtr(-1));
             m_out.jump(continuation);
 
-            m_out.appendTo(slowCase, continuation);
-            ValueFromBlock slowCaseResult = isArrayIncludes ? m_out.anchor(vmCall(Int32, operationArrayIncludesString, weakPointer(globalObject), storage, searchElement, startIndex)) : m_out.anchor(vmCall(Int64, operation, weakPointer(globalObject), storage, searchElement, startIndex));
+            m_out.appendTo(slowCaseFromLoop, slowCase);
+            ValueFromBlock slowCaseLoopIndex = m_out.anchor(index);
+            m_out.jump(slowCase);
+
+            m_out.appendTo(slowCase, isOnlyAtomStrings ? atomCheckSearchIsAtom : continuation);
+            LValue slowCaseIndex = m_out.castToInt32(m_out.phi(pointerType(), slowCaseInitialIndex, slowCaseResumeIndex, slowCaseLoopIndex));
+            ValueFromBlock slowCaseResult = isArrayIncludes ? m_out.anchor(vmCall(Int32, operationArrayIncludesString, weakPointer(globalObject), storage, searchElement, slowCaseIndex)) : m_out.anchor(vmCall(Int64, operation, weakPointer(globalObject), storage, searchElement, slowCaseIndex));
             m_out.jump(continuation);
 
-            Vector<ValueFromBlock, 5> results;
+            Vector<ValueFromBlock, 7> results;
             results.append(notFoundResult);
             results.append(foundResult);
             results.append(slowCaseResult);
+            results.append(definitelyAtomNotFoundResult);
+            results.append(definitelyAtomFoundResult);
 
             if (isOnlyAtomStrings) {
                 m_out.appendTo(atomCheckSearchIsAtom, atomLoopHeader);
@@ -10239,7 +10375,7 @@ IGNORE_CLANG_WARNINGS_END
         if (m_graph.isWatchingHavingABadTimeWatchpoint(m_node)) {
             CheckedInt32 startLength = 0;
             BitVector* bitVector = m_node->bitVector();
-            UncheckedKeyHashMap<InlineCallFrame*, LValue, WTF::DefaultHash<InlineCallFrame*>, WTF::NullableHashTraits<InlineCallFrame*>> cachedSpreadLengths;
+            HashMap<InlineCallFrame*, LValue> cachedSpreadLengths;
 
             if (m_node->numChildren() == 1 && bitVector->get(0)) {
                 Edge use = m_graph.varArgChild(m_node, 0);
@@ -12856,7 +12992,7 @@ IGNORE_CLANG_WARNINGS_END
         LValue storage = lowStorage(m_node->child1());
         if (m_node->hasDoubleResult()) {
             LValue boxed = loadDoubleProperty(storage, data.identifierNumber, data.offset);
-            LValue value = unboxRealNumberDouble(boxed, m_node);
+            LValue value = unboxNumberAsDouble(boxed, m_node);
             ensureStillAliveHere(base);
             setDouble(value);
             return;
@@ -12965,7 +13101,7 @@ IGNORE_CLANG_WARNINGS_END
         ensureStillAliveHere(base);
 
         if (m_node->hasDoubleResult())
-            setDouble(unboxRealNumberDouble(m_out.phi(Double, results), m_node));
+            setDouble(unboxNumberAsDouble(m_out.phi(Double, results), m_node));
         else
             setJSValue(m_out.phi(Int64, results));
     }
@@ -13253,7 +13389,7 @@ IGNORE_CLANG_WARNINGS_END
     {
         if (m_node->hasDoubleResult()) {
             LValue boxed = m_out.loadDouble(m_out.absolute(m_node->variablePointer()));
-            setDouble(unboxRealNumberDouble(boxed, m_node));
+            setDouble(unboxNumberAsDouble(boxed, m_node));
             return;
         }
 
@@ -13392,7 +13528,7 @@ IGNORE_CLANG_WARNINGS_END
         LValue base = lowCell(m_node->child1());
         if (m_node->hasDoubleResult()) {
             LValue boxed = m_out.loadDouble(base, m_heaps.JSLexicalEnvironment_variables[m_node->scopeOffset().offset()]);
-            setDouble(unboxRealNumberDouble(boxed, m_node));
+            setDouble(unboxNumberAsDouble(boxed, m_node));
             return;
         }
 
@@ -14461,7 +14597,7 @@ IGNORE_CLANG_WARNINGS_END
         unsigned staticArgumentCount = 0;
         Vector<LValue, 2> spreadLengths;
         Vector<LValue, 8> patchpointArguments;
-        UncheckedKeyHashMap<InlineCallFrame*, LValue, WTF::DefaultHash<InlineCallFrame*>, WTF::NullableHashTraits<InlineCallFrame*>> cachedSpreadLengths;
+        HashMap<InlineCallFrame*, LValue> cachedSpreadLengths;
         // Because the patchpoint generator runs late in Air, the dfg graph will be long gone.
         // So we must load everything relevant right now, and make sure that they are captured by value by the lambda that acts as the generator
         // One particularly tricky point is that the generator would like to walk over the tree rooted at this node, exploring through PhantomNewArrayWithSpread and PhantomNewArrayBuffer, emitting code along the way.
@@ -16092,10 +16228,8 @@ IGNORE_CLANG_WARNINGS_END
                 break;
             }
             m_out.store32(lengthIncludingThis, lowWordFor(data->machineCount));
-            if (data->mandatoryMinimum) {
-                LValue machineStart = m_out.lShr(m_out.sub(addressFor(data->machineStart).value(), m_callFrame), m_out.constIntPtr(3));
-                vmCall(Void, operationLoadVarargs, weakPointer(globalObject), m_out.castToInt32(machineStart), jsArguments, m_out.constInt32(data->offset), lengthIncludingThis, m_out.constInt32(data->mandatoryMinimum));
-            }
+            if (data->mandatoryMinimum)
+                fillMissingVarargsWithUndefined(addressFor(data->machineStart).value(), m_out.intPtrZero);
             break;
         }
         default:
@@ -19286,7 +19420,7 @@ IGNORE_CLANG_WARNINGS_END
         Edge& baseEdge = m_graph.varArgChild(m_node, 0);
         if (m_node->enumeratorMetadata() == JSPropertyNameEnumerator::OwnStructureMode && baseEdge.useKind() == CellUse) {
             LValue base = lowCell(baseEdge);
-            speculate(BadCache, noValue(), m_node, m_out.notEqual(m_out.load32(base, m_heaps.JSCell_structureID), m_out.load32(enumerator, m_heaps.JSPropertyNameEnumerator_cachedStructureID)));
+            speculate(BadCache, noValue(), m_node, m_out.notEqual(m_out.load32(base, m_heaps.JSCell_structureID), m_out.load32(enumerator, m_heaps.JSPropertyNameEnumerator_cachedStructureIDForNames)));
 
             speculate(BadCache, noValue(), m_node, m_out.notEqual(m_out.bitAnd(m_out.load32(enumerator, m_heaps.JSPropertyNameEnumerator_flags), m_out.constInt32(JSPropertyNameEnumerator::enumerationModeMask)), m_out.constInt32(JSPropertyNameEnumerator::OwnStructureMode)));
 
@@ -19313,7 +19447,7 @@ IGNORE_CLANG_WARNINGS_END
             m_out.branch(isCell(base, provenType(baseEdge)), usually(checkStructureBlock), rarely(operationBlock));
 
             m_out.appendTo(checkStructureBlock);
-            m_out.branch(m_out.equal(m_out.load32(base, m_heaps.JSCell_structureID), m_out.load32(enumerator, m_heaps.JSPropertyNameEnumerator_cachedStructureID)), unsure(checkGenericModeBlock), unsure(operationBlock));
+            m_out.branch(m_out.equal(m_out.load32(base, m_heaps.JSCell_structureID), m_out.load32(enumerator, m_heaps.JSPropertyNameEnumerator_cachedStructureIDForNames)), unsure(checkGenericModeBlock), unsure(operationBlock));
 
             m_out.appendTo(checkGenericModeBlock);
             LValue newIndex = m_out.select(m_out.isZero32(mode), index, m_out.add(index, m_out.int32One));
@@ -19483,7 +19617,7 @@ IGNORE_CLANG_WARNINGS_END
         else
             structureID = m_out.load32(base, m_heaps.JSCell_structureID);
 
-        LValue hasEnumeratorStructure = m_out.equal(structureID, m_out.load32(enumerator, m_heaps.JSPropertyNameEnumerator_cachedStructureID));
+        LValue hasEnumeratorStructure = m_out.equal(structureID, m_out.load32(enumerator, m_heaps.JSPropertyNameEnumerator_cachedStructureIDForNamesAndOffsets));
 
         m_out.branch(hasEnumeratorStructure, usually(checkInlineOrOutOfLineBlock), rarely(genericOrRecover));
 
@@ -19569,7 +19703,7 @@ IGNORE_CLANG_WARNINGS_END
 
         m_out.appendTo(isCellBlock);
         LValue structureID = m_out.load32(base, m_heaps.JSCell_structureID);
-        m_out.branch(m_out.equal(structureID, m_out.load32(enumerator, m_heaps.JSPropertyNameEnumerator_cachedStructureID)),
+        m_out.branch(m_out.equal(structureID, m_out.load32(enumerator, m_heaps.JSPropertyNameEnumerator_cachedStructureIDForNames)),
             usually(matchesStructureBlock), rarely(operationBlock));
 
         m_out.appendTo(matchesStructureBlock);
@@ -19643,7 +19777,7 @@ IGNORE_CLANG_WARNINGS_END
         else
             structureID = m_out.load32(base, m_heaps.JSCell_structureID);
 
-        LValue hasEnumeratorStructure = m_out.equal(structureID, m_out.load32(enumerator, m_heaps.JSPropertyNameEnumerator_cachedStructureID));
+        LValue hasEnumeratorStructure = m_out.equal(structureID, m_out.load32(enumerator, m_heaps.JSPropertyNameEnumerator_cachedStructureIDForNamesAndOffsets));
         m_out.branch(hasEnumeratorStructure, usually(checkReplacementSensitiveStructure), rarely(genericOrRecover));
 
         m_out.appendTo(checkReplacementSensitiveStructure);
@@ -19989,7 +20123,7 @@ IGNORE_CLANG_WARNINGS_END
 
                 initializeArrayElements(m_out.constInt32(structure->indexingType()), m_out.int32Zero, vectorLength, butterfly);
 
-                UncheckedKeyHashMap<int32_t, LValue, DefaultHash<int32_t>, WTF::UnsignedWithZeroKeyHashTraits<int32_t>> indexMap;
+                HashMap<int32_t, LValue> indexMap;
                 Vector<int32_t> indices;
                 for (unsigned i = data.m_properties.size(); i--;) {
                     PromotedLocationDescriptor descriptor = data.m_properties[i];
@@ -25852,8 +25986,7 @@ IGNORE_CLANG_WARNINGS_END
             weakPointer(globalObject), m_out.constIntPtr(&unlinkedTable), string);
 
         Vector<SwitchCase> cases;
-        // These may be negative, or zero, or probably other stuff, too. We don't want to mess with HashSet's corner cases and we don't really care about throughput here.
-        UncheckedKeyHashSet<GenericHashKey<int32_t>> alreadyHandled;
+        HashSet<int32_t> alreadyHandled;
         for (unsigned i = 0; i < data->cases.size(); ++i) {
             // FIXME: The fact that we're using the bytecode's switch table means that the
             // following DFG IR transformation would be invalid.
@@ -28830,7 +28963,7 @@ IGNORE_CLANG_WARNINGS_END
         AvailabilityMap availabilityMap = this->availabilityMap();
         availabilityMap.pruneByLiveness(m_graph, exitOrigin);
 
-        UncheckedKeyHashMap<Node*, ExitTimeObjectMaterialization*> map;
+        HashMap<Node*, ExitTimeObjectMaterialization*> map;
         availabilityMap.forEachAvailability(
             [&] (Availability availability) {
                 if (!availability.shouldUseNode())
@@ -28894,7 +29027,7 @@ IGNORE_CLANG_WARNINGS_END
     }
 
     ExitValue exitValueForAvailability(
-        StackmapArgumentList& arguments, const UncheckedKeyHashMap<Node*, ExitTimeObjectMaterialization*>& map,
+        StackmapArgumentList& arguments, const HashMap<Node*, ExitTimeObjectMaterialization*>& map,
         Availability availability)
     {
         FlushedAt flush = availability.flushedAt();
@@ -28929,7 +29062,7 @@ IGNORE_CLANG_WARNINGS_END
     }
 
     ExitValue exitValueForNode(
-        StackmapArgumentList& arguments, const UncheckedKeyHashMap<Node*, ExitTimeObjectMaterialization*>& map,
+        StackmapArgumentList& arguments, const HashMap<Node*, ExitTimeObjectMaterialization*>& map,
         Node* node)
     {
         // NOTE: In FTL->B3, we cannot generate code here, because m_output is positioned after the
@@ -29352,7 +29485,7 @@ IGNORE_CLANG_WARNINGS_END
     Output m_out;
 
     LBasicBlock m_handleExceptions;
-    UncheckedKeyHashMap<DFG::BasicBlock*, LBasicBlock> m_blocks;
+    HashMap<DFG::BasicBlock*, LBasicBlock> m_blocks;
 
     LValue m_callFrame;
     LValue m_vmValue;
@@ -29360,17 +29493,17 @@ IGNORE_CLANG_WARNINGS_END
     LValue m_numberTag;
     LValue m_notCellMask;
 
-    UncheckedKeyHashMap<Node*, LoweredNodeValue> m_int32Values;
-    UncheckedKeyHashMap<Node*, LoweredNodeValue> m_strictInt52Values;
-    UncheckedKeyHashMap<Node*, LoweredNodeValue> m_int52Values;
-    UncheckedKeyHashMap<Node*, LoweredNodeValue> m_jsValueValues;
-    UncheckedKeyHashMap<Node*, LoweredNodeValue> m_booleanValues;
-    UncheckedKeyHashMap<Node*, LoweredNodeValue> m_storageValues;
-    UncheckedKeyHashMap<Node*, LoweredNodeValue> m_doubleValues;
+    HashMap<Node*, LoweredNodeValue> m_int32Values;
+    HashMap<Node*, LoweredNodeValue> m_strictInt52Values;
+    HashMap<Node*, LoweredNodeValue> m_int52Values;
+    HashMap<Node*, LoweredNodeValue> m_jsValueValues;
+    HashMap<Node*, LoweredNodeValue> m_booleanValues;
+    HashMap<Node*, LoweredNodeValue> m_storageValues;
+    HashMap<Node*, LoweredNodeValue> m_doubleValues;
 
     Vector<LoweredNodeValue> m_tupleValues;
 
-    UncheckedKeyHashMap<Node*, LValue> m_phis;
+    HashMap<Node*, LValue> m_phis;
 
     LocalOSRAvailabilityCalculator m_availabilityCalculator;
 
@@ -29385,8 +29518,8 @@ IGNORE_CLANG_WARNINGS_END
     Node* m_node;
 
     // These are used for validating AI state.
-    UncheckedKeyHashMap<Node*, NodeSet> m_liveInToNode;
-    UncheckedKeyHashMap<Node*, AbstractValue> m_aiCheckedNodes;
+    HashMap<Node*, NodeSet> m_liveInToNode;
+    HashMap<Node*, AbstractValue> m_aiCheckedNodes;
     String m_graphDump;
 
     LType m_operationResultTuples[LType::numberOfPrimitiveTypes];

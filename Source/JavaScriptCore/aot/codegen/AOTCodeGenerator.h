@@ -54,8 +54,8 @@ struct FunctionInputs {
 };
 
 struct PinnedValues {
-    UncheckedKeyHashMap<LValue, LValue> wordsOfInt32Elements;
-    UncheckedKeyHashMap<LValue, LValue> narrowWordsOfIntegers;
+    HashMap<LValue, LValue> wordsOfInt32Elements;
+    HashMap<LValue, LValue> narrowWordsOfIntegers;
     LValue instance { nullptr };
     LValue instancePrefix { nullptr };
     LValue numberTag { nullptr };
@@ -706,7 +706,7 @@ private:
     const RowGuard* findCheckingGuardSlow(BlockID) const;
     void findLoopCarriedTables();
     void findCarriedListStorages();
-    void carryListStorageFrom(uint32_t storage, BlockID, UncheckedKeyHashSet<uint64_t>& joinsOfLists);
+    void carryListStorageFrom(uint32_t storage, BlockID, HashSet<uint64_t>& joinsOfLists);
     bool isBackEdgeOfSimpleLoop(BlockID from, BlockID head);
     bool isJoinWithRareCode(BlockID) const;
     bool isKnownAtEveryEdgeInto(BlockID, ValueID list);
@@ -729,9 +729,9 @@ private:
     bool isLeftOfCarriedSubstring(ValueID, BlockID head, Vector<CarriedSubstring, 4>&);
     Vector<CarriedSubstring, 4> m_carriedSubstrings;
     Vector<LoopCarriedNumber, 4> m_loopCarriedNumbers;
-    using IndexMap = UncheckedKeyHashMap<uint32_t, size_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+    using IndexMap = HashMap<uint32_t, size_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
     IndexMap m_firstLoopCarriedNumbers;
-    UncheckedKeyHashMap<uint32_t, LValue, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_phisOfLoopCarriedNumbers;
+    HashMap<uint32_t, LValue, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_phisOfLoopCarriedNumbers;
     Vector<ValueID, 4> m_ropeTolerantStrings;
     Vector<LoopCarriedString, 4> m_loopCarriedStrings;
 public:
@@ -872,7 +872,7 @@ private:
     BlockID m_blockOfViewAccesses;
     Vector<ValueID, 8> m_viewsAccessed;
     Vector<ValueID, 8> m_viewsAccessedRepeatedly;
-    UncheckedKeyHashMap<uint32_t, ValueID, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_elementsMadePresentAtHeadsOfBlocks;
+    HashMap<uint32_t, ValueID, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_elementsMadePresentAtHeadsOfBlocks;
     Operand getSlow(ValueID, const Operation&);
     Operand zeroInPlaceOfValueOfFailedCode(Representation);
     Operand getNumberInFormKept(ValueID, LValue lowered);
@@ -1416,7 +1416,7 @@ private:
     void startFromConstant(const CountedLoop&);
     static Range boundsOnEntry(const CountedLoop&, Range bounds, Range counters);
     Vector<LoopExit, 4> m_loopExits;
-    UncheckedKeyHashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_loopExitsByBlock;
+    HashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_loopExitsByBlock;
     Vector<uint32_t> m_scopesByPlace;
     uint32_t m_currentLoopExit { noLoopExit };
     bool m_hasReadersOfLoopParameters { false };
@@ -1451,7 +1451,7 @@ private:
     bool m_keepsValuesInHeapFrame { false };
     ValueID m_conversionLeftToConcatenation;
     BitVector m_productsLeftToRemainders;
-    UncheckedKeyHashMap<uint32_t, Vector<ValueID, 2>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_productsMadeInRareBlocks;
+    HashMap<uint32_t, Vector<ValueID, 2>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_productsMadeInRareBlocks;
     bool m_remakesValuesInRareBlocks { false };
     bool m_copiesBigIntsInRareBlocks { false };
     Vector<std::pair<ValueID, LValue>> m_bigIntsInFrame;
@@ -1523,7 +1523,7 @@ private:
         LBasicBlock passed { nullptr };
         bool coversStorage { false };
     };
-    UncheckedKeyHashMap<uint32_t, HeaderTest, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_headerTests;
+    HashMap<uint32_t, HeaderTest, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_headerTests;
     Machine::UncheckedSpan<ScopeFork> m_scopeAtEndOfBlock;
     BlockID m_onlyEntryBlock;
     bool m_firstBlockHasOtherWaysIn { false };
@@ -1558,13 +1558,13 @@ private:
     BitVector m_carriedSums;
     bool m_checksSums { false };
     BitVector m_checkedSums;
-    UncheckedKeyHashMap<LValue, LValue> m_wordsOfCheckedSums;
+    HashMap<LValue, LValue> m_wordsOfCheckedSums;
     Vector<ValueID, 4> m_parametersThatMaySum;
-    UncheckedKeyHashMap<uint32_t, LValue, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_integersOfCarriedSums;
+    HashMap<uint32_t, LValue, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_integersOfCarriedSums;
     BitVector m_valuesDefinedBoxed;
     bool m_hasKeysAskedTwice { false };
     BitVector m_keysAskedTwice;
-    UncheckedKeyHashMap<uint32_t, BlockID, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_blocksOfFirstAccesses;
+    HashMap<uint32_t, BlockID, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_blocksOfFirstAccesses;
     bool m_followsNumbersOutOfBytes { false };
     bool m_followsMarkers { false };
     BitVector m_valuesHoldingAnyNaN;

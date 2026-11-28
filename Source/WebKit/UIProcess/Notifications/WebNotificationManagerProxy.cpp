@@ -60,7 +60,7 @@ Ref<WebNotificationManagerProxy> WebNotificationManagerProxy::create(WebProcessP
 
 WebNotificationManagerProxy& WebNotificationManagerProxy::serviceWorkerManagerSingleton()
 {
-    ASSERT(isMainRunLoop());
+    RELEASE_ASSERT(isMainRunLoop());
     static NeverDestroyed<Ref<WebNotificationManagerProxy>> sharedManager = adoptRef(*new WebNotificationManagerProxy(nullptr));
     return sharedManager->get();
 }
@@ -321,7 +321,7 @@ static Vector<String> apiArrayToSecurityOriginStrings(API::Array* origins)
 
 void WebNotificationManagerProxy::providerDidUpdateNotificationPolicy(const API::SecurityOrigin* origin, bool enabled)
 {
-    RELEASE_LOG(Notifications, "Provider did update notification policy for origin %" SENSITIVE_LOG_STRING " to %d", origin->securityOrigin().toString().utf8(), enabled);
+    RELEASE_LOG(Notifications, "Provider did update notification policy for origin %" SENSITIVE_LOG_STRING " to %d", makeUTF8CString(origin->securityOrigin().toString()), enabled);
 
     auto originString = origin->securityOrigin().toString();
     if (originString.isEmpty())

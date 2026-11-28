@@ -16,6 +16,7 @@
 #include "FastMarkAppender.h"
 #include "HeapHelperPool.h"
 #include "HeapInlines.h"
+#include "HelperThreadPool.h"
 #include "JSArrayInlines.h"
 #include "JSCInlines.h"
 #include "JSLock.h"
@@ -87,7 +88,8 @@ static void runInProcessWithCompiledCodeOptions()
     }
 
     ChildProcessLauncher launcher(String(programPath()), { });
-    Vector<String> arguments { String(nativeSubcommandName), String(singleProcessFlag), String(name), "--useAOT=true"_s, "--numberOfGCMarkers=4"_s };
+    // With the shared pool asked for by name too, the collector of compiled code keeps heapHelperPool() (collector/helpers/small-heap-starts-none).
+    Vector<String> arguments { String(nativeSubcommandName), String(singleProcessFlag), String(name), "--useAOT=true"_s, "--useSharedHelperThreadPool=true"_s, "--numberOfGCMarkers=4"_s };
     if constexpr (pause == CollectorPause::Unlimited)
         arguments.appendList({ "--minimumGCPauseMS=10000"_str, "--gcPauseScale=10000"_str });
     else if constexpr (pause == CollectorPause::Short)
@@ -99,6 +101,31 @@ static void runInProcessWithCompiledCodeOptions()
     if (!result.exitedWith(0)) {
         dataLogLn(result.output);
         dataLogLn("The process with the options of compiled code ", result.description());
+        failNativeTest(__FILE__, __LINE__, name.characters());
+    }
+}
+
+template<void (*body)()>
+static void runInProcessWithoutSharedHelperThreadPool()
+{
+    ASCIILiteral name;
+    for (const NativeTest& test : collectorTests()) {
+        if (test.run == &runInProcessWithoutSharedHelperThreadPool<body>)
+            name = test.name;
+    }
+    AOT_TEST_CHECK(!name.isNull());
+
+    if (!Options::useSharedHelperThreadPool()) {
+        body();
+        return;
+    }
+
+    ChildProcessLauncher launcher(String(programPath()), { });
+    Vector<String> arguments { String(nativeSubcommandName), String(singleProcessFlag), String(name), "--useSharedHelperThreadPool=false"_s, "--numberOfGCMarkers=4"_s };
+    ChildProcessResult result = launcher.run(arguments.span());
+    if (!result.exitedWith(0)) {
+        dataLogLn(result.output);
+        dataLogLn("The process without the shared helper thread pool ", result.description());
         failNativeTest(__FILE__, __LINE__, name.characters());
     }
 }
@@ -303,11 +330,26 @@ static void testHelpersStartEagerlyWithoutCompiledCode()
 {
     if (Options::useAOT())
         return;
+    bool usesSharedPool = Options::useSharedHelperThreadPool();
+    unsigned numberOfHelpers = Options::numberOfGCMarkers() - 1;
+    std::atomic<unsigned> demandWhileMarking { 0 };
     TestVM test;
     test.createRealm();
-    AOT_TEST_CHECK(heapHelperPool().numberOfThreads() == Options::numberOfGCMarkers() - 1);
+    if (usesSharedPool) {
+        test.heap().addMarkingConstraint(makeUnique<SimpleMarkingConstraint>(
+            "Hd"_s, "Helper Demand of a Test"_s,
+            MarkingConstraintExecutorPair([](AbstractSlotVisitor&) { }, [&](SlotVisitor&) {
+                demandWhileMarking = HelperThreadPool::singleton().statistics().classes[static_cast<unsigned>(HelperThreadClass::GC)].demand;
+            }),
+            ConstraintVolatility::GreyedByExecution,
+            ConstraintConcurrency::Concurrent,
+            ConstraintParallelism::Sequential));
+    } else
+        AOT_TEST_CHECK(heapHelperPool().numberOfThreads() == numberOfHelpers);
     test.heap().collectSync(CollectionScope::Full);
     AOT_TEST_CHECK(test.heap().collector().hasStartedHelpers());
+    if (usesSharedPool)
+        AOT_TEST_CHECK(demandWhileMarking >= numberOfHelpers);
 }
 
 static void checkEdenCollectionWithEmptyEdenSkipsMarking()
@@ -658,6 +700,7 @@ std::span<const NativeTest> collectorTests()
         { "collector/helpers/wide-heap-starts-them"_s, withCompiledCodeOptions<checkWideHeapStartsHelpers> },
         { "collector/helpers/collector-thread-marks-without-them"_s, withConcurrentMarking<checkCollectorThreadMarksWithoutHelpers> },
         { "collector/helpers/eager-without-compiled-code"_s, testHelpersStartEagerlyWithoutCompiledCode },
+        { "collector/helpers/eager-on-heap-helper-pool-without-compiled-code"_s, runInProcessWithoutSharedHelperThreadPool<testHelpersStartEagerlyWithoutCompiledCode> },
         { "collector/helpers/collector-thread-marks-beside-a-running-mutator-without-them"_s, withCompiledCodeOptionsCollectingContinuously<checkCollectorThreadMarksBesideRunningMutatorWithoutHelpers> },
         { "collector/roots/full-collection-defers-regions"_s, withCompiledCodeOptions<checkFullCollectionDefersRegionsOfRoots> },
         { "collector/roots/store-after-deferral-is-seen"_s, withCompiledCodeOptions<checkStoreAfterDeferralIsSeen> },

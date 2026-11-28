@@ -86,7 +86,7 @@ private:
     BlockMap<LValue> m_caughtWords;
     BlockMap<uint32_t> m_landingPadsOfBlocks;
     Vector<LandingPad, 4> m_landingPads;
-    UncheckedKeyHashMap<uint64_t, uint32_t> m_firstLandingPadsByKey;
+    HashMap<uint64_t, uint32_t> m_firstLandingPadsByKey;
 };
 
 } } } // namespace JSC::AOT::Typed

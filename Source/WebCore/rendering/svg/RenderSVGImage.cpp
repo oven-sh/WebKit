@@ -55,7 +55,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderSVGImage);
 
-RenderSVGImage::RenderSVGImage(SVGImageElement& element, Style::ComputedStyle&& style)
+RenderSVGImage::RenderSVGImage(SVGImageElement& element, UniqueRef<Style::ComputedStyle>&& style)
     : RenderSVGModelObject(Type::SVGImage, element, WTF::move(style))
     , m_imageResource(makeUniqueRef<RenderImageResource>())
 {
@@ -323,7 +323,7 @@ void RenderSVGImage::imageChanged(WrappedImagePtr newImage, const IntRect* rect)
 
     if (RefPtr image = imageResource().cachedImage(); image && image->currentFrameIsComplete()) {
         if (auto styleable = Styleable::fromRenderer(*this))
-            protect(document())->didLoadImage(protect(styleable->element).get(), image);
+            protect(document())->didLoadImage(styleable->element, image);
     }
 }
 

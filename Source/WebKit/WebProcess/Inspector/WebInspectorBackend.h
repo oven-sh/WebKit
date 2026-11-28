@@ -28,6 +28,7 @@
 #include "BackendResourceDataStore.h"
 #include "Connection.h"
 #include "MessageReceiver.h"
+#include "RemoteSnapshotIdentifier.h"
 #include <WebCore/DebuggerPauseSessionIdentifier.h>
 #include <WebCore/FrameIdentifier.h>
 #include <WebCore/HTTPHeaderMap.h>
@@ -98,6 +99,7 @@ public:
     void stopElementSelection();
     void elementSelectionChanged(bool);
     void timelineRecordingChanged(bool);
+    void takeTimelineScreenshot(const WebCore::IntRect&, double timestamp, CompletionHandler<void()>&&);
     void showPaintRectsChanged(bool);
 
     void setDeveloperPreferenceOverride(WebCore::InspectorBackendClient::DeveloperPreference, std::optional<bool>);
@@ -110,6 +112,7 @@ public:
     void getResponseBody(WebCore::ResourceLoaderIdentifier, CompletionHandler<void(std::expected<std::pair<String, bool>, String>&&)>&&);
     void getSerializedCertificate(WebCore::ResourceLoaderIdentifier, CompletionHandler<void(std::expected<String, String>&&)>&&);
     void loadResource(WebCore::FrameIdentifier, const String& url, CompletionHandler<void(std::expected<std::tuple<String, String, int>, String>&&)>&&);
+    void resolveWebSocket(uint64_t channelID, const String& objectGroup, CompletionHandler<void(std::expected<String, String>&&)>&&);
 
     void setExtraHTTPHeaders(WebCore::HTTPHeaderMap&&);
     void setResourceCachingDisabled(bool);
@@ -126,6 +129,9 @@ public:
     void searchInRequest(WebCore::ResourceLoaderIdentifier, const String& query, bool caseSensitive, bool isRegex, CompletionHandler<void(Vector<Inspector::SearchMatch>&&, String errorString)>&&);
     void searchInFrameResource(WebCore::FrameIdentifier, const String& url, const String& query, bool caseSensitive, bool isRegex, CompletionHandler<void(Vector<Inspector::SearchMatch>&&, String errorString)>&&);
     void searchInFramesAndRequests(Vector<WebCore::FrameIdentifier>&& frameIDs, const String& query, bool caseSensitive, bool isRegex, CompletionHandler<void(Vector<Inspector::SearchResult>&&)>&&);
+
+    void snapshotNode(std::optional<WebCore::FrameIdentifier>, int nodeId, CompletionHandler<void(std::expected<String, String>&&)>&&);
+    void snapshotNodeToRemoteSnapshot(std::optional<WebCore::FrameIdentifier>, int nodeId, RemoteSnapshotIdentifier, CompletionHandler<void(std::expected<void, String>&&)>&&);
 
     // Fan the paint-rects toggle and the bootstrap script out to every per-frame PageAgentProxy this process hosts.
     void setShowPaintRects(bool);

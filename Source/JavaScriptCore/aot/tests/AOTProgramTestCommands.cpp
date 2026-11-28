@@ -155,7 +155,7 @@ static WordsOfShellRun splitWordsOfShellRun(std::span<const String> words)
 static ChildProcessResult startProgramInShell(const WordsOfShellRun& run, Vector<String>&& arguments, const String& promiseOfProgram)
 {
     arguments.appendVector(run.options);
-    CString statements = makeString(run.statements, promiseOfProgram, ".catch(error => print(\"the program threw \" + error));"_s).utf8();
+    CString statements = makeUTF8CString(makeString(run.statements, promiseOfProgram, ".catch(error => print(\"the program threw \" + error));"_s));
     TemporaryFile fileOfStatements(".js"_s, byteCast<uint8_t>(statements.span()));
     arguments.append(fileOfStatements.path());
     ChildProcessResult result = ChildProcessLauncher(shellPath(), { }).run(arguments.span());
@@ -210,7 +210,7 @@ static bool canBeRunByShellItself(const Vector<SourceFileOfTestProgram>& sources
 
 static ChildProcessResult startSourceInShell(const WordsOfShellRun& run, const SourceFileOfTestProgram& source)
 {
-    CString utf8 = source.text.utf8();
+    CString utf8 = makeUTF8CString(source.text);
     TemporaryFile file(".js"_s, asBytes(utf8.span()));
     StringBuilder promiseOfProgram;
     promiseOfProgram.append("import("_s);

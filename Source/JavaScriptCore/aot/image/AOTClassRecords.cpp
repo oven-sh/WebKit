@@ -345,7 +345,7 @@ ClassRecordParts collectClassRecordParts(const TableEncoder& encoder, LayoutID c
         std::span<const Typed::ClassMember> members = encoder.facts.membersOf(classLayout);
         parts.methods.reserveInitialCapacity(members.size());
         bool answerHangsOnFunction = layout.has(Typed::LayoutFlags::IsConstructorFunction);
-        UncheckedKeyHashMap<uint32_t, bool, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> namesThatHoldOneFunction;
+        HashMap<uint32_t, bool, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> namesThatHoldOneFunction;
         for (ClassSide side : { ClassSide::Prototype, ClassSide::Static }) {
             namesThatHoldOneFunction.clear();
             for (size_t index = 0; index < members.size(); ++index) {

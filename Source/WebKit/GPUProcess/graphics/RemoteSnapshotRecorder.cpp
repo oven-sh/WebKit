@@ -30,8 +30,11 @@
 
 #include "Logging.h"
 #include "RemoteGraphicsContextMessages.h"
+#include "RemoteResourceCache.h"
 #include "RemoteSnapshot.h"
 #include "RemoteSnapshotRecorderMessages.h"
+
+#define MESSAGE_CHECK(assertion) MESSAGE_CHECK_BASE(assertion, m_renderingBackend->streamConnection());
 
 namespace WebKit {
 using namespace WebCore;
@@ -73,12 +76,35 @@ Ref<RemoteSnapshot> RemoteSnapshotRecorder::snapshot() const
 void RemoteSnapshotRecorder::drawSnapshotFrame(FrameIdentifier frameIdentifier)
 {
     m_snapshot->addFrameReference(frameIdentifier);
-    m_recorder->drawPlaceholder([snapshot = m_snapshot, frameIdentifier] (GraphicsContext& context) {
+    m_recorder->drawPlaceholder([weakSnapshot = ThreadSafeWeakPtr { m_snapshot.get() }, frameIdentifier](GraphicsContext& context) {
+        RefPtr snapshot = weakSnapshot;
+        if (!snapshot)
+            return;
         bool result = snapshot->applyFrame(frameIdentifier, context);
         ASSERT_UNUSED(result, result); // Programming error, consistency checked with isComplete().
     });
 }
 
+void RemoteSnapshotRecorder::drawPDFPage(RenderingResourceIdentifier documentIdentifier, RefPtr<SharedBuffer>&& data, unsigned pageIndex, const FloatRect& pageRect, std::optional<RenderingResourceIdentifier> fallbackImageIdentifier)
+{
+    if (data) {
+        bool isNewDocument = m_pdfDocuments.add(documentIdentifier, SharedPDFDocument::create(data.releaseNonNull())).isNewEntry;
+        MESSAGE_CHECK(isNewDocument);
+    }
+    RefPtr document = m_pdfDocuments.get(documentIdentifier);
+    MESSAGE_CHECK(document);
+
+    std::optional<DisplayList::SourceNativeImage> fallbackImage;
+    if (fallbackImageIdentifier) {
+        RefPtr image = resourceCache().cachedNativeImage(*fallbackImageIdentifier);
+        MESSAGE_CHECK(image);
+        fallbackImage = DisplayList::SourceNativeImage { Ref<const NativeImage> { image.releaseNonNull() } };
+    }
+    m_recorder->drawPDFPage(document.releaseNonNull(), pageIndex, pageRect, WTF::move(fallbackImage));
 }
+
+}
+
+#undef MESSAGE_CHECK
 
 #endif

@@ -39,8 +39,7 @@
 #include <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
 #endif
 
-namespace WebCore {
-namespace CSS {
+namespace WebCore::CSS {
 
 NODELETE static bool isVGAPaletteColor(CSSValueID id)
 {
@@ -132,6 +131,8 @@ WebCore::Color createColor(const KeywordColor& unresolved, PlatformColorResoluti
         return state.webkitFocusRingColor();
     case CSSValueID::Currentcolor:
         return state.currentColor();
+    case CSSValueID::Accentcolor:
+        return state.accentColor();
     default:
         return colorFromKeyword(unresolved.valueID, state.keywordOptions);
     }
@@ -152,5 +153,4 @@ void Serialize<KeywordColor>::operator()(StringBuilder& builder, const Serializa
     builder.append(nameLiteralForSerialization(value.valueID));
 }
 
-} // namespace CSS
-} // namespace WebCore
+} // namespace WebCore::CSS

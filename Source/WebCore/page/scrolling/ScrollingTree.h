@@ -67,6 +67,7 @@ using FramesPerSecond = unsigned;
 using PlatformDisplayID = uint32_t;
 
 enum class EventTargeting : uint8_t { NodeOnly, Propagate };
+enum class DeferViewportConstrainedLayerRepositioning : bool { No, Yes };
 
 enum class RequestsScrollHandling : uint8_t {
     Unhandled,
@@ -96,6 +97,9 @@ public:
 
     bool scrollingPerformanceTestingEnabled() const { return m_scrollingPerformanceTestingEnabled; }
     void setScrollingPerformanceTestingEnabled(bool value) { m_scrollingPerformanceTestingEnabled = value; }
+
+    bool isIgnoringMomentumScrollsDuringRubberBand() const { return m_isIgnoringMomentumScrollsDuringRubberBand; }
+    void setIsIgnoringMomentumScrollsDuringRubberBand(bool isIgnoringMomentumScrollsDuringRubberBand) { m_isIgnoringMomentumScrollsDuringRubberBand = isIgnoringMomentumScrollsDuringRubberBand; }
 
     WEBCORE_EXPORT bool isUserScrollInProgressAtEventLocation(const PlatformWheelEvent&);
     WEBCORE_EXPORT OptionSet<WheelEventProcessingSteps> determineWheelEventProcessing(const PlatformWheelEvent&);
@@ -155,7 +159,7 @@ public:
     virtual void didHandleScrollRequestForNode(ScrollingNodeID, ScrollRequestType, FloatPoint, ShouldFireScrollEnd, Markable<ScrollRequestIdentifier>) { }
 
     // Delegated scrolling/zooming has caused the viewport to change, so update viewport-constrained layers
-    WEBCORE_EXPORT void mainFrameViewportChangedViaDelegatedScrolling(const FloatPoint& scrollPosition, const WebCore::FloatRect& layoutViewport, double scale);
+    WEBCORE_EXPORT void mainFrameViewportChangedViaDelegatedScrolling(const FloatPoint& scrollPosition, const WebCore::FloatRect& layoutViewport, double scale, DeferViewportConstrainedLayerRepositioning = DeferViewportConstrainedLayerRepositioning::No);
 
     void notifyRelatedNodesAfterScrollPositionChange(ScrollingTreeScrollingNode& changedNode);
 
@@ -206,6 +210,14 @@ public:
     bool isHandlingProgrammaticScroll() const { return m_isHandlingProgrammaticScroll; }
     void setIsHandlingProgrammaticScroll(bool isHandlingProgrammaticScroll) { m_isHandlingProgrammaticScroll = isHandlingProgrammaticScroll; }
 
+    void setIsApplyingDeltaScroll(bool isApplyingDeltaScroll) { m_isApplyingDeltaScroll = isApplyingDeltaScroll; }
+    std::optional<ScrollRelativity> relativityForScrollUpdate() const
+    {
+        if (!m_isApplyingDeltaScroll)
+            return std::nullopt;
+        return ScrollRelativity::Delta;
+    }
+
     NODELETE void setScrollPinningBehavior(ScrollPinningBehavior);
     NODELETE WEBCORE_EXPORT ScrollPinningBehavior scrollPinningBehavior();
 
@@ -213,6 +225,7 @@ public:
 
     ScrollingTreeFrameScrollingNode* rootNode() const { return m_rootNode.get(); }
     NODELETE std::optional<ScrollingNodeID> latchedNodeID() const;
+    NODELETE bool isLatchedToUnscrollableRoot() const;
     NODELETE WEBCORE_EXPORT void clearLatchedNode();
 
     WEBCORE_EXPORT bool hasFixedOrSticky() const;
@@ -321,12 +334,14 @@ public:
     NODELETE WEBCORE_EXPORT std::optional<FrameIdentifier> frameIDForScrollingNodeID(ScrollingNodeID);
 
 protected:
+    static bool isUnscrollableRoot(const ScrollingTreeScrollingNode&);
     WEBCORE_EXPORT WheelEventHandlingResult handleWheelEventWithNode(const PlatformWheelEvent&, OptionSet<WheelEventProcessingSteps>, ScrollingTreeNode*, EventTargeting = EventTargeting::Propagate);
 
     NODELETE void setMainFrameScrollPosition(FloatPoint);
 
     NODELETE WEBCORE_EXPORT void setGestureState(std::optional<WheelScrollGestureState>);
     NODELETE WEBCORE_EXPORT std::optional<WheelScrollGestureState> gestureState();
+    WEBCORE_EXPORT RefPtr<ScrollingTreeFrameScrollingNode> hostedRootNodeForFrame(FrameIdentifier) const WTF_REQUIRES_LOCK(m_treeLock);
 
     NODELETE std::optional<FramesPerSecond> nominalFramesPerSecond();
 
@@ -427,9 +442,14 @@ protected:
     bool m_allowLatching { true };
 
 private:
+    bool shouldDeferLayerPositionForNode(const ScrollingTreeNode&) const;
+
     ThreadSafeWeakHashSet<ScrollingTreeNode> m_fixedOrStickyNodes;
     std::atomic<bool> m_isHandlingProgrammaticScroll { false };
+    std::atomic<bool> m_isApplyingDeltaScroll { false };
     std::atomic<bool> m_needsApplyLayerPositions { false };
+    std::atomic<bool> m_isIgnoringMomentumScrollsDuringRubberBand { false };
+    bool m_deferMainFrameViewportConstrainedLayerRepositioning { false };
     bool m_isMonitoringWheelEvents { false };
     bool m_scrollingPerformanceTestingEnabled { false };
     bool m_overlayScrollbarsEnabled { false };

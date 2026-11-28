@@ -41,17 +41,17 @@ namespace WPE {
 class WaylandSeat {
     WTF_MAKE_TZONE_ALLOCATED(WaylandSeat);
 public:
-    explicit WaylandSeat(struct wl_seat*);
+    WaylandSeat(struct wl_seat*, WPEKeymap*);
     ~WaylandSeat();
 
     struct wl_seat* seat() const { return m_seat; }
-    WPEKeymap* keymap() const { return m_keymap.get(); }
     uint32_t pointerModifiers() const { return m_pointer.modifiers; }
     std::pair<double, double> pointerCoords() const { return std::pair<double, double>(m_pointer.x, m_pointer.y); }
     uint32_t keyboardSerial() const { return m_keyboard.serial; }
     WPEAvailableInputDevices availableInputDevices() const;
 
     void startListening();
+    void cancelTouchPoints();
 
     void setCursor(struct wl_surface*, int32_t, int32_t);
 
@@ -123,7 +123,7 @@ private:
         struct wl_touch* object { nullptr };
         WPEInputSource source { WPE_INPUT_SOURCE_TOUCHSCREEN };
         GWeakPtr<WPEToplevelWayland> toplevel;
-        HashMap<int32_t, std::pair<double, double>, IntHash<int32_t>, WTF::SignedWithZeroKeyHashTraits<int32_t>> points;
+        HashMap<int32_t, std::pair<double, double>> points;
     } m_touch;
     Function<void(WPEAvailableInputDevices)> m_capabilitiesChangedCallback;
 };

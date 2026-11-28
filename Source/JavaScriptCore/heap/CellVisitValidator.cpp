@@ -37,7 +37,7 @@ public:
         didStartMarking(marker.collectionScope(), false);
     }
 
-    const UncheckedKeyHashSet<const void*>& references() const LIFETIME_BOUND { return m_references; }
+    const HashSet<const void*>& references() const LIFETIME_BOUND { return m_references; }
     bool sawRace() const { return m_sawRace; }
 
     NO_RETURN_DUE_TO_CRASH void append(const ConservativeRoots&) final { RELEASE_ASSERT_NOT_REACHED(); }
@@ -71,7 +71,7 @@ private:
 
     const SlotVisitor& m_marker;
     ConcurrentPtrHashSet m_opaqueRootStorage;
-    UncheckedKeyHashSet<const void*> m_references;
+    HashSet<const void*> m_references;
     bool m_sawRace { false };
 };
 

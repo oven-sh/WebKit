@@ -139,7 +139,6 @@ public:
         FlexibleBox,
         Frame,
         FrameSet,
-        Glyph,
         Grid,
         HTMLCanvas,
         IFrame,
@@ -148,7 +147,6 @@ public:
         LineBreak,
         ListBox,
         ListItem,
-        ListOutsideMarker,
         Media,
         MenuList,
         Meter,
@@ -216,7 +214,6 @@ public:
         SVGResourcePattern,
         SVGResourceRadialGradient,
         SVGRoot,
-        SVGTSpan,
         SVGText,
         SVGTextPath,
         SVGTransformableContainer,
@@ -429,7 +426,7 @@ public:
 
     void outputRenderObject(WTF::TextStream&, bool mark, int depth) const;
     void outputRenderSubTreeAndMark(WTF::TextStream&, const RenderObject* markedObject, int depth) const;
-    void outputRegionsInformation(WTF::TextStream&) const;
+    void outputFragmentInformation(WTF::TextStream&) const;
 #endif
 
     inline bool isPseudoElement() const; // Defined in RenderObjectNode.h
@@ -446,7 +443,6 @@ public:
     inline bool isNonReplacedAtomicInlineLevelBox() const;
 
     bool isRenderCounter() const { return type() == Type::Counter; }
-    bool isRenderGlyph() const { return type() == Type::Glyph; }
 
     bool isRenderEmbeddedObject() const { return type() == Type::EmbeddedObject; }
     NODELETE bool isFieldset() const;
@@ -456,7 +452,10 @@ public:
     virtual bool isImage() const { return false; }
     bool isRenderListBox() const { return type() == Type::ListBox; }
     bool isRenderListItem() const { return type() == Type::ListItem; }
-    bool isRenderListOutsideMarker() const { return type() == Type::ListOutsideMarker; }
+    inline bool isListMarkerBox() const; // Defined in RenderObjectInlines.h
+    // An outside list marker: the inline-block with the ::marker style holding what the marker shows. It is always the
+    // direct child of its list item, never wrapped in an anonymous block, and takes no part in in-flow layout.
+    NODELETE bool isOutsideListMarker() const;
     bool isRenderMedia() const { return isRenderReplaced() && m_typeSpecificFlags.replacedFlags().contains(ReplacedFlag::IsMedia); }
     bool isRenderMenuList() const { return type() == Type::MenuList; }
     bool isRenderMeter() const { return type() == Type::Meter; }
@@ -573,8 +572,7 @@ public:
     bool isRenderSVGRect() const { return type() == Type::SVGRect; }
     bool isRenderSVGText() const { return type() == Type::SVGText; }
     bool isRenderSVGTextPath() const { return type() == Type::SVGTextPath; }
-    bool isRenderSVGTSpan() const { return type() == Type::SVGTSpan; }
-    bool isRenderSVGInline() const { return type() == Type::SVGInline || type() == Type::SVGTSpan || type() == Type::SVGTextPath; }
+    bool isRenderSVGInline() const { return type() == Type::SVGInline || type() == Type::SVGTextPath; }
     bool isRenderSVGInlineText() const { return type() == Type::SVGInlineText; }
     bool isLegacyRenderSVGImage() const { return type() == Type::LegacySVGImage; }
     bool isRenderSVGImage() const { return type() == Type::SVGImage; }
@@ -696,7 +694,6 @@ public:
     bool isExcludedFromNormalLayout() const { return m_stateBitfields.hasFlag(StateFlag::IsExcludedFromNormalLayout); }
     void setIsExcludedFromNormalLayout(bool excluded) { m_stateBitfields.setFlag(StateFlag::IsExcludedFromNormalLayout, excluded); }
     bool isExcludedAndPlacedInBorder() const { return isExcludedFromNormalLayout() && isLegend(); }
-    NODELETE bool isExcludedMarker() const;
 
     bool isYouTubeReplacement() const { return hasRareData() && rareData().isYouTubeReplacement; }
     void markIsYouTubeReplacement();
@@ -769,6 +766,12 @@ public:
     inline void setNeedsLayout(MarkingBehavior = MarkingBehavior::ContainingBlockChain);
     enum class HadSkippedLayout { No, Yes };
     void clearNeedsLayout(HadSkippedLayout = HadSkippedLayout::No);
+
+    // The bits that tell what kind of layout this renderer needs, for code that puts off a layout.
+    class NeedsLayoutState;
+    NeedsLayoutState needsLayoutState() const;
+    // Adds the bits without marking ancestors.
+    void restoreNeedsLayoutState(NeedsLayoutState);
     void invalidateContentLogicalWidths(MarkingBehavior = MarkingBehavior::ContainingBlockChain, const RenderBoxModelObject* ancestorUpdateBoundary = nullptr);
     void clearContentLogicalWidthsInvalidation() { m_stateBitfields.setFlag(StateFlag::ContentLogicalWidthsInvalidated, { }); }
 
@@ -956,7 +959,7 @@ public:
                 outlineBoundsRect->unite(*other.outlineBoundsRect);
         }
 
-        void flipForWritingMode(LayoutSize containerSize, bool isHorizontalWritingMode)
+        void blockStartRelativeToPhysical(LayoutSize containerSize, bool isHorizontalWritingMode)
         {
             if (isHorizontalWritingMode) {
                 clippedOverflowRect.setY(containerSize.height() - clippedOverflowRect.maxY());
@@ -1233,6 +1236,30 @@ private:
         CapturedInViewTransition                            = 1 << 22
     };
 
+public:
+    static constexpr OptionSet<StateFlag> needsLayoutStateFlags {
+        StateFlag::NeedsLayout,
+        StateFlag::NeedsOutOfFlowMovementLayout,
+        StateFlag::NormalChildNeedsLayout,
+        StateFlag::OutOfFlowChildNeedsLayout,
+        StateFlag::NeedsSimplifiedNormalFlowLayout,
+        StateFlag::OutOfFlowChildNeedsStaticPositionLayout,
+    };
+
+    class NeedsLayoutState {
+    public:
+        NeedsLayoutState() = default;
+
+    private:
+        friend class RenderObject;
+        explicit NeedsLayoutState(OptionSet<StateFlag> flags)
+            : m_flags(flags)
+        {
+        }
+        OptionSet<StateFlag> m_flags;
+    };
+
+private:
     class StateBitfields {
         enum PositionedState {
             IsStaticallyPositioned = 0,
@@ -1260,6 +1287,8 @@ private:
             ASSERT(flags() == newFlags);
         }
         void clearFlag(StateFlag flag) { setFlag(flag, false); }
+        void addFlags(OptionSet<StateFlag> flags) { m_flags = (this->flags() | flags).toRaw(); }
+        void clearFlags(OptionSet<StateFlag> flags) { m_flags = (this->flags() - flags).toRaw(); }
 
         bool isOutOfFlowPositioned() const { return m_positionedState == IsOutOfFlowPositioned; }
         bool isRelativelyPositioned() const { return m_positionedState == IsRelativelyPositioned; }

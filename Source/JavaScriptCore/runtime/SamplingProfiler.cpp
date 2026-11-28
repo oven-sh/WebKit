@@ -65,7 +65,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
-static double sNumTotalStackTraces = 0;
 static double sNumTotalWalks = 0;
 static double sNumFailedWalks = 0;
 static const uint32_t sNumWalkReportingFrequency = 50;
@@ -551,9 +550,9 @@ void SamplingProfiler::createThreadIfNecessary()
         return;
 
     RefPtr<SamplingProfiler> profiler = this;
-    m_thread = Thread::create("jsc.sampling-profiler.thread"_s, [profiler] {
+    lazyInitialize(m_thread, Thread::create("jsc.sampling-profiler.thread"_s, [profiler] {
         profiler->timerLoop();
-    });
+    }));
 }
 
 void SamplingProfiler::timerLoop()
@@ -697,8 +696,6 @@ void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
             // FIXME: It'd be interesting to take data about the program's state when
             // we fail to take a stack trace: https://bugs.webkit.org/show_bug.cgi?id=152758
             if (wasValidWalk && walkSize) {
-                if (sReportStats)
-                    sNumTotalStackTraces++;
                 Vector<UnprocessedStackFrame> stackTrace(ReserveCapacityTag { }, walkSize + !!shouldAppendTopFrameAsCCode);
                 if (shouldAppendTopFrameAsCCode)
                     stackTrace.append(UnprocessedStackFrame { machinePC });
@@ -729,7 +726,7 @@ NODELETE static ALWAYS_INLINE BytecodeIndex tryGetBytecodeIndex(unsigned llintPC
 }
 
 #if ENABLE(AOT)
-using CompiledSitePositions = UncheckedKeyHashMap<uint64_t, std::optional<AOT::SourcePosition>>;
+using CompiledSitePositions = HashMap<uint64_t, std::optional<AOT::SourcePosition>>;
 
 static void appendCompiledFrames(const AOT::Image& image, const UnprocessedStackFrame& machineFrame, AOT::ShownFrameFilter& shownFrames, CompiledSitePositions& sitePositions, Vector<SamplingProfiler::StackFrame>& frames)
 {
@@ -1435,7 +1432,7 @@ Ref<JSON::Value> SamplingProfiler::stackTracesAsJSON()
         processUnverifiedStackTraces();
     }
 
-    UncheckedKeyHashMap<SourceID, Ref<SourceProvider>> sources;
+    HashMap<SourceID, Ref<SourceProvider>> sources;
 
     auto stackFrameAsJSON = [&](StackFrame& stackFrame) {
         auto [provider, sourceID] = stackFrame.sourceProviderAndID();
@@ -1536,12 +1533,12 @@ Ref<JSON::Value> SamplingProfiler::stackTracesAsJSON()
 void SamplingProfiler::registerForReportAtExit()
 {
     static Lock registrationLock;
-    static UncheckedKeyHashSet<RefPtr<SamplingProfiler>>* profilesToReport;
+    static HashSet<RefPtr<SamplingProfiler>>* profilesToReport;
 
     Locker locker { registrationLock };
 
     if (!profilesToReport) {
-        profilesToReport = new UncheckedKeyHashSet<RefPtr<SamplingProfiler>>();
+        profilesToReport = new HashSet<RefPtr<SamplingProfiler>>();
         atexit([]() {
             for (const auto& profile : *profilesToReport)
                 profile->reportDataToOptionFile();
@@ -1583,7 +1580,7 @@ void SamplingProfiler::reportTopFunctions(PrintStream& out)
     }
 
     size_t totalSamples = 0;
-    UncheckedKeyHashMap<String, size_t> functionCounts;
+    HashMap<String, size_t> functionCounts;
     for (StackTrace& stackTrace : m_stackTraces) {
         if (!stackTrace.frames.size())
             continue;
@@ -1649,8 +1646,8 @@ void SamplingProfiler::reportTopBytecodes(PrintStream& out)
     }
 
     size_t totalSamples = 0;
-    UncheckedKeyHashMap<String, size_t> bytecodeCounts;
-    UncheckedKeyHashMap<String, size_t> tierCounts;
+    HashMap<String, size_t> bytecodeCounts;
+    HashMap<String, size_t> tierCounts;
 
     auto forEachTier = [&] (auto func) {
         func(Tiers::llint);

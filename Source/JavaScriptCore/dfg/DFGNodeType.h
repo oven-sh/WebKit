@@ -169,6 +169,7 @@ namespace JSC { namespace DFG {
     macro(ArithDiv, NodeResultNumber | NodeMustGenerate) \
     macro(ArithMod, NodeResultNumber | NodeMustGenerate) \
     macro(ArithAbs, NodeResultNumber | NodeMustGenerate) \
+    macro(ArithSign, NodeResultNumber | NodeMustGenerate) \
     macro(ArithMin, NodeResultNumber | NodeHasVarArgs) \
     macro(ArithMax, NodeResultNumber | NodeHasVarArgs) \
     macro(ArithFRound, NodeResultDouble | NodeMustGenerate) \
@@ -289,6 +290,7 @@ namespace JSC { namespace DFG {
     macro(GetVectorLength, NodeResultInt32) \
     macro(GetTypedArrayByteOffset, NodeResultInt32) \
     macro(GetTypedArrayByteOffsetAsInt52, NodeResultInt52) \
+    macro(GetTypedArrayBuffer, NodeResultJS | NodeMustGenerate) \
     macro(GetWebAssemblyInstanceExports, NodeResultJS) \
     macro(GetScope, NodeResultJS) \
     macro(GetEvalScope, NodeResultJS) \

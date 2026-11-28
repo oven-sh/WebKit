@@ -871,13 +871,13 @@ public:
         BuiltinClassID builtinClass;
         BuiltinID method;
     };
-    UncheckedKeyHashMap<uint64_t, Vector<MethodGivenUnderKey, 2>>& methodsGivenUnderKeys;
+    HashMap<uint64_t, Vector<MethodGivenUnderKey, 2>>& methodsGivenUnderKeys;
     struct ReceiverMadeInBody {
         ValueID made;
         uint8_t classesItStaysAsMadeOf;
         uint32_t firstPlaceWhereItIsHandedOn;
     };
-    UncheckedKeyHashMap<uint32_t, Vector<ReceiverMadeInBody, 4>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>& receiversMadeInBodies;
+    HashMap<uint32_t, Vector<ReceiverMadeInBody, 4>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>& receiversMadeInBodies;
     struct GettersExpectedInFunction {
         FunctionID function;
         std::span<const LinkedGetterAtRead> reads;
@@ -2929,8 +2929,8 @@ private:
         std::unique_ptr<UsesInLoops> usesInLoops;
         std::unique_ptr<Vector<std::pair<ValueID, BlockID>>> arithmeticInLoops;
         Vector<uint16_t> operatorsFoundBehindValuesForGuesses;
-        UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> numbersOfLongListsOfNamesOfRoots;
-        UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> endsOfUsesOfTexts;
+        HashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> numbersOfLongListsOfNamesOfRoots;
+        HashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> endsOfUsesOfTexts;
         BitVector loopsInTrialVisits;
         BitVector loopsWithBlocksTouched;
         std::span<const LinkedVariableStoredFirst> variablesStoredFirst;
@@ -2938,7 +2938,7 @@ private:
         NamesOfValues references;
         Vector<RememberedExpectation, 32> expectations;
         Vector<WholeExpectation> wholeExpectations;
-        UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> shapesOfValues;
+        HashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> shapesOfValues;
         uint32_t loopDepthAtCall { 0 };
         bool isInCallbackCopy { false };
         mutable BlockID blockOfLoopDepth;
@@ -3020,7 +3020,7 @@ private:
         };
         Vector<PlaceOfNarrowerName> placesOfNarrowerNames;
         bool findsNarrowerNamesByReference { false };
-        UncheckedKeyHashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> numbersOfNarrowedReferences;
+        HashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> numbersOfNarrowedReferences;
         struct NarrowerNameInTables {
             uint32_t numberOfValue { 0 };
             uint32_t numberOfName { 0 };
@@ -4613,7 +4613,7 @@ private:
     NEVER_INLINE bool narrowSecondCounters(EdgeID&, BlockID from, BlockID to, uint32_t targetIndex, Vector<Reference, 8>& arguments);
     std::optional<Range> stepsOfHeadParameter(BlockID inputHead, uint32_t position);
     NEVER_INLINE std::optional<Range> expectedStepsOfSum(BlockID inputHead, uint32_t position, const Operation& test, uint32_t operandIndex, const SecondCounter&);
-    UncheckedKeyHashMap<uint64_t, Range, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_stepsOfHeadParameters;
+    HashMap<uint64_t, Range, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_stepsOfHeadParameters;
     Reference buildSecondCounter(const SecondCounter&, Reference name, ValueID test, uint32_t operandIndex, bool isOnTakenEdge, EdgeID&, BlockID to);
     bool handTurnOverWhereLesserBoundIsReached(const BodyTerminator&);
     uint32_t m_restartPointCount { 0 };
@@ -4845,7 +4845,7 @@ private:
     bool narrowHolderOfTestedFieldOnEdge(BlockID from, uint32_t targetIndex, const BodyEdgeResult&, BlockID to);
     struct MembersByTag {
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(MembersByTag);
-        UncheckedKeyHashMap<uint64_t, Vector<LayoutID, 1>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> members;
+        HashMap<uint64_t, Vector<LayoutID, 1>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> members;
     };
     const MembersByTag* findMembersByTag(LayoutSetID, const Operation& read);
     void shareMembersByTag(LayoutSetID whole, LayoutSetID part, PropertyKeyID);
@@ -4858,7 +4858,7 @@ private:
     bool isNameOfCellAskedForShape(Reference name, ValueID asked) const;
     std::optional<Draft> draftOfHolderNarrowedByShape(BlockID from, uint32_t targetIndex, Reference holder, Reference test);
     Vector<std::unique_ptr<MembersByTag>> m_listsOfMembersByTag;
-    UncheckedKeyHashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_membersByTagOfSets;
+    HashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_membersByTagOfSets;
     bool isReadOfSlotOffHolder(Reference read, Reference holder, PropertyKeyID) const;
 public:
     Reference buildTestOfTagAsTestOfShape(const BodyValue& comparison);
@@ -5101,7 +5101,7 @@ private:
     uint32_t m_pendingUndoableStore { 0 };
     bool m_isUndoingStores { false };
     uint32_t m_emptySlotCaseCount { 0 };
-    UncheckedKeyHashMap<uint32_t, Vector<FieldIndex, 2>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_fillersOfAllocations;
+    HashMap<uint32_t, Vector<FieldIndex, 2>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_fillersOfAllocations;
     uint32_t m_foldedSliceCount { 0 };
     Vector<CountOfUnit, 4>& m_countsOfUnit;
     uint32_t m_numberOfValuesWalked { 0 };
@@ -5113,10 +5113,10 @@ private:
     std::unique_ptr<KeptForInt32Promises, DeleterOfKeptForInt32Promises> m_keptForInt32Promises;
     struct ListOfNames {
         Vector<PropertyKeyID> names;
-        UncheckedKeyHashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> answers;
+        HashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> answers;
         HashMap<uint64_t, bool, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> areAllPlainFields;
-        UncheckedKeyHashMap<uint32_t, Vector<LayoutID, 4>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> fewInstances;
-        UncheckedKeyHashMap<uint32_t, Vector<LayoutID, 8>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> hierarchies;
+        HashMap<uint32_t, Vector<LayoutID, 4>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> fewInstances;
+        HashMap<uint32_t, Vector<LayoutID, 8>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> hierarchies;
     };
     Vector<ListOfNames>& m_listsOfNames;
     HashMap<uint64_t, Vector<uint32_t, 1>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>& m_numbersOfListsOfNames;

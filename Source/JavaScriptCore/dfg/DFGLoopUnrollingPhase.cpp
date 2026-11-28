@@ -510,7 +510,7 @@ public:
             // If the block is unreachable or invalid in the CFG, we can directly
             // ignore the loop, avoiding unnecessary cloneability checks for nodes in invalid blocks.
 
-            UncheckedKeyHashSet<Node*> cloneableCache;
+            HashSet<Node*> cloneableCache;
             uint32_t exitEarlyLimit = data.maxAllowedUnrollSize();
             for (Node* node : *body) {
                 if (data.materialNodeCount > exitEarlyLimit) {
@@ -625,7 +625,7 @@ public:
 
 private:
     CloneHelper m_cloneHelper;
-    UncheckedKeyHashSet<BasicBlock*> m_unrolledLoopHeaders;
+    HashSet<BasicBlock*> m_unrolledLoopHeaders;
 };
 
 bool performLoopUnrolling(Graph& graph)
@@ -914,6 +914,7 @@ bool LoopUnrollingPhase::LoopData::isNumericComputationNode(Node* node)
     case ArithDiv:
     case ArithMod:
     case ArithAbs:
+    case ArithSign:
     case ArithMin:
     case ArithMax:
     case ArithFRound:

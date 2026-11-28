@@ -376,8 +376,10 @@ bool FlexFormattingUtils::canResolveFullyConstrainedLogicalHeight(const RenderFl
     // stretched yet - its height is 0 at that point and computeLogicalHeight would give
     // a wrong answer. This happens when the nested out-of-flow flex is laid out as part of the
     // anector flex's main-axis sizing, before the stretch phase sets the final cross size.
-    CheckedPtr containingBlock = flexBox.containingBlock();
-    return flexBox.hasFullyConstrainedLogicalHeight() && containingBlock->hasDefiniteLogicalHeight();
+    if (!flexBox.hasFullyConstrainedLogicalHeight())
+        return false;
+    CheckedRef<const RenderBoxModelObject> containingBlock = *flexBox.containingBlock();
+    return containingBlock->hasDefiniteLogicalHeight();
 }
 
 bool FlexFormattingUtils::flexItemHasComputableAspectRatio(const RenderBox& flexItem)
@@ -427,7 +429,7 @@ LayoutUnit FlexFormattingUtils::innerCrossSizeForFlexItem(const RenderBox& flexI
         auto size = isHorizontal ? flexBox->style().height() : flexBox->style().width();
         auto innerCrossSize = LayoutUnit { };
         if (auto fixedSize = size.tryFixed())
-            innerCrossSize = flexBox->adjustContentBoxLogicalHeightForBoxSizing(LayoutUnit { fixedSize->resolveZoom(flexBox->style().usedZoomForLength()) });
+            innerCrossSize = flexBox->adjustContentBoxLogicalHeightForBoxSizing(size, LayoutUnit { fixedSize->resolveZoom(flexBox->style().usedZoomForLength()) }, flexBox->containingBlockLogicalWidthForBoxSizing(size));
         else if (size.isPercent())
             innerCrossSize = flexBox->availableLogicalHeightForPercentageComputation().value_or(0_lu);
         else if (canResolveFullyConstrainedLogicalHeight(flexBox) || hasDefiniteLogicalWidthForAspectRatioCrossSize(flexBox))
@@ -439,11 +441,11 @@ LayoutUnit FlexFormattingUtils::innerCrossSizeForFlexItem(const RenderBox& flexI
 
         auto maximumSize = isHorizontal ? flexBox->style().maxHeight() : flexBox->style().maxWidth();
         if (auto fixedMaximumSize = maximumSize.tryFixed())
-            innerCrossSize = std::min(innerCrossSize, flexBox->adjustContentBoxLogicalHeightForBoxSizing(LayoutUnit { fixedMaximumSize->resolveZoom(flexBox->style().usedZoomForLength()) }));
+            innerCrossSize = std::min(innerCrossSize, flexBox->adjustContentBoxLogicalHeightForBoxSizing(maximumSize, LayoutUnit { fixedMaximumSize->resolveZoom(flexBox->style().usedZoomForLength()) }, flexBox->containingBlockLogicalWidthForBoxSizing(maximumSize)));
 
         auto minimumSize = isHorizontal ? flexBox->style().minHeight() : flexBox->style().minWidth();
         if (auto fixedMinimumSize = minimumSize.tryFixed())
-            innerCrossSize = std::max(innerCrossSize, flexBox->adjustContentBoxLogicalHeightForBoxSizing(LayoutUnit { fixedMinimumSize->resolveZoom(flexBox->style().usedZoomForLength()) }));
+            innerCrossSize = std::max(innerCrossSize, flexBox->adjustContentBoxLogicalHeightForBoxSizing(minimumSize, LayoutUnit { fixedMinimumSize->resolveZoom(flexBox->style().usedZoomForLength()) }, flexBox->containingBlockLogicalWidthForBoxSizing(minimumSize)));
 
         return innerCrossSize;
     };

@@ -242,7 +242,7 @@ FieldMovePlanCache::~FieldMovePlanCache() = default;
 
 static unsigned hashOfFieldMovePlanKey(const FieldMovePlanKey& key)
 {
-    uint64_t words = key.sourceWords * 0x9e3779b97f4a7c15ull ^ std::rotl(key.targetWords * 0xc2b2ae3d27d4eb4full, 31) ^ std::bit_cast<uintptr_t>(key.sourceStructure);
+    uint64_t words = key.sourceWords * 0x9e3779b97f4a7c15ull ^ std::rotl(key.targetWords * 0xc2b2ae3d27d4eb4full, 31) ^ (std::bit_cast<uintptr_t>(key.sourceStructure) >> structureIDPlaceShift);
     return static_cast<unsigned>(words >> 32 ^ words);
 }
 

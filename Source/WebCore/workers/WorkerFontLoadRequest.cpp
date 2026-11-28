@@ -28,6 +28,7 @@
 #include "config.h"
 #include "WorkerFontLoadRequest.h"
 
+#include "CSSStyleResource.h"
 #include "CachedFont.h"
 #include "Font.h"
 #include "FontCreationContext.h"
@@ -44,14 +45,15 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(WorkerFontLoadRequest);
 
-Ref<WorkerFontLoadRequest> WorkerFontLoadRequest::create(URL&& url, LoadedFromOpaqueSource loadedFromOpaqueSource)
+Ref<WorkerFontLoadRequest> WorkerFontLoadRequest::create(URL&& url, const CSS::URLModifiers& modifiers, const CSS::URLProvenance& provenance)
 {
-    return adoptRef(*new WorkerFontLoadRequest(WTF::move(url), loadedFromOpaqueSource));
+    return adoptRef(*new WorkerFontLoadRequest(WTF::move(url), modifiers, provenance));
 }
 
-WorkerFontLoadRequest::WorkerFontLoadRequest(URL&& url, LoadedFromOpaqueSource loadedFromOpaqueSource)
+WorkerFontLoadRequest::WorkerFontLoadRequest(URL&& url, const CSS::URLModifiers& modifiers, const CSS::URLProvenance& provenance)
     : m_url(WTF::move(url))
-    , m_loadedFromOpaqueSource(loadedFromOpaqueSource)
+    , m_modifiers(modifiers)
+    , m_provenance(provenance)
 {
 }
 
@@ -63,8 +65,6 @@ void WorkerFontLoadRequest::load(WorkerGlobalScope& workerGlobalScope)
     ASSERT(request.httpMethod() == "GET"_s);
 
     FetchOptions fetchOptions;
-    fetchOptions.mode = FetchOptions::Mode::SameOrigin;
-    fetchOptions.credentials = workerGlobalScope.credentials();
     fetchOptions.cache = FetchOptions::Cache::Default;
     fetchOptions.redirect = FetchOptions::Redirect::Follow;
     fetchOptions.destination = FetchOptions::Destination::Worker;
@@ -72,8 +72,9 @@ void WorkerFontLoadRequest::load(WorkerGlobalScope& workerGlobalScope)
     ThreadableLoaderOptions options { WTF::move(fetchOptions) };
     options.sendLoadCallbacks = SendCallbackPolicy::SendCallbacks;
     options.contentSecurityPolicyEnforcement = Ref { *m_context }->shouldBypassMainWorldContentSecurityPolicy() ? ContentSecurityPolicyEnforcement::DoNotEnforce : ContentSecurityPolicyEnforcement::EnforceWorkerSrcDirective;
-    options.loadedFromOpaqueSource = m_loadedFromOpaqueSource;
-    options.sameOriginDataURLFlag = SameOriginDataURLFlag::Set;
+
+    // FIXME: CSS Fonts says to fetch fonts in "cors" mode. https://drafts.csswg.org/css-fonts-4/#font-fetching-requirements
+    CSS::applyStyleResourceRequestSteps(options, m_modifiers, m_provenance, FetchOptions::Mode::SameOrigin);
 
     options.serviceWorkersMode = ServiceWorkersMode::All;
     if (auto* activeServiceWorker = workerGlobalScope.activeServiceWorker())

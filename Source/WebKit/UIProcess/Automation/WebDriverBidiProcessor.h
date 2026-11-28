@@ -30,15 +30,18 @@
 #include "WebDriverBidiBackendDispatchers.h"
 #include "WebDriverBidiFrontendDispatchers.h"
 #include <JavaScriptCore/InspectorFrontendChannel.h>
+#include <optional>
 #include <wtf/Forward.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/WeakPtr.h>
+#include <wtf/text/WTFString.h>
 
 namespace WebKit {
 
 class BidiBrowserAgent;
 class BidiBrowsingContextAgent;
 class BidiDigitalCredentialsAgent;
+class BidiEmulationAgent;
 class BidiInputAgent;
 class BidiPermissionsAgent;
 class BidiScriptAgent;
@@ -50,6 +53,11 @@ class WebPageProxy;
 class WebDriverBidiProcessor final : public Inspector::FrontendChannel {
     WTF_MAKE_TZONE_ALLOCATED(WebDriverBidiProcessor);
 public:
+    struct RemoteReference {
+        String sharedId;
+        String handle;
+    };
+
     explicit WebDriverBidiProcessor(WebAutomationSession&);
     ~WebDriverBidiProcessor() override;
 
@@ -58,6 +66,7 @@ public:
 
     BidiBrowserAgent& browserAgent() const LIFETIME_BOUND { return m_browserAgent; }
     BidiDigitalCredentialsAgent& digitalCredentialsAgent() const LIFETIME_BOUND { return m_digitalCredentialsAgent; }
+    BidiEmulationAgent& emulationAgent() const LIFETIME_BOUND { return m_emulationAgent; }
     BidiInputAgent& inputAgent() const LIFETIME_BOUND { return m_inputAgent; }
     BidiScriptAgent& scriptAgent() const LIFETIME_BOUND { return m_scriptAgent; }
 
@@ -75,7 +84,9 @@ public:
     bool eventIsEnabled(const String& eventName, const HashSet<String>& contexts);
     void emitEventIfEnabled(const String& eventName, const HashSet<String>& browsingContexts, NOESCAPE const Function<void()>&);
 
-    // Shared validation helpers for BiDi protocol
+    // Shared parsing and validation helpers for the BiDi protocol.
+    static std::optional<double> integerValue(const JSON::Value&, double minimum, double maximum);
+    static std::optional<RemoteReference> parseRemoteReference(const JSON::Object&);
     static Inspector::CommandResult<void> validateSerializationOptions(const JSON::Object&);
 
 private:
@@ -87,6 +98,7 @@ private:
     const UniqueRef<BidiBrowserAgent> m_browserAgent;
     const Ref<BidiBrowsingContextAgent> m_browsingContextAgent;
     const UniqueRef<BidiDigitalCredentialsAgent> m_digitalCredentialsAgent;
+    const UniqueRef<BidiEmulationAgent> m_emulationAgent;
     const UniqueRef<BidiInputAgent> m_inputAgent;
     const UniqueRef<BidiPermissionsAgent> m_permissionsAgent;
     const UniqueRef<BidiScriptAgent> m_scriptAgent;

@@ -407,6 +407,11 @@ bool SVGSMILElement::parseCondition(StringView value, BeginOrEnd beginOrEnd)
     if (conditionString.isEmpty())
         return false;
 
+    // SMIL accessKey() (accesskey() in SMIL 2 and later) is not supported. Reject it in any case,
+    // so the rest of the list still applies.
+    if (conditionString.startsWithIgnoringASCIICase("accesskey("_s))
+        return false;
+
     // Find the first dot not preceded by a backslash. Per the SMIL specification,
     // dots in element IDs can be escaped with a backslash (e.g., "my\.anim.end").
     size_t dotPosition = 0;
@@ -439,18 +444,14 @@ bool SVGSMILElement::parseCondition(StringView value, BeginOrEnd beginOrEnd)
         // FIXME: By assigning an unsigned to a signed, this can turn large integers into negative numbers.
         repeats = *parsedRepeat;
         nameString = eventNames().repeatEventEvent;
-        type = Condition::EventBase;
+        type = Condition::Type::EventBase;
     } else if (nameView == "begin"_s || nameView == "end"_s) {
         if (baseID.isEmpty())
             return false;
-        type = Condition::Syncbase;
-        nameString = nameView.toAtomString();
-    } else if (nameView.startsWith("accesskey("_s)) {
-        // FIXME: accesskey() support.
-        type = Condition::AccessKey;
+        type = Condition::Type::Syncbase;
         nameString = nameView.toAtomString();
     } else {
-        type = Condition::EventBase;
+        type = Condition::Type::EventBase;
         nameString = nameView.toAtomString();
     }
     
@@ -461,7 +462,7 @@ bool SVGSMILElement::parseCondition(StringView value, BeginOrEnd beginOrEnd)
 
     m_conditions.append(Condition(type, beginOrEnd, WTF::move(resolvedBaseID), WTF::move(nameString), offset, repeats));
 
-    if (type == Condition::EventBase && beginOrEnd == End)
+    if (type == Condition::Type::EventBase && beginOrEnd == End)
         m_hasEndEventConditions = true;
 
     return true;
@@ -575,11 +576,11 @@ void SVGSMILElement::svgAttributeChanged(const QualifiedName& attrName)
     }
     case AttributeNames::beginAttr:
         if (isConnected())
-            beginListChanged(elapsed());
+            listChanged(Begin, elapsed());
         break;
     case AttributeNames::endAttr:
         if (isConnected())
-            endListChanged(elapsed());
+            listChanged(End, elapsed());
         break;
     default:
         break;
@@ -598,7 +599,7 @@ void SVGSMILElement::connectConditions()
         disconnectConditions();
     m_conditionsConnected = true;
     for (auto& condition : borrow(m_conditions).get()) {
-        if (condition.m_type == Condition::EventBase) {
+        if (condition.m_type == Condition::Type::EventBase) {
             ASSERT(!condition.m_syncbase);
             RefPtr eventBase = eventBaseFor(condition);
             if (!eventBase)
@@ -606,7 +607,7 @@ void SVGSMILElement::connectConditions()
             ASSERT(!condition.m_eventListener);
             condition.m_eventListener = ConditionEventListener::create(this, &condition);
             eventBase->addEventListener(condition.m_name, *condition.m_eventListener);
-        } else if (condition.m_type == Condition::Syncbase) {
+        } else if (condition.m_type == Condition::Type::Syncbase) {
             ASSERT(!condition.m_baseID.isEmpty());
             condition.m_syncbase = protect(treeScope())->getElementById(condition.m_baseID);
             if (!condition.m_syncbase)
@@ -627,7 +628,7 @@ void SVGSMILElement::disconnectConditions()
         return;
     m_conditionsConnected = false;
     for (auto& condition : borrow(m_conditions).get()) {
-        if (condition.m_type == Condition::EventBase) {
+        if (condition.m_type == Condition::Type::EventBase) {
             ASSERT(!condition.m_syncbase);
             if (!condition.m_eventListener)
                 continue;
@@ -641,7 +642,7 @@ void SVGSMILElement::disconnectConditions()
                 eventBase->removeEventListener(condition.m_name, protect(*condition.m_eventListener), { .capture = false });
             protect(condition.m_eventListener)->disconnectAnimation();
             condition.m_eventListener = nullptr;
-        } else if (condition.m_type == Condition::Syncbase) {
+        } else if (condition.m_type == Condition::Type::Syncbase) {
             if (condition.m_syncbase)
                 downcast<SVGSMILElement>(condition.m_syncbase.get())->removeTimeDependent(this);
         }
@@ -797,10 +798,7 @@ void SVGSMILElement::addInstanceTime(BeginOrEnd beginOrEnd, SMILTime time, SMILT
     if (elapsed.isUnresolved())
         return;
     insertSortedAndUnique(beginOrEnd == Begin ? m_beginTimes : m_endTimes, SMILTimeWithOrigin(time, origin));
-    if (beginOrEnd == Begin)
-        beginListChanged(elapsed);
-    else
-        endListChanged(elapsed);
+    listChanged(beginOrEnd, elapsed);
 }
 
 SMILTime SVGSMILElement::findInstanceTime(BeginOrEnd beginOrEnd, SMILTime minimumTime, bool equalsMinimumOK) const
@@ -944,56 +942,77 @@ SMILTime SVGSMILElement::nextProgressTime() const
     return m_nextProgressTime;
 }
     
-void SVGSMILElement::beginListChanged(SMILTime eventTime)
+void SVGSMILElement::listChanged(BeginOrEnd beginOrEnd, SMILTime eventTime)
 {
-    if (m_isWaitingForFirstInterval)
-        resolveFirstInterval();
-    else {
-        if (restart() == RestartNever)
-            return;
+    if (beginOrEnd == Begin)
+        beginListChanged(eventTime);
+    else
+        endListChanged(eventTime);
 
-        SMILTime newBegin = findInstanceTime(Begin, eventTime, true);
-        if (newBegin.isFinite() && (m_intervalEnd <= eventTime || newBegin < m_intervalBegin)) {
-            // Begin time changed, re-resolve the interval.
-            SMILTime oldBegin = m_intervalBegin;
-            m_intervalEnd = eventTime;
-            resolveInterval(false, m_intervalBegin, m_intervalEnd);  
-            ASSERT(!m_intervalBegin.isUnresolved());
-            if (m_intervalBegin != oldBegin) {
-                if (m_activeState == Active && m_intervalBegin > eventTime) {
-                    m_activeState = determineActiveState(eventTime);
-                    if (m_activeState != Active)
-                        endedActiveInterval();
-                }
-                notifyDependentsIntervalChanged();
-            }
-        }
-    }
-    m_nextProgressTime = elapsed();
-
+    m_nextProgressTime = eventTime;
     if (RefPtr timeContainer = m_timeContainer)
         timeContainer->notifyIntervalsChanged();
 }
 
-void SVGSMILElement::endListChanged(SMILTime)
+void SVGSMILElement::beginListChanged(SMILTime eventTime)
 {
-    SMILTime elapsed = this->elapsed();
-    if (m_isWaitingForFirstInterval)
+    if (m_isWaitingForFirstInterval) {
         resolveFirstInterval();
-    else if (elapsed < m_intervalEnd && m_intervalBegin.isFinite()) {
-        SMILTime newEnd = findInstanceTime(End, m_intervalBegin, false);
-        if (newEnd < m_intervalEnd) {
-            newEnd = resolveActiveEnd(m_intervalBegin, newEnd);
-            if (newEnd != m_intervalEnd) {
-                m_intervalEnd = newEnd;
-                notifyDependentsIntervalChanged();
-            }
-        }
+        return;
     }
-    m_nextProgressTime = elapsed;
 
-    if (RefPtr timeContainer = m_timeContainer)
-        timeContainer->notifyIntervalsChanged();
+    // Never resolve more than one interval when restart is 'never'.
+    if (restart() == RestartNever)
+        return;
+
+    SMILTime newBegin = findInstanceTime(Begin, eventTime, true);
+    if (!newBegin.isFinite())
+        return;
+
+    // If the current interval is still active and already contains the new begin
+    // time, a potentially new interval will be picked up during the regular
+    // interval update.
+    if (newBegin >= m_intervalBegin && eventTime < m_intervalEnd)
+        return;
+
+    // Begin time changed, re-resolve the interval.
+    SMILTime oldBegin = m_intervalBegin;
+    m_intervalEnd = eventTime;
+    resolveInterval(false, m_intervalBegin, m_intervalEnd);
+    ASSERT(!m_intervalBegin.isUnresolved());
+    if (m_intervalBegin == oldBegin)
+        return;
+
+    if (m_activeState == Active && m_intervalBegin > eventTime) {
+        m_activeState = determineActiveState(eventTime);
+        if (m_activeState != Active)
+            endedActiveInterval();
+    }
+    notifyDependentsIntervalChanged();
+}
+
+void SVGSMILElement::endListChanged(SMILTime eventTime)
+{
+    if (m_isWaitingForFirstInterval) {
+        resolveFirstInterval();
+        return;
+    }
+
+    // If we have no resolved interval, or the current interval already ends at or
+    // before the indicated time, then a new 'end' instance time will have no effect.
+    if (!m_intervalBegin.isFinite() || m_intervalEnd <= eventTime)
+        return;
+
+    SMILTime newEnd = findInstanceTime(End, m_intervalBegin, false);
+    if (newEnd >= m_intervalEnd)
+        return;
+
+    newEnd = resolveActiveEnd(m_intervalBegin, newEnd);
+    if (newEnd == m_intervalEnd)
+        return;
+
+    m_intervalEnd = newEnd;
+    notifyDependentsIntervalChanged();
 }
 
 void SVGSMILElement::checkRestart(SMILTime elapsed)
@@ -1295,7 +1314,7 @@ void SVGSMILElement::createInstanceTimesFromSyncbase(SVGSMILElement* syncbase)
     // FIXME: To be really correct, this should handle updating exising interval by changing 
     // the associated times instead of creating new ones.
     for (auto& condition : m_conditions) {
-        if (condition.m_type == Condition::Syncbase && condition.m_syncbase == syncbase) {
+        if (condition.m_type == Condition::Type::Syncbase && condition.m_syncbase == syncbase) {
             ASSERT(condition.m_name == "begin"_s || condition.m_name == "end"_s);
             // No nested time containers in SVG, no need for crazy time space conversions. Phew!
             SMILTime time = 0;

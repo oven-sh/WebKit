@@ -21,6 +21,7 @@
 
 #pragma once
 
+#include <WebCore/CSSURL.h>
 #include <WebCore/CachedCSSStyleSheet.h>
 #include <WebCore/CachedResourceHandle.h>
 #include <WebCore/CachedStyleSheetClient.h>
@@ -42,7 +43,7 @@ public:
         bool conditionMatches { true };
     };
 
-    NODELETE static Ref<StyleRuleImport> create(const String& href, MQ::MediaQueryList&&, std::optional<CascadeLayerName>&&, SupportsCondition&&);
+    NODELETE static Ref<StyleRuleImport> create(CSS::URL&&, MQ::MediaQueryList&&, std::optional<CascadeLayerName>&&, SupportsCondition&&);
     ~StyleRuleImport();
 
     Ref<StyleRuleImport> copy() const { RELEASE_ASSERT_NOT_REACHED(); }
@@ -52,13 +53,15 @@ public:
     void clearParentStyleSheet() { m_parentStyleSheet = nullptr; }
     void cancelLoad();
 
-    String href() const { return m_strHref; }
+    String href() const { return m_url.specified; }
+    const CSS::URLModifiers& modifiers() const LIFETIME_BOUND { return m_url.modifiers; }
     StyleSheetContents* styleSheet() const { return m_styleSheet.get(); }
 
     NODELETE bool isLoading() const;
     
-    const MQ::MediaQueryList& mediaQueries() const LIFETIME_BOUND { return m_mediaQueries; }
-    void setMediaQueries(MQ::MediaQueryList&& queries) { m_mediaQueries = WTF::move(queries); }
+    const MQ::MediaQueryList& mediaQueries() const LIFETIME_BOUND { return MQ::sourceOrEmpty(m_mediaQueries); }
+    const Box<const MQ::MediaQueryList>& sharedMediaQueries() const LIFETIME_BOUND { return m_mediaQueries; }
+    void setMediaQueries(MQ::MediaQueryList&& queries) { m_mediaQueries = MQ::makeShared(WTF::move(queries)); }
 
     void requestStyleSheet();
     const CachedCSSStyleSheet* cachedCSSStyleSheet() const { return m_cachedSheet.get(); }
@@ -92,13 +95,13 @@ private:
     void setCSSStyleSheet(const String& href, const URL& baseURL, ASCIILiteral charset, const CachedCSSStyleSheet&);
     friend class ImportedStyleSheetClient;
 
-    StyleRuleImport(const String& href, MQ::MediaQueryList&&, std::optional<CascadeLayerName>&&, SupportsCondition&&);
+    StyleRuleImport(CSS::URL&&, MQ::MediaQueryList&&, std::optional<CascadeLayerName>&&, SupportsCondition&&);
 
     WeakPtr<StyleSheetContents> m_parentStyleSheet;
 
     ImportedStyleSheetClient m_styleSheetClient;
-    String m_strHref;
-    MQ::MediaQueryList m_mediaQueries;
+    CSS::URL m_url;
+    Box<const MQ::MediaQueryList> m_mediaQueries;
     RefPtr<StyleSheetContents> m_styleSheet;
     std::optional<CascadeLayerName> m_cascadeLayerName;
     CachedResourceHandle<CachedCSSStyleSheet> m_cachedSheet;

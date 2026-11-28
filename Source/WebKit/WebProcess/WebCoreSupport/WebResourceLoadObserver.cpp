@@ -87,7 +87,8 @@ void WebResourceLoadObserver::requestStorageAccessUnderOpener(const RegistrableD
         && !openerDocument.hasRequestedPageSpecificStorageAccessWithUserInteraction(domainInNeedOfStorageAccess)
         && !openerUrl.isAboutBlank()) {
         Ref { WebProcess::singleton().ensureNetworkProcessConnection().connection() }->send(Messages::NetworkConnectionToWebProcess::RequestStorageAccessUnderOpener(domainInNeedOfStorageAccess, openerPage.webPageProxyIdentifier(), openerDomain), 0);
-        
+
+        // Also update the opener's state locally so it doesn't have to wait for the round trip through the network and UI processes.
         openerPage.addDomainWithPageLevelStorageAccess(openerDomain, domainInNeedOfStorageAccess);
 
         // Remember user interaction-based requests since they don't need to be repeated.
@@ -440,8 +441,8 @@ void WebResourceLoadObserver::logUserInteractionWithReducedTimeResolution(const 
         auto escapedURL = escapeForJSON(url.string());
         auto escapedDomain = escapeForJSON(topFrameDomain.string());
 
-        LOCAL_LOG("{ \"url\": \"%" PUBLIC_LOG_STRING "\",", escapedURL.utf8());
-        LOCAL_LOG("  \"domain\" : \"%" PUBLIC_LOG_STRING "\",", escapedDomain.utf8());
+        LOCAL_LOG("{ \"url\": \"%" PUBLIC_LOG_STRING "\",", makeUTF8CString(escapedURL));
+        LOCAL_LOG("  \"domain\" : \"%" PUBLIC_LOG_STRING "\",", makeUTF8CString(escapedDomain));
         LOCAL_LOG("  \"until\" : %f }", newTime.secondsSinceEpoch().seconds());
 
 #undef LOCAL_LOG

@@ -52,8 +52,18 @@ Value* addressOf(Procedure& proc, RuntimeFunction function, Origin origin)
         return proc.add<ConstPtrValue>(origin, tagCFunction<OperationPtrTag>(operationMemoryMove));
     case RuntimeFunction::GCSafeMemoryMove:
         return proc.add<ConstPtrValue>(origin, tagCFunction<OperationPtrTag>(operationGCSafeMemoryMove));
-    case RuntimeFunction::MemoryFill:
-        return proc.add<ConstPtrValue>(origin, tagCFunction<OperationPtrTag>(operationMemoryFill));
+    case RuntimeFunction::MemoryFill8:
+        return proc.add<ConstPtrValue>(origin, tagCFunction<OperationPtrTag>(operationMemoryFill8));
+    case RuntimeFunction::MemoryFill16:
+        return proc.add<ConstPtrValue>(origin, tagCFunction<OperationPtrTag>(operationMemoryFill16));
+    case RuntimeFunction::MemoryFill32:
+        return proc.add<ConstPtrValue>(origin, tagCFunction<OperationPtrTag>(operationMemoryFill32));
+    case RuntimeFunction::MemoryFill64:
+        return proc.add<ConstPtrValue>(origin, tagCFunction<OperationPtrTag>(operationMemoryFill64));
+    case RuntimeFunction::GCSafeMemoryFill64:
+        return proc.add<ConstPtrValue>(origin, tagCFunction<OperationPtrTag>(operationGCSafeMemoryFill64));
+    case RuntimeFunction::MemoryFill128:
+        return proc.add<ConstPtrValue>(origin, tagCFunction<OperationPtrTag>(operationMemoryFill128));
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

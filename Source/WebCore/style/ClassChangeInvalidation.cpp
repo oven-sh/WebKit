@@ -32,13 +32,12 @@
 #include "StyleInvalidationFunctions.h"
 #include <wtf/BitVector.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 enum class ClassChangeType : bool { Add, Remove };
 
 struct ClassChange {
-    AtomStringImpl* className { };
+    AtomString className;
     ClassChangeType type;
 };
 
@@ -48,7 +47,7 @@ using ClassChangeVector = Vector<ClassChange, classChangeVectorInlineCapacity>;
 static ClassChangeVector collectClasses(const SpaceSplitString& classes, ClassChangeType changeType)
 {
     return WTF::map<classChangeVectorInlineCapacity>(classes, [changeType](auto& className) {
-        return ClassChange { className.impl(), changeType };
+        return ClassChange { className, changeType };
     });
 }
 
@@ -76,13 +75,13 @@ static ClassChangeVector computeClassChanges(const SpaceSplitString& oldClasses,
         }
         if (foundFromBoth)
             continue;
-        changedClasses.append({ newClass.impl(), ClassChangeType::Add });
+        changedClasses.append({ newClass, ClassChangeType::Add });
     }
     for (unsigned i = 0; i < oldSize; ++i) {
         // If the bit is not set the corresponding class has been removed.
         if (remainingClassBits.quickGet(i))
             continue;
-        changedClasses.append({ oldClasses[i].impl(), ClassChangeType::Remove });
+        changedClasses.append({ oldClasses[i], ClassChangeType::Remove });
     }
 
     return changedClasses;
@@ -164,7 +163,7 @@ void ClassChangeInvalidation::computeInvalidation(const SpaceSplitString& oldCla
     collect(m_element->styleResolver().ruleSets());
 
     if (RefPtr shadowRoot = m_element->shadowRoot())
-        collect(shadowRoot->styleScope().resolver().ruleSets(), MatchElement::Relation::Host);
+        collect(protect(shadowRoot->styleScope())->resolver().ruleSets(), MatchElement::Relation::Host);
 }
 
 void ClassChangeInvalidation::invalidateBeforeChange()
@@ -177,5 +176,4 @@ void ClassChangeInvalidation::invalidateAfterChange()
     Invalidator::invalidateWithMatchElementRuleSets(m_element, m_afterChangeRuleSets);
 }
 
-}
 }

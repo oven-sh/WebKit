@@ -40,7 +40,7 @@ messages -> WebProcessProxy WantsDispatchMessage {
 #if ENABLE(GPU_PROCESS)
     CreateGPUProcessConnection(WebKit::GPUProcessConnectionIdentifier identifier, IPC::ConnectionHandle connectionHandle) AllowedWhenWaitingForSyncReply
     GPUProcessConnectionDidBecomeUnresponsive(WebKit::GPUProcessConnectionIdentifier identifier)
-    [EnabledBy=SiteIsolationEnabled] DrawFrameToSnapshot(WebCore::FrameIdentifier frameID, WebCore::IntRect rectRelativeToVisibleContent, WebKit::RemoteSnapshotIdentifier snapshotIdentifier, WebCore::RenderingMode renderingMode) AllowedWhenWaitingForSyncReply
+    [EnabledBy=SiteIsolationEnabled] DrawFrameToSnapshot(WebCore::FrameIdentifier frameID, WebCore::IntRect rectRelativeToVisibleContent, WebKit::RemoteSnapshotIdentifier snapshotIdentifier, WebCore::RenderingMode renderingMode, WebCore::FloatSize scale) AllowedWhenWaitingForSyncReply
 #endif
 
 #if ENABLE(MODEL_PROCESS)
@@ -146,4 +146,5 @@ messages -> WebProcessProxy WantsDispatchMessage {
     [EnabledBy=RemoteSnapshottingEnabled] CompleteDisplayOnlyImage(WebCore::PageIdentifier pageID, WebKit::RemoteSnapshotIdentifier imageIdentifier, WebCore::FrameIdentifier rootFrameIdentifier, float scale, WebCore::ColorSpace colorSpace) -> (bool success)
     [EnabledBy=RemoteSnapshottingEnabled] ReleaseDisplayOnlyImage(WebCore::PageIdentifier pageID, WebKit::RemoteSnapshotIdentifier imageIdentifier)
 #endif
+    EnsureMediaKeysStorageDirectory(WebCore::FrameIdentifier frameID)
 }

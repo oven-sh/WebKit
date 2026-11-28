@@ -263,7 +263,8 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     cp -rL $WEBKIT_OUT_DIR/lib/*.a /output/lib && \
     cp -L $WEBKIT_OUT_DIR/cmakeconfig.h /output/include/cmakeconfig.h && \
     cp -rL $WEBKIT_OUT_DIR/WTF/Headers/wtf /output/include && \
-    cp -rL $WEBKIT_OUT_DIR/ICU/Headers/* /output/include && \
+    # FindICU.cmake: where WTF's cmake copies the vendored ICU headers on Apple platforms (WebKit/WebKit@f028357d02).
+    cp -rL $WEBKIT_OUT_DIR/usr/local/include/* /output/include && \
     mkdir -p /output/include/wtf/include && \
     cp -rL /webkit/Source/WTF/icu/unicode /output/include/wtf/include && \
     cp -rL $WEBKIT_OUT_DIR/bmalloc/Headers/bmalloc /output/include && \

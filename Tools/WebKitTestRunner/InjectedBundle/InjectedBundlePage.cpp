@@ -33,7 +33,6 @@
 #include "WPTFunctions.h"
 #include "WebCoreTestSupport.h"
 #include <JavaScriptCore/JSStringRefPtr.h>
-#include <WebCore/CSSUnits.h>
 #include <cmath>
 #include <WebKit/WKArray.h>
 #include <WebKit/WKBundle.h>
@@ -519,18 +518,6 @@ void InjectedBundlePage::dumpDOMAsWebArchive(WKBundleFrameRef frame, StringBuild
 #endif
 }
 
-// WPT print reftests default to a 5in by 3in page. wptrunner prints them with 0.5in margins.
-static constexpr double printReftestPageWidth = 5 * WebCore::CSS::pixelsPerInch;
-static constexpr double printReftestPageHeight = 3 * WebCore::CSS::pixelsPerInch;
-static constexpr double printReftestPageMargin = 0.5 * WebCore::CSS::pixelsPerInch;
-
-// FIXME: Apply fuzzy matching to each page separately, as WPT does (rdar://191464055). It applies to the whole image.
-// FIXME: Support <meta name=reftest-pages>, which limits the comparison to some of the pages (rdar://191464016).
-static WKImageRef createPrintReftestSnapshot(WKBundlePageRef page)
-{
-    return WKBundlePageCreateCSSPageBoxesSnapshotForTesting(page, WKSizeMake(printReftestPageWidth, printReftestPageHeight), printReftestPageMargin);
-}
-
 void InjectedBundlePage::dump()
 {
     auto& injectedBundle = InjectedBundle::singleton();
@@ -591,13 +578,10 @@ void InjectedBundlePage::dump()
         ALLOW_DEPRECATED_DECLARATIONS_END
     }
 
-    if (testRunner->shouldDumpBackForwardListsForAllWindows())
-        injectedBundle.dumpBackForwardListsForAllPages(stringBuilder);
-
     if (injectedBundle.shouldDumpPixels() && testRunner->shouldDumpPixels()) {
         bool shouldCreateSnapshot = injectedBundle.isPrinting();
         if (injectedBundle.shouldDumpCSSPageBoxes())
-            injectedBundle.setPixelResult(adoptWK(createPrintReftestSnapshot(m_page)).get());
+            injectedBundle.setPixelResultIsPending(true);
         else if (shouldCreateSnapshot) {
             WKSnapshotOptions options = kWKSnapshotOptionsShareable;
             ALLOW_DEPRECATED_DECLARATIONS_BEGIN
@@ -797,7 +781,7 @@ WKURLRequestRef InjectedBundlePage::willSendRequestForFrame(WKBundlePageRef page
 
             auto blockedURL = sanitizeExternalURL(urlString.get());
             auto script = makeString("console.log('Blocked access to external URL "_s, blockedURL, "');"_s);
-            RefPtr scriptRef = adoptRef(JSStringCreateWithUTF8CString(script.utf8().legacyCStringPointer()));
+            RefPtr scriptRef = adoptRef(JSStringCreateWithUTF8CString(makeUTF8CString(script).legacyCStringPointer()));
             JSEvaluateScript(jsContext, scriptRef.get(), 0, 0, 0, 0);
             return nullptr;
         }
@@ -806,7 +790,7 @@ WKURLRequestRef InjectedBundlePage::willSendRequestForFrame(WKBundlePageRef page
     if (testRunner) {
         String body = testRunner->willSendRequestHTTPBody();
         if (!body.isEmpty()) {
-            auto cBody = body.utf8();
+            auto cBody = makeUTF8CString(body);
             auto body = adoptWK(WKDataCreate(reinterpret_cast<const unsigned char*>(cBody.data()), cBody.length()));
             return WKURLRequestCopySettingHTTPBody(request, body.get());
         }
@@ -1058,15 +1042,6 @@ void InjectedBundlePage::didChangeSelection(WKStringRef notificationName)
     injectedBundle.outputText(makeString("EDITING DELEGATE: webViewDidChangeSelection:"_s, notificationName, '\n'));
 }
 
-String InjectedBundlePage::dumpHistory()
-{
-    return makeString(
-        "\n============== Back Forward List ==============\n"_s,
-        adoptWK(WKBundlePageDumpHistoryForTesting(m_page, toWK("/LayoutTests/").get())).get(),
-        "===============================================\n"_s
-    );
-}
-
 #if !PLATFORM(COCOA)
 void InjectedBundlePage::platformDidStartProvisionalLoadForFrame(WKBundleFrameRef)
 {
@@ -1113,7 +1088,7 @@ void InjectedBundlePage::frameDidChangeLocation(WKBundleFrameRef frame)
         return;
     }
 
-    if (frame != m_topLoadingFrame)
+    if (frame != m_topLoadingFrame.get())
         return;
 
     setTopLoadingFrame(nullptr);
@@ -1152,7 +1127,7 @@ void InjectedBundlePage::notifyDone()
 {
     // With site isolation, a provisional load that continues in another process (e.g. after a cross-site redirect)
     // never gets didFinishLoad or didFailProvisionalLoad in this process, so stop waiting once the frame is no longer loading here.
-    if (m_topLoadingFrame && WKBundleFrameGetFrameLoadState(m_topLoadingFrame) == kWKFrameLoadStateFinished)
+    if (m_topLoadingFrame && WKBundleFrameGetFrameLoadState(m_topLoadingFrame.get()) == kWKFrameLoadStateFinished)
         setTopLoadingFrame(nullptr);
     if (m_topLoadingFrame)
         return;

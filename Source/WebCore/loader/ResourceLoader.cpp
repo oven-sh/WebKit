@@ -65,6 +65,7 @@
 #include "ResourceMonitor.h"
 #include "SecurityOrigin.h"
 #include "SubresourceLoader.h"
+#include <wtf/Borrow.h>
 #include <wtf/CompletionHandler.h>
 #include <wtf/Ref.h>
 #include <wtf/text/MakeString.h>
@@ -433,7 +434,7 @@ void ResourceLoader::willSendRequestInternal(ResourceRequest&& request, const Re
         bool shouldBlock = results.shouldBlock();
         Vector<String> blockingIdentifiers;
         if (shouldBlock) {
-            for (auto& pair : results.results) {
+            for (auto& pair : borrow(results.results)) {
                 if (pair.second.blockedLoad)
                     blockingIdentifiers.append(pair.first);
             }
@@ -679,6 +680,12 @@ void ResourceLoader::didFinishLoadingOnePart(const NetworkLoadMetrics& networkLo
     if (frameLoader && m_options.sendLoadCallbacks == SendCallbackPolicy::SendCallbacks && m_identifier)
         frameLoader->notifier().didFinishLoad(*this, *m_identifier, networkLoadMetrics);
 }
+
+#if USE(QUICK_LOOK)
+void ResourceLoader::didFinishQuickLookLoading(URL&&)
+{
+}
+#endif
 
 void ResourceLoader::didFail(const ResourceError& error)
 {

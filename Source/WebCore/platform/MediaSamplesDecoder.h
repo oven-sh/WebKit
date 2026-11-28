@@ -35,6 +35,7 @@
 #include <wtf/TZoneMalloc.h>
 #include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/ThreadSafeWeakPtr.h>
+#include <wtf/UniqueRef.h>
 #include <wtf/Vector.h>
 #include <wtf/WorkQueue.h>
 
@@ -56,6 +57,9 @@ public:
         SoftwareAllowed = 1 << 1,
         HardwareAllowed = 1 << 2,
         UseSharedMemory = 1 << 3,
+        // Decode in software formats normally left to a hardware decoder.
+        ForceSoftware = 1 << 4,
+        IgnoreAudioDecodingErrors = 1 << 5,
     };
     using Filters = OptionSet<Filter>;
 
@@ -63,6 +67,7 @@ public:
     using DecodePromise = NativePromise<Vector<MediaSamplesBlock>, PlatformMediaError>;
 
     WEBCORE_EXPORT static bool canDecode(const TrackInfo&, Filters);
+    WEBCORE_EXPORT static bool isHardwareDecodable(const TrackInfo&);
     WEBCORE_EXPORT static Ref<CreatePromise> create(const TrackInfo&, Filters);
     WEBCORE_EXPORT ~MediaSamplesDecoder() WTF_IGNORES_THREAD_SAFETY_ANALYSIS;
 
@@ -73,7 +78,7 @@ public:
     WEBCORE_EXPORT Ref<MediaPromise> flush();
 
 private:
-    MediaSamplesDecoder(Ref<const TrackInfo>&& inputInfo, Ref<const TrackInfo>&& outputInfo, Filters);
+    MediaSamplesDecoder(Ref<const TrackInfo>&& inputInfo, Filters);
 
     template<typename PromiseType> Ref<PromiseType> enqueueOperation(Function<Ref<PromiseType>()>&&);
     static Ref<CreatePromise> createAudio(const AudioInfo&, Filters);
@@ -82,8 +87,11 @@ private:
     Ref<DecodePromise> decodeOnQueue(MediaSamplesBlock&&);
     Ref<DecodePromise> drainOnQueue();
     Ref<MediaPromise> flushOnQueue();
+    Ref<GenericPromise> flushDecoders();
     void didDecodeAudio(Ref<PlatformRawAudioData>&&);
     void didDecodeVideo(Ref<VideoFrame>&&, int64_t sequence);
+    void didDecodeAlpha(Ref<VideoFrame>&&, int64_t sequence);
+    void emitDecodedVideo(int64_t firstSequence, int64_t endSequence);
     void didFailDecoding();
     PlatformMediaError decodingError() const;
     Ref<DecodePromise> settleWithPendingOutput(bool succeeded, uint32_t generation);
@@ -91,26 +99,28 @@ private:
 
     const Ref<WorkQueue> m_queue;
     const Ref<const TrackInfo> m_inputInfo;
-    Ref<const TrackInfo> m_outputInfo WTF_GUARDED_BY_CAPABILITY(m_queue.get());
+    RefPtr<const AudioInfo> m_audioOutputInfo WTF_GUARDED_BY_CAPABILITY(m_queue.get());
+    RefPtr<const VideoInfo> m_videoOutputInfo WTF_GUARDED_BY_CAPABILITY(m_queue.get());
     const Filters m_filters;
     RefPtr<AudioDecoder> m_audioDecoder WTF_GUARDED_BY_CAPABILITY(m_queue.get());
     RefPtr<VideoDecoder> m_videoDecoder WTF_GUARDED_BY_CAPABILITY(m_queue.get());
+    RefPtr<VideoDecoder> m_alphaDecoder WTF_GUARDED_BY_CAPABILITY(m_queue.get());
     struct InFlightFrame {
+        WTF_MAKE_STRUCT_TZONE_ALLOCATED(InFlightFrame);
         MediaSamplesBlock::MediaSampleItem metadata;
-        // The first sequence of the block the frame was decoded from.
-        int64_t blockSequence { 0 };
+        RefPtr<VideoFrame> colorFrame { };
+        RefPtr<VideoFrame> alphaFrame { };
     };
-    HashMap<int64_t, InFlightFrame, DefaultHash<int64_t>, WTF::SignedWithZeroKeyHashTraits<int64_t>> m_inFlight WTF_GUARDED_BY_CAPABILITY(m_queue.get());
+    HashMap<int64_t, UniqueRef<InFlightFrame>> m_inFlight WTF_GUARDED_BY_CAPABILITY(m_queue.get());
     int64_t m_nextSequence WTF_GUARDED_BY_CAPABILITY(m_queue.get()) { 0 };
     Vector<MediaSamplesBlock> m_completedOutput WTF_GUARDED_BY_CAPABILITY(m_queue.get());
-    // The block the last frame in m_completedOutput was decoded from.
-    std::optional<int64_t> m_lastOutputBlockSequence WTF_GUARDED_BY_CAPABILITY(m_queue.get());
     MediaSamplesBlock::SamplesVector m_pendingOutput WTF_GUARDED_BY_CAPABILITY(m_queue.get());
     Deque<std::pair<MediaTime, MediaTime>> m_trimmedRanges WTF_GUARDED_BY_CAPABILITY(m_queue.get());
     RefPtr<GenericPromise> m_lastOperation WTF_GUARDED_BY_CAPABILITY(m_queue.get());
     uint32_t m_generation WTF_GUARDED_BY_CAPABILITY(m_queue.get()) { 0 };
     std::optional<PlatformMediaError> m_error WTF_GUARDED_BY_CAPABILITY(m_queue.get());
     bool m_needsSyncSample WTF_GUARDED_BY_CAPABILITY(m_queue.get()) { true };
+    bool m_needsAlphaKeyframe WTF_GUARDED_BY_CAPABILITY(m_queue.get()) { true };
     std::optional<bool> m_discontinuity WTF_GUARDED_BY_CAPABILITY(m_queue.get());
 };
 

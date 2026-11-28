@@ -516,6 +516,14 @@ NODELETE static inline bool booleanViewportArgumentIsSet(float value)
     return !value || value == 1;
 }
 
+NODELETE static ViewportFitEdge viewportFitEdge(std::optional<ViewportFit> edgeViewportFit, ViewportFit viewportFit)
+{
+    if (edgeViewportFit)
+        return *edgeViewportFit == ViewportFit::Cover ? ViewportFitEdge::ExplicitCover : ViewportFitEdge::Contain;
+
+    return viewportFit == ViewportFit::Cover ? ViewportFitEdge::ImplicitCover : ViewportFitEdge::Contain;
+}
+
 void ViewportConfiguration::updateConfiguration()
 {
     m_configuration = m_defaultConfiguration;
@@ -566,7 +574,12 @@ void ViewportConfiguration::updateConfiguration()
             m_configuration.width /= effectiveLayoutScale;
     }
 
-    m_configuration.avoidsUnsafeArea = m_viewportArguments.viewportFit != ViewportFit::Cover;
+    m_configuration.viewportFitEdges = {
+        viewportFitEdge(m_viewportArguments.viewportFitTop, m_viewportArguments.viewportFit),
+        viewportFitEdge(m_viewportArguments.viewportFitLeft, m_viewportArguments.viewportFit),
+        viewportFitEdge(m_viewportArguments.viewportFitBottom, m_viewportArguments.viewportFit),
+        viewportFitEdge(m_viewportArguments.viewportFitRight, m_viewportArguments.viewportFit),
+    };
     m_configuration.initialScaleIgnoringLayoutScaleFactor = m_configuration.initialScale;
     m_configuration.initialScale *= effectiveLayoutScale;
     m_configuration.minimumScale *= effectiveLayoutScale;
@@ -727,7 +740,7 @@ TextStream& operator<<(TextStream& ts, const ViewportConfiguration::Parameters& 
     ts.dumpProperty("maximumScale"_s, parameters.maximumScale);
     ts.dumpProperty("allowsUserScaling"_s, parameters.allowsUserScaling);
     ts.dumpProperty("allowsShrinkToFit"_s, parameters.allowsShrinkToFit);
-    ts.dumpProperty("avoidsUnsafeArea"_s, parameters.avoidsUnsafeArea);
+    ts.dumpProperty("viewportFitEdges"_s, parameters.viewportFitEdges);
     ts.dumpProperty("ignoreInitialScaleForLayoutWidth"_s, parameters.ignoreInitialScaleForLayoutWidth);
     ts.dumpProperty("shouldHonorMinimumEffectiveDeviceWidthFromClient"_s, parameters.shouldHonorMinimumEffectiveDeviceWidthFromClient);
     ts.dumpProperty("minimumScaleDoesNotAdaptToContent"_s, parameters.minimumScaleDoesNotAdaptToContent);
@@ -770,7 +783,7 @@ String ViewportConfiguration::description() const
     ts.dumpProperty("computed layout size"_s, layoutSize());
     ts.dumpProperty("ignoring horizontal scaling constraints"_s, shouldIgnoreHorizontalScalingConstraints() ? "true"_s : "false"_s);
     ts.dumpProperty("ignoring vertical scaling constraints"_s, shouldIgnoreVerticalScalingConstraints() ? "true"_s : "false"_s);
-    ts.dumpProperty("avoids unsafe area"_s, avoidsUnsafeArea() ? "true"_s : "false"_s);
+    ts.dumpProperty("viewport-fit edges"_s, viewportFitEdges());
     ts.dumpProperty("minimum effective device width (for view)"_s, m_minimumEffectiveDeviceWidthForView);
     ts.dumpProperty("minimum effective device width (for shrink-to-fit)"_s, m_minimumEffectiveDeviceWidthForShrinkToFit);
     ts.dumpProperty("known to lay out wider than viewport"_s, m_isKnownToLayOutWiderThanViewport ? "true"_s : "false"_s);
@@ -787,7 +800,7 @@ String ViewportConfiguration::description() const
 
 void ViewportConfiguration::dump() const
 {
-    SAFE_WTFLOGALWAYS("%s", description().utf8());
+    SAFE_WTFLOGALWAYS("%s", makeUTF8CString(description()));
 }
 
 #endif

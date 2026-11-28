@@ -59,7 +59,7 @@ using namespace HTMLNames;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderVideo);
 
-RenderVideo::RenderVideo(HTMLVideoElement& element, Style::ComputedStyle&& style)
+RenderVideo::RenderVideo(HTMLVideoElement& element, UniqueRef<Style::ComputedStyle>&& style)
     : RenderMedia(Type::Video, element, WTF::move(style))
 {
     setIntrinsicSize(calculateIntrinsicSize());
@@ -263,8 +263,7 @@ std::optional<LayoutRect> RenderVideo::objectFitContentsRectForFullscreenComposi
     if (objectFit != ObjectFit::Cover && objectFit != ObjectFit::Contain)
         return std::nullopt;
 
-    // FIXME: Remove suppression once rdar://189998444 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST auto naturalSize = FloatSize(posterAwareIntrinsicSize());
+    auto naturalSize = FloatSize(posterAwareIntrinsicSize());
     auto subrect = resolvedObjectViewBox(naturalSize);
     if (!subrect)
         return std::nullopt;
@@ -277,8 +276,7 @@ std::optional<LayoutRect> RenderVideo::objectFitContentsRectForFullscreenComposi
     // the whole natural frame. The result is the oversized (cover) or undersized (contain)
     // full-frame rect to use as the contents rect; the destination rect itself (unchanged)
     // remains the clip.
-    // FIXME: Remove suppression once rdar://189998444 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST auto destRect = FloatRect(dest);
+    auto destRect = FloatRect(dest);
     float scale = objectFit == ObjectFit::Cover
         ? std::max(destRect.width() / subrect->width(), destRect.height() / subrect->height())
         : std::min(destRect.width() / subrect->width(), destRect.height() / subrect->height());
@@ -565,7 +563,7 @@ bool RenderVideo::foregroundIsKnownToBeOpaqueInRect(const LayoutRect& localRect,
         return false;
 
     if (RefPtr player = videoElement->player())
-        return player->hasAvailableVideoFrame();
+        return !player->videoFrameHasAlpha() && player->hasAvailableVideoFrame();
 
     return false;
 }

@@ -125,9 +125,9 @@ class NetworkSessionCocoa final : public NetworkSession {
     WTF_MAKE_TZONE_ALLOCATED(NetworkSessionCocoa);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(NetworkSessionCocoa);
 public:
-    static std::unique_ptr<NetworkSession> create(NetworkProcess&, const NetworkSessionCreationParameters&);
+    static std::unique_ptr<NetworkSession> create(const NetworkSessionCreationParameters&);
 
-    NetworkSessionCocoa(NetworkProcess&, const NetworkSessionCreationParameters&);
+    NetworkSessionCocoa(const NetworkSessionCreationParameters&);
     ~NetworkSessionCocoa();
 
     SessionWrapper& initializeEphemeralStatelessSessionIfNeeded(std::optional<WebPageProxyIdentifier>, NavigatingToAppBoundDomain);
@@ -142,6 +142,7 @@ public:
     void setClientAuditToken(const WebCore::AuthenticationChallenge&);
 
     bool canPrefetchDNS() const final;
+    bool hasCompressionDictionarySupport() const final;
 
     void continueDidReceiveChallenge(SessionWrapper&, const WebCore::AuthenticationChallenge&, NegotiatedLegacyTLS, NetworkDataTaskCocoa::TaskIdentifier, RefPtr<NetworkDataTaskCocoa>, CompletionHandler<void(WebKit::AuthenticationChallengeDisposition, const WebCore::Credential&)>&&);
 
@@ -183,7 +184,11 @@ public:
     void applyProxyConfigurationToSessionConfiguration(NSURLSessionConfiguration *);
     void replacedSessionDidBecomeInvalid(NSURLSession *);
 
+    void applyProxyConfigurationToNWParametersForWebTransport(nw_parameters_t);
+    bool proxyConfigurationRequiresTCPProtocols() const;
     bool isLegacyTLSAllowed() const { return m_isLegacyTLSAllowed; }
+
+    static bool allowsLegacyCookieAccessFromFileURL(const WebCore::ResourceRequest&);
 
 private:
     void invalidateAndCancel() override;

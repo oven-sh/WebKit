@@ -32,6 +32,7 @@
 #include "WebCookieManager.h"
 #include "WebSocketTaskSoup.h"
 #include <WebCore/DeprecatedGlobalSettings.h>
+#include <WebCore/RegistrableDomain.h>
 #include <WebCore/ResourceRequest.h>
 #include <WebCore/SoupNetworkSession.h>
 #include <libsoup/soup.h>
@@ -42,8 +43,8 @@ using namespace WebCore;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(NetworkSessionSoup);
 
-NetworkSessionSoup::NetworkSessionSoup(NetworkProcess& networkProcess, const NetworkSessionCreationParameters& parameters)
-    : NetworkSession(networkProcess, parameters)
+NetworkSessionSoup::NetworkSessionSoup(const NetworkSessionCreationParameters& parameters)
+    : NetworkSession(parameters)
     , m_networkSession(makeUnique<SoupNetworkSession>(m_sessionID))
     , m_persistentCredentialStorageEnabled(parameters.persistentCredentialStorageEnabled)
 {
@@ -82,10 +83,10 @@ void NetworkSessionSoup::setCookiePersistentStorage(const String& storagePath, S
     GRefPtr<SoupCookieJar> jar;
     switch (storageType) {
     case SoupCookiePersistentStorageType::Text:
-        jar = adoptGRef(soup_cookie_jar_text_new(storagePath.utf8().legacyCStringPointer(), FALSE));
+        jar = adoptGRef(soup_cookie_jar_text_new(makeUTF8CString(storagePath).legacyCStringPointer(), FALSE));
         break;
     case SoupCookiePersistentStorageType::SQLite:
-        jar = adoptGRef(soup_cookie_jar_db_new(storagePath.utf8().legacyCStringPointer(), FALSE));
+        jar = adoptGRef(soup_cookie_jar_db_new(makeUTF8CString(storagePath).legacyCStringPointer(), FALSE));
         break;
     }
     storageSession->setCookieStorage(WTF::move(jar));
@@ -96,6 +97,15 @@ void NetworkSessionSoup::setCookiePersistentStorage(const String& storagePath, S
 void NetworkSessionSoup::clearCredentials(WallTime)
 {
     soup_auth_manager_clear_cached_credentials(SOUP_AUTH_MANAGER(soup_session_get_feature(soupSession(), SOUP_TYPE_AUTH_MANAGER)));
+}
+
+bool NetworkSessionSoup::hasCompressionDictionarySupport() const
+{
+#if HAVE(SOUP_COMPRESSION_DICTIONARY_SUPPORT)
+    return true;
+#else
+    return false;
+#endif
 }
 
 RefPtr<WebSocketTask> NetworkSessionSoup::createWebSocketTask(WebPageProxyIdentifier webPageProxyID, std::optional<FrameIdentifier> frameID, std::optional<PageIdentifier> pageID, NetworkSocketChannel& channel, const ResourceRequest& request, const String& protocol, const ClientOrigin&, bool, bool, OptionSet<WebCore::AdvancedPrivacyProtections>, StoredCredentialsPolicy, IsInitiatedByWorker isInitiatedByWorker)
@@ -113,7 +123,8 @@ RefPtr<WebSocketTask> NetworkSessionSoup::createWebSocketTask(WebPageProxyIdenti
         }), this);
     }
 
-    bool shouldBlockCookies = protect(networkStorageSession())->shouldBlockCookies(request, frameID, webPageProxyID, networkProcess().shouldRelaxThirdPartyCookieBlockingForPage(webPageProxyID), WebCore::IsKnownCrossSiteTracker::No);
+    bool shouldBlockCookies = RegistrableDomain(request.firstPartyForCookies()).isEmpty()
+        || protect(networkStorageSession())->shouldBlockCookies(request, frameID, webPageProxyID, protect(NetworkProcess::singleton())->shouldRelaxThirdPartyCookieBlockingForPage(webPageProxyID), WebCore::IsKnownCrossSiteTracker::No);
     if (shouldBlockCookies)
         soup_message_disable_feature(soupMessage.get(), SOUP_TYPE_COOKIE_JAR);
 

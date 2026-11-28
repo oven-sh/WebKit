@@ -30,7 +30,6 @@
 
 #include "GPUConnectionToWebProcessMessages.h"
 #include "IPCEvent.h"
-#include "ImageBufferRemoteDisplayListBackend.h"
 #include "ImageBufferShareableBitmapBackend.h"
 #include "Logging.h"
 #include "RemoteImageBufferMessages.h"
@@ -216,7 +215,7 @@ void RemoteImageBufferProxy::didFailToCreateBackend()
 
 // The backing store of a backend this process cannot map lives in the GPU process,
 // which hands out its handle on request. Everything else was built in the constructor.
-void RemoteImageBufferProxy::ensureBackendHandle() const
+void RemoteImageBufferProxy::ensureBackendHandle()
 {
     auto* backend = ImageBuffer::backend();
     if (!backend || backend->canMapBackingStore())
@@ -233,6 +232,13 @@ void RemoteImageBufferProxy::ensureBackendHandle() const
     auto [handle] = sendResult.takeReply();
     if (!handle)
         return;
+    // The GPU process falls back to shared memory when it cannot allocate an
+    // accelerated backing store, and this is the first we hear of it.
+    if (auto* bitmapHandle = std::get_if<ShareableBitmap::Handle>(&*handle)) {
+        if (auto bitmapBackend = ImageBufferShareableBitmapBackend::create(parameters(), WTF::move(*bitmapHandle)))
+            setBackend(WTF::move(bitmapBackend));
+        return;
+    }
     sharing->setBackendHandle(WTF::move(*handle));
 }
 

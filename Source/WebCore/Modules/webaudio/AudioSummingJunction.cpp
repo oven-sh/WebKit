@@ -31,6 +31,7 @@
 #include "AudioContext.h"
 #include "AudioNodeOutput.h"
 #include <algorithm>
+#include <wtf/Borrow.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -53,7 +54,7 @@ AudioSummingJunction::~AudioSummingJunction()
 void AudioSummingJunction::markRenderingStateAsDirty()
 {
     ASSERT(context());
-    ASSERT(context()->isGraphOwner());
+    RELEASE_ASSERT(protect(context())->isGraphOwner());
     if (!m_renderingStateNeedUpdating && canUpdateState()) {
         protect(context())->markSummingJunctionDirty(this);
         m_renderingStateNeedUpdating = true;
@@ -63,7 +64,7 @@ void AudioSummingJunction::markRenderingStateAsDirty()
 bool AudioSummingJunction::addOutput(AudioNodeOutput& output)
 {
     ASSERT(context());
-    ASSERT(context()->isGraphOwner());
+    RELEASE_ASSERT(protect(context())->isGraphOwner());
     if (!m_outputs.add(&output).isNewEntry)
         return false;
 
@@ -79,7 +80,7 @@ bool AudioSummingJunction::addOutput(AudioNodeOutput& output)
 bool AudioSummingJunction::removeOutput(AudioNodeOutput& output)
 {
     ASSERT(context());
-    ASSERT(context()->isGraphOwner());
+    RELEASE_ASSERT(protect(context())->isGraphOwner());
 
     // Heap allocations are forbidden on the audio thread for performance reasons so we need to
     // explicitly allow the following allocation(s).
@@ -100,12 +101,12 @@ bool AudioSummingJunction::removeOutput(AudioNodeOutput& output)
 void AudioSummingJunction::updateRenderingState()
 {
     ASSERT(context());
-    ASSERT(context()->isAudioThread() && context()->isGraphOwner());
+    RELEASE_ASSERT(protect(context())->isAudioThread() && protect(context())->isGraphOwner());
 
     if (m_renderingStateNeedUpdating && canUpdateState()) {
         // Copy from m_outputs to m_renderingOutputs.
         m_renderingOutputs = std::exchange(m_pendingRenderingOutputs, { });
-        for (auto& output : m_renderingOutputs)
+        for (auto& output : borrow(m_renderingOutputs))
             output->updateRenderingState();
 
         didUpdate();

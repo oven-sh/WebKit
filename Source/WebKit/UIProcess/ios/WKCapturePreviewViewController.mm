@@ -38,6 +38,7 @@
 #import <algorithm>
 #import <cmath>
 #import <pal/spi/cocoa/QuartzCoreSPI.h>
+#import <wtf/Borrow.h>
 #import <wtf/MachSendRightAnnotated.h>
 #import <wtf/MonotonicTime.h>
 #import <wtf/RetainPtr.h>
@@ -50,7 +51,7 @@
 
 using PreviewDeviceType = WebKit::CapturePreviewDeviceType;
 
-constexpr CGFloat previewAspectRatio = 4.0 / 3.0;
+constexpr CGFloat previewAspectRatio = 16.0 / 9.0;
 constexpr CGFloat contentSpacing = 16;
 constexpr CGFloat contentInset = 20;
 constexpr CGFloat informativeTextSpacing = 4;
@@ -342,7 +343,7 @@ static CGFloat promptWidthForAvailableWidth(CGFloat availableWidth)
     [titleLabel setTextAlignment:NSTextAlignmentCenter];
 
     _previewContainer = adoptNS([[UIView alloc] init]);
-    [_previewContainer setBackgroundColor:[UIColor blackColor]];
+    [_previewContainer setBackgroundColor:[UIColor secondarySystemGroupedBackgroundColor]];
     [_previewContainer setClipsToBounds:YES];
     [[_previewContainer layer] setCornerRadius:previewCornerRadius];
 
@@ -369,7 +370,7 @@ static CGFloat promptWidthForAvailableWidth(CGFloat availableWidth)
     [decisionButtons setSpacing:decisionButtonStackSpacing];
     [decisionButtons addArrangedSubview:allowButton.get()];
 
-    for (auto& action : _additionalActions) {
+    for (auto& action : borrow(_additionalActions)) {
         RetainPtr configuration = [UIButtonConfiguration grayButtonConfiguration];
         [configuration setTitle:action.title.createNSString().get()];
         [configuration setCornerStyle:UIButtonConfigurationCornerStyleMedium];
@@ -632,7 +633,7 @@ static CGFloat promptWidthForAvailableWidth(CGFloat availableWidth)
     // get separate entries, and so the index survives a device list update.
     NSMutableArray<UIAction *> *actions = [NSMutableArray arrayWithCapacity:devices.size()];
     for (size_t index = 0; index < devices.size(); ++index) {
-        RetainPtr title = devices[index].label().createNSString();
+        RetainPtr title = borrow(devices)[index].label().createNSString();
         RetainPtr action = [UIAction actionWithTitle:title.get() image:nil identifier:nil handler:[weakSelf = WeakObjCPtr<WKCapturePreviewViewController>(self), deviceType, index](UIAction *) {
             RetainPtr strongSelf = weakSelf.get();
             if (!strongSelf)
@@ -648,9 +649,9 @@ static CGFloat promptWidthForAvailableWidth(CGFloat availableWidth)
 
     // Hide the button if a device is no longer available
     [button setHidden:devices.isEmpty()];
-    [button setEnabled:devices.size() > 1];
+    [button setEnabled:_model.isMenuEnabled(deviceType)];
     if (selectedIndex < devices.size()) {
-        RetainPtr title = devices[selectedIndex].label().createNSString();
+        RetainPtr title = borrow(devices)[selectedIndex].label().createNSString();
         RetainPtr configuration = [button configuration];
         [configuration setTitle:title.get()];
         [button setConfiguration:configuration.get()];

@@ -94,7 +94,7 @@ struct Walker::KeptForInt32Promises {
     struct WithBody {
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(WithBody);
 
-        UncheckedKeyHashMap<uint64_t, TypeAsWritten, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> known;
+        HashMap<uint64_t, TypeAsWritten, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> known;
         Vector<BlockID> placesBehindLastRelation;
     };
 
@@ -106,7 +106,7 @@ struct Walker::KeptForInt32Promises {
         return *kept;
     }
 
-    UncheckedKeyHashMap<const BodyIndex*, std::unique_ptr<WithBody>> withBodies;
+    HashMap<const BodyIndex*, std::unique_ptr<WithBody>> withBodies;
     uint32_t numberOfAskings { 0 };
 };
 

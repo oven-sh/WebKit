@@ -77,6 +77,10 @@ class SessionID;
 
 namespace WebCore {
 
+namespace CSS {
+struct URL;
+}
+
 class ActiveDOMObject;
 class EventLoop;
 class CachedScript;
@@ -105,7 +109,6 @@ class WeakPtrImplWithEventTargetData;
 class WebCoreOpaqueRoot;
 enum class AdvancedPrivacyProtections : uint16_t;
 enum class CrossOriginMode : bool;
-enum class LoadedFromOpaqueSource : bool;
 enum class NoiseInjectionPolicy : uint8_t;
 enum class ReasonForSuspension : uint8_t;
 enum class ScriptTrackingPrivacyCategory : uint8_t;
@@ -221,14 +224,14 @@ public:
     URL currentSourceURL(CallStackPosition = CallStackPosition::BottomMost) const;
 
     // Called from the constructor and destructors of ActiveDOMObject.
-    void didCreateActiveDOMObject(ActiveDOMObject&);
+    NODELETE void didCreateActiveDOMObject(ActiveDOMObject&);
     void willDestroyActiveDOMObject(ActiveDOMObject&);
 
     // Called after the construction of an ActiveDOMObject to synchronize suspend state.
     void suspendActiveDOMObjectIfNeeded(ActiveDOMObject&);
 
-    void didCreateDestructionObserver(ContextDestructionObserver&);
-    void willDestroyDestructionObserver(ContextDestructionObserver&);
+    NODELETE void didCreateDestructionObserver(ContextDestructionObserver&);
+    NODELETE void willDestroyDestructionObserver(ContextDestructionObserver&);
 
     // MessagePort is conceptually a kind of ActiveDOMObject, but it needs to be tracked separately for message dispatch.
     void resumeAllMessagePortsSoon();
@@ -240,7 +243,7 @@ public:
 
     virtual CSSFontSelector* cssFontSelector() { return nullptr; }
     virtual CSSValuePool& cssValuePool();
-    virtual RefPtr<FontLoadRequest> fontLoadRequest(const String& url, bool isSVG, bool isInitiatingElementInUserAgentShadowTree, LoadedFromOpaqueSource);
+    virtual RefPtr<FontLoadRequest> fontLoadRequest(const CSS::URL&, bool isSVG, bool isInitiatingElementInUserAgentShadowTree);
     virtual void beginLoadingFontSoon(FontLoadRequest&) { }
 
     NODELETE WEBCORE_EXPORT static void setCrossOriginMode(CrossOriginMode);
@@ -404,6 +407,8 @@ public:
     void clearMicrotaskGlobalObjects();
     virtual bool isEventLoopGroupStoppedPermanently() const { return false; }
 
+    WEBCORE_EXPORT GuaranteedSerialFunctionDispatcher& nativePromiseDispatcher();
+
 protected:
     class AddConsoleMessageTask : public Task {
     public:
@@ -438,7 +443,6 @@ private:
     RejectedPromiseTracker* ensureRejectedPromiseTrackerSlow();
 
     NODELETE void checkConsistency() const;
-    WEBCORE_EXPORT GuaranteedSerialFunctionDispatcher& nativePromiseDispatcher();
 
     WeakHashSet<MessagePort, WeakPtrImplWithEventTargetData> m_messagePorts;
     WeakHashSet<ContextDestructionObserver> m_destructionObservers;

@@ -29,6 +29,8 @@
 #if PLATFORM(COCOA) && USE(LIBWEBRTC)
 
 #include "LibWebRTCRefWrappers.h"
+#include <wtf/Borrow.h>
+
 #include "CoreVideoSoftLink.h"
 #include <pal/cf/CoreMediaSoftLink.h>
 
@@ -58,16 +60,19 @@ VideoFrameLibWebRTC::VideoFrameLibWebRTC(MediaTime presentationTime, bool isMirr
     , m_size(m_buffer->width(),  m_buffer->height())
     , m_conversionCallback(WTF::move(conversionCallback))
 {
+    bool isFullRange = this->colorSpace().fullRange.value_or(false);
     switch (m_buffer->type()) {
     case webrtc::VideoFrameBuffer::Type::kI420:
+        m_videoPixelFormat = isFullRange ? kCVPixelFormatType_420YpCbCr8BiPlanarFullRange : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;
+        break;
     case webrtc::VideoFrameBuffer::Type::kI422:
-        m_videoPixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarFullRange;
+        m_videoPixelFormat = isFullRange ? kCVPixelFormatType_422YpCbCr8BiPlanarFullRange : kCVPixelFormatType_422YpCbCr8BiPlanarVideoRange;
         break;
     case webrtc::VideoFrameBuffer::Type::kI010:
-        m_videoPixelFormat = kCVPixelFormatType_420YpCbCr10BiPlanarFullRange;
+        m_videoPixelFormat = isFullRange ? kCVPixelFormatType_420YpCbCr10BiPlanarFullRange : kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange;
         break;
     case webrtc::VideoFrameBuffer::Type::kI210:
-        m_videoPixelFormat = kCVPixelFormatType_422YpCbCr10BiPlanarFullRange;
+        m_videoPixelFormat = isFullRange ? kCVPixelFormatType_422YpCbCr10BiPlanarFullRange : kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange;
         break;
     default:
         ASSERT_NOT_REACHED();
@@ -80,6 +85,108 @@ CVPixelBufferRef VideoFrameLibWebRTC::pixelBuffer() const
     if (!m_pixelBuffer && m_conversionCallback)
         m_pixelBuffer = std::exchange(m_conversionCallback, { })(m_buffer.get());
     return m_pixelBuffer.get();
+}
+
+template<typename Sample>
+static std::optional<PlanarImageConverter::SourcePlane> bufferPlane(const Sample* data, size_t sampleStride, size_t width, size_t height, PlanarImageConverter::SampleFormat format)
+{
+    return PlanarImageConverter::makePlane(unsafeMakeSpan(data, (height - 1) * sampleStride + width), 0, sampleStride, width, height, format);
+}
+
+static bool copyBufferPlane(const std::optional<PlanarImageConverter::SourcePlane>& source, std::span<uint8_t> destination, const ComputedPlaneLayout& layout, PlanarImageConverter::SampleFormat format)
+{
+    auto destinationPlane = PlanarImageConverter::makePlane(destination, layout.destinationOffset, layout.destinationStride, layout.sourceWidthBytes / format.sampleSize(), layout.sourceHeight, format);
+    return source && destinationPlane && PlanarImageConverter::copyPlane(*source, *destinationPlane);
+}
+
+static PlanarYUVFormatLayout bufferLayout(const webrtc::I420BufferInterface&)
+{
+    return { PlanarImageConverter::ChromaSubsampling::HorizontalAndVertical, PlanarImageConverter::eightBit };
+}
+
+static PlanarYUVFormatLayout bufferLayout(const webrtc::I010BufferInterface&)
+{
+    return { PlanarImageConverter::ChromaSubsampling::HorizontalAndVertical, PlanarImageConverter::tenBitLSB };
+}
+
+static PlanarYUVFormatLayout bufferLayout(const webrtc::I422BufferInterface&)
+{
+    return { PlanarImageConverter::ChromaSubsampling::Horizontal, PlanarImageConverter::eightBit };
+}
+
+static PlanarYUVFormatLayout bufferLayout(const webrtc::I210BufferInterface&)
+{
+    return { PlanarImageConverter::ChromaSubsampling::Horizontal, PlanarImageConverter::tenBitLSB };
+}
+
+template<typename Buffer>
+static bool copyBufferPlanes(const Buffer& buffer, std::span<uint8_t> destination, VideoPixelFormat format)
+{
+    auto layout = planarYUVFormatLayout(format);
+    auto layouts = VideoFrame::planarBufferLayout({ buffer.width(), buffer.height() }, format);
+    auto source = bufferLayout(buffer);
+    if (!layout || layout->subsampling != source.subsampling || layouts.size() != 3)
+        return false;
+
+    size_t width = buffer.width();
+    size_t height = buffer.height();
+    size_t chromaWidth = PlanarImageConverter::chromaWidth(source.subsampling, width);
+    size_t chromaHeight = PlanarImageConverter::chromaHeight(source.subsampling, height);
+    Borrow borrowedLayouts = layouts;
+    return copyBufferPlane(bufferPlane(buffer.DataY(), buffer.StrideY(), width, height, source.format), destination, borrowedLayouts[0], layout->format)
+        && copyBufferPlane(bufferPlane(buffer.DataU(), buffer.StrideU(), chromaWidth, chromaHeight, source.format), destination, borrowedLayouts[1], layout->format)
+        && copyBufferPlane(bufferPlane(buffer.DataV(), buffer.StrideV(), chromaWidth, chromaHeight, source.format), destination, borrowedLayouts[2], layout->format);
+}
+
+// A buffer already in the requested format is copied directly.
+bool VideoFrameLibWebRTC::copyToPlanarYUV(std::span<uint8_t> destination, VideoPixelFormat format)
+{
+    switch (m_buffer->type()) {
+    case webrtc::VideoFrameBuffer::Type::kI420:
+        if (format == VideoPixelFormat::I420)
+            return copyBufferPlanes(*m_buffer->GetI420(), destination, format);
+        break;
+    case webrtc::VideoFrameBuffer::Type::kI010:
+        if (format == VideoPixelFormat::I420P10)
+            return copyBufferPlanes(*m_buffer->GetI010(), destination, format);
+        break;
+    case webrtc::VideoFrameBuffer::Type::kI422:
+        if (format == VideoPixelFormat::I422)
+            return copyBufferPlanes(*m_buffer->GetI422(), destination, format);
+        break;
+    case webrtc::VideoFrameBuffer::Type::kI210:
+        if (format == VideoPixelFormat::I422P10)
+            return copyBufferPlanes(*m_buffer->GetI210(), destination, format);
+        break;
+    default:
+        break;
+    }
+    return VideoFrame::copyToPlanarYUV(destination, format);
+}
+
+template<typename Buffer>
+static bool copyBufferLumaPlane(const Buffer& buffer, std::span<uint8_t> destination, PlanarImageConverter::SampleFormat format)
+{
+    size_t width = buffer.width();
+    size_t height = buffer.height();
+    size_t rowBytes = width * format.sampleSize();
+    return copyBufferPlane(bufferPlane(buffer.DataY(), buffer.StrideY(), width, height, bufferLayout(buffer).format), destination, { .destinationOffset = 0, .destinationStride = rowBytes, .sourceHeight = height, .sourceWidthBytes = rowBytes }, format);
+}
+
+bool VideoFrameLibWebRTC::copyLumaPlane(std::span<uint8_t> destination, PlanarImageConverter::SampleFormat format)
+{
+    switch (m_buffer->type()) {
+    case webrtc::VideoFrameBuffer::Type::kI420:
+        return copyBufferLumaPlane(*m_buffer->GetI420(), destination, format);
+    case webrtc::VideoFrameBuffer::Type::kI010:
+        return copyBufferLumaPlane(*m_buffer->GetI010(), destination, format);
+    case webrtc::VideoFrameBuffer::Type::kI422:
+        return copyBufferLumaPlane(*m_buffer->GetI422(), destination, format);
+    case webrtc::VideoFrameBuffer::Type::kI210:
+        return copyBufferLumaPlane(*m_buffer->GetI210(), destination, format);
+    default:
+        return VideoFrame::copyLumaPlane(destination, format);
+    }
 }
 
 Ref<VideoFrame> VideoFrameLibWebRTC::clone()

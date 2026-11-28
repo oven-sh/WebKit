@@ -64,7 +64,7 @@ static uint32_t numberOf(LoadedProgram& program, BuiltinCellKey key)
         if (keys[number] == key.encoded())
             return number;
     }
-    failNativeTest(__FILE__, __LINE__, byteCast<char>(makeString("the image has a cell for "_s, WTF::enumName(key.kind()), " "_s, BuiltinTable::singleton().textOf(key.builtin())).utf8().data()));
+    failNativeTest(__FILE__, __LINE__, byteCast<char>(makeUTF8CString(makeString("the image has a cell for "_s, WTF::enumName(key.kind()), " "_s, BuiltinTable::singleton().textOf(key.builtin()))).data()));
 }
 
 static JSCell*& wordOf(LoadedProgram& program, uint32_t number)

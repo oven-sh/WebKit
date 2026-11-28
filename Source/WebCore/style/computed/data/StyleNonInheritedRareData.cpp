@@ -27,8 +27,7 @@
 #include "StyleKeyword+Logging.h"
 #include "StylePrimitiveNumericTypes+Logging.h"
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 using namespace CSS::Literals;
 
@@ -46,6 +45,7 @@ NonInheritedRareData::NonInheritedRareData()
     , maskBorder(MaskBorderData::create())
     , clip(ComputedStyle::initialClip())
     , clipPath(ComputedStyle::initialClipPath())
+    , borderShape(ComputedStyle::initialBorderShape())
     , overflowClipMargin(ComputedStyle::initialOverflowClipMargin())
     , scrollMargin(0_css_px)
     , scrollPadding(CSS::Keyword::Auto { })
@@ -58,6 +58,7 @@ NonInheritedRareData::NonInheritedRareData()
     , usedCounterDirectives { }
     , willChange(ComputedStyle::initialWillChange())
     , boxReflect(ComputedStyle::initialBoxReflect())
+    , pageName(ComputedStyle::initialPageName())
     , pageSize(ComputedStyle::initialPageSize())
     , shapeOutside(ComputedStyle::initialShapeOutside())
     , shapeMargin(ComputedStyle::initialShapeMargin())
@@ -105,7 +106,6 @@ NonInheritedRareData::NonInheritedRareData()
     , positionTryFallbacks(ComputedStyle::initialPositionTryFallbacks())
     , usedPositionOptionIndex()
     , overrideBlendMode()
-    , overrideBackgroundColor()
     , blockStepSize(ComputedStyle::initialBlockStepSize())
     , blockStepAlign(static_cast<unsigned>(ComputedStyle::initialBlockStepAlign()))
     , blockStepInsert(static_cast<unsigned>(ComputedStyle::initialBlockStepInsert()))
@@ -168,6 +168,7 @@ inline NonInheritedRareData::NonInheritedRareData(const NonInheritedRareData& o)
     , maskBorder(o.maskBorder)
     , clip(o.clip)
     , clipPath(o.clipPath)
+    , borderShape(o.borderShape)
     , overflowClipMargin(o.overflowClipMargin)
     , scrollMargin(o.scrollMargin)
     , scrollPadding(o.scrollPadding)
@@ -180,6 +181,7 @@ inline NonInheritedRareData::NonInheritedRareData(const NonInheritedRareData& o)
     , usedCounterDirectives(o.usedCounterDirectives)
     , willChange(o.willChange)
     , boxReflect(o.boxReflect)
+    , pageName(o.pageName)
     , pageSize(o.pageSize)
     , shapeOutside(o.shapeOutside)
     , shapeMargin(o.shapeMargin)
@@ -225,7 +227,6 @@ inline NonInheritedRareData::NonInheritedRareData(const NonInheritedRareData& o)
     , positionTryFallbacks(o.positionTryFallbacks)
     , usedPositionOptionIndex(o.usedPositionOptionIndex)
     , overrideBlendMode(o.overrideBlendMode)
-    , overrideBackgroundColor(o.overrideBackgroundColor)
     , blockStepSize(o.blockStepSize)
     , blockStepAlign(o.blockStepAlign)
     , blockStepInsert(o.blockStepInsert)
@@ -295,6 +296,7 @@ bool NonInheritedRareData::operator==(const NonInheritedRareData& o) const
         && maskBorder == o.maskBorder
         && clip == o.clip
         && clipPath == o.clipPath
+        && borderShape == o.borderShape
         && overflowClipMargin == o.overflowClipMargin
         && scrollMargin == o.scrollMargin
         && scrollPadding == o.scrollPadding
@@ -307,6 +309,7 @@ bool NonInheritedRareData::operator==(const NonInheritedRareData& o) const
         && usedCounterDirectives == o.usedCounterDirectives
         && willChange == o.willChange
         && boxReflect == o.boxReflect
+        && pageName == o.pageName
         && pageSize == o.pageSize
         && shapeOutside == o.shapeOutside
         && shapeMargin == o.shapeMargin
@@ -352,7 +355,6 @@ bool NonInheritedRareData::operator==(const NonInheritedRareData& o) const
         && positionTryFallbacks == o.positionTryFallbacks
         && usedPositionOptionIndex == o.usedPositionOptionIndex
         && overrideBlendMode == o.overrideBlendMode
-        && overrideBackgroundColor == o.overrideBackgroundColor
         && blockStepSize == o.blockStepSize
         && blockStepAlign == o.blockStepAlign
         && blockStepInsert == o.blockStepInsert
@@ -431,6 +433,8 @@ void NonInheritedRareData::dumpDifferences(TextStream& ts, const NonInheritedRar
 
     LOG_IF_DIFFERENT(clip);
     LOG_IF_DIFFERENT(clipPath);
+    LOG_IF_DIFFERENT(borderShape);
+
     LOG_IF_DIFFERENT(overflowClipMargin);
 
     LOG_IF_DIFFERENT(scrollMargin);
@@ -447,6 +451,7 @@ void NonInheritedRareData::dumpDifferences(TextStream& ts, const NonInheritedRar
     LOG_IF_DIFFERENT(willChange);
     LOG_IF_DIFFERENT(boxReflect);
 
+    LOG_IF_DIFFERENT(pageName);
     LOG_IF_DIFFERENT(pageSize);
 
     LOG_IF_DIFFERENT(shapeOutside);
@@ -506,7 +511,6 @@ void NonInheritedRareData::dumpDifferences(TextStream& ts, const NonInheritedRar
     LOG_IF_DIFFERENT(usedPositionOptionIndex);
 
     LOG_IF_DIFFERENT(overrideBlendMode);
-    LOG_IF_DIFFERENT(overrideBackgroundColor);
 
     LOG_IF_DIFFERENT(blockStepSize);
 
@@ -572,5 +576,4 @@ void NonInheritedRareData::dumpDifferences(TextStream& ts, const NonInheritedRar
 }
 #endif // !LOG_DISABLED
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

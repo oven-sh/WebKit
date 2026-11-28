@@ -35,9 +35,7 @@
 #include <JavaScriptCore/ConsoleTypes.h>
 #include <wtf/text/MakeString.h>
 
-namespace WebCore {
-
-namespace DOMCacheEngine {
+namespace WebCore::DOMCacheEngine {
 
 Exception convertToException(Error error)
 {
@@ -65,7 +63,7 @@ Exception convertToExceptionAndLog(ScriptExecutionContext* context, Error error)
 {
     auto exception = convertToException(error);
     if (context)
-        context->addConsoleMessage(MessageSource::JS, MessageLevel::Error, makeString("Cache API operation failed: "_s, exception.message()));
+        context->addConsoleMessage(MessageSource::Storage, MessageLevel::Error, makeString("Cache API operation failed: "_s, exception.message()));
     return exception;
 }
 
@@ -203,7 +201,4 @@ CrossThreadRecord CrossThreadRecord::isolatedCopy() &&
     };
 }
 
-} // namespace DOMCacheEngine
-
-} // namespace WebCore
-
+} // namespace WebCore::DOMCacheEngine

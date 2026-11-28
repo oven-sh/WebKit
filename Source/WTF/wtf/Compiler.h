@@ -163,6 +163,10 @@
 #define SUPPRESS_ASAN
 #endif
 
+/* UBSAN_ENABLED */
+
+#define UBSAN_ENABLED COMPILER_HAS_CLANG_FEATURE(undefined_behavior_sanitizer)
+
 /* TSAN_ENABLED and SUPPRESS_TSAN */
 
 #ifdef __SANITIZE_THREAD__
@@ -289,6 +293,18 @@
 
 #if !defined(LIFETIME_BOUND)
 #define LIFETIME_BOUND
+#endif
+
+/* WTF_VIEW_TYPE: marks a class as a non-owning view, so Clang's lifetime analysis and the Unborrowed checkers treat it as a loan. */
+
+#if !defined(WTF_VIEW_TYPE) && defined(__cplusplus)
+#if COMPILER_HAS_CPP_ATTRIBUTE(gsl::Pointer)
+#define WTF_VIEW_TYPE [[gsl::Pointer]]
+#endif
+#endif
+
+#if !defined(WTF_VIEW_TYPE)
+#define WTF_VIEW_TYPE
 #endif
 
 /* NEVER_INLINE */
@@ -596,6 +612,9 @@
 
 #define SUPPRESS_UNCOUNTED_LOCAL \
     IGNORE_CLANG_STATIC_ANALYZER_WARNINGS_ATTRIBUTE("alpha.webkit.UncountedLocalVarsChecker")
+
+#define SUPPRESS_UNBORROWED_ARG \
+    IGNORE_CLANG_STATIC_ANALYZER_WARNINGS_ATTRIBUTE_ON_MEMBER("alpha.webkit.UnborrowedCallArgsChecker")
 
 #define SUPPRESS_UNBORROWED_LOCAL \
     IGNORE_CLANG_STATIC_ANALYZER_WARNINGS_ATTRIBUTE("alpha.webkit.UnborrowedLocalVarsChecker")

@@ -1,0 +1,48 @@
+# `o[k]` under the key of this turn where a call stands between the step and the read: what the step saw of the object does not hold behind the call, so the test asks the
+# enumerator and the object again, behind it the read is a load by the place of the key, and the read as written is the other arm
+# function sum(o, f) { let s = 0; for (const k in o) { f(); s += o[k]; } return s; }
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses
+# CHECK: mechanisms TypedOperations,Guesses
+# CHECK-LABEL: code f1:Body
+# CHECK: = Call
+# CHECK: [[current]]: {{*}}= IsEnumeratorCurrent
+# CHECK: Branch [[current]]
+# RUN(LOAD): walk f1 mechanisms=none+TypedOperations+Guesses
+# LOAD-COUNT-1: = EnumeratorGetByVal
+# RUN(WRITTEN): walk f1 mechanisms=none+TypedOperations+Guesses
+# WRITTEN-COUNT-1: = ElemGet
+# where the object has a symbol, an accessor, a hidden name or a deleted one among its properties, the place of a key is not the place of its value: there the test fails and the read is the one as written
+# RUN(ANSWER): run-in-shell mechanisms=all globalThis.sink = (sum) => { const nothing = () => { }; const hidden = Object.defineProperty({ a: 1, b: 20, c: 300 }, "b", { enumerable: false }); const deleted = { a: 1, b: 20, c: 300 }; delete deleted.b; for (let turn = 0; turn < 2; turn++) print(sum({ a: 1, b: 20, c: 300 }, nothing), sum({ a: 1, [Symbol()]: 20, c: 300 }, nothing), sum({ a: 1, get b() { return 20; }, c: 300 }, nothing), sum(hidden, nothing), sum(deleted, nothing)); };
+# ANSWER: 321 301 321 301 301
+# ANSWER-NEXT: 321 301 321 301 301
+# ANSWER-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="sum" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer
+    v3 = ForInOpen v0
+    Jump -> next b1(v2)
+  b1(v4):
+    LoopHint
+    v6 = ForInStep v3, v0
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    Branch v7 -> taken b3(), notTaken b2()
+  b2():
+    v9 = Call v1, -
+    v10 = ElemGet v0, v8
+    v11 = Add v4, v10
+    Jump -> next b1(v11)
+  b3():
+    Return v4
+}

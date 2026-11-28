@@ -34,37 +34,33 @@
 
 namespace WebKit::WebGPU {
 
-class ConvertToBackingContext;
-
 class RemoteShaderModuleProxy final : public ::WebGPU::ShaderModule {
     WTF_MAKE_TZONE_ALLOCATED(RemoteShaderModuleProxy);
 public:
-    static Ref<RemoteShaderModuleProxy> create(RemoteDeviceProxy& parent, ConvertToBackingContext& convertToBackingContext, WebGPUIdentifier identifier)
+    static Ref<RemoteShaderModuleProxy> create(RemoteDeviceProxy& parent, WebGPUShaderModuleIdentifier identifier)
     {
-        return adoptRef(*new RemoteShaderModuleProxy(parent, convertToBackingContext, identifier));
+        return adoptRef(*new RemoteShaderModuleProxy(parent, identifier));
     }
 
     virtual ~RemoteShaderModuleProxy();
 
     RemoteDeviceProxy& parent() { return m_parent; }
     RemoteGPUProxy& root() { return m_parent->root(); }
+    WebGPUShaderModuleIdentifier backing() const { return m_backing; }
 
+    RemoteDeviceProxy& device() const final { return m_parent; }
     void compilationInfo(CompletionHandler<void(::WebGPU::CompilationInfo&&)>&&) final;
     void setLabel(String&&) final;
     bool isValid() const final;
 
 private:
-    friend class DowncastConvertToBackingContext;
-
-    RemoteShaderModuleProxy(RemoteDeviceProxy&, ConvertToBackingContext&, WebGPUIdentifier);
+    RemoteShaderModuleProxy(RemoteDeviceProxy&, WebGPUShaderModuleIdentifier);
 
     RemoteShaderModuleProxy(const RemoteShaderModuleProxy&) = delete;
     RemoteShaderModuleProxy(RemoteShaderModuleProxy&&) = delete;
     RemoteShaderModuleProxy& operator=(const RemoteShaderModuleProxy&) = delete;
     RemoteShaderModuleProxy& operator=(RemoteShaderModuleProxy&&) = delete;
 
-    WebGPUIdentifier backing() const { return m_backing; }
-    
     template<typename T>
     [[nodiscard]] IPC::Error send(T&& message)
     {
@@ -76,8 +72,7 @@ private:
         return protect(root().streamClientConnection())->sendWithAsyncReply(std::forward<T>(message), std::forward<C>(completionHandler), backing());
     }
 
-    WebGPUIdentifier m_backing;
-    const Ref<ConvertToBackingContext> m_convertToBackingContext;
+    WebGPUShaderModuleIdentifier m_backing;
     const Ref<RemoteDeviceProxy> m_parent;
 };
 

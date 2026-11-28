@@ -33,8 +33,7 @@
 #include "StyledElement.h"
 #include <wtf/BitSet.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 // Cache entries contain a MatchResult object that references element's mutable inline style.
 // As a result the cache entry mutates when element's inline style mutates.
@@ -80,7 +79,7 @@ inline UnadjustedStyle copy(const UnadjustedStyle& other)
 {
     // Relations hold raw Element pointers valid only for a single style resolution. They should not be cached.
     return {
-        .style = ComputedStyle::clonePtr(*other.style),
+        .style = ComputedStyle::clonePtr(protect(*other.style)),
         .relations = { },
         .matchResult = other.matchResult
     };
@@ -172,7 +171,7 @@ const std::optional<CachedMatchResult> MatchResultCache::resultWithCurrentInline
 
 void MatchResultCache::update(CachedMatchResult& result, const Style::ComputedStyle& style)
 {
-    result.styleToUpdate.get() = ComputedStyle::clone(style);
+    protect(result.styleToUpdate)->cloneFrom(style);
 }
 
 void MatchResultCache::updateForFastPathInherit(const Element& element, const Style::ComputedStyle& parentStyle)
@@ -196,5 +195,4 @@ void MatchResultCache::set(const Element& element, const UnadjustedStyle& unadju
         m_entries.remove(element);
 }
 
-}
 }

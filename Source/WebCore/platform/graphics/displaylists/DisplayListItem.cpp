@@ -31,8 +31,7 @@
 #include "GraphicsContext.h"
 #include <wtf/text/TextStream.h>
 
-namespace WebCore {
-namespace DisplayList {
+namespace WebCore::DisplayList {
 
 void applyItem(GraphicsContext& context, const AffineTransform& baseTransform, ControlFactory& controlFactory, const Item& item)
 {
@@ -57,12 +56,6 @@ bool shouldDumpItem(const Item& item, OptionSet<AsTextFlag> flags)
                 return true;
             // FIXME: for now, only drop the item if the only state-change flags are platform-specific.
             return item.state().changes() != GraphicsContextState::Change::ShouldSubpixelQuantizeFonts;
-#if USE(CG)
-        }, [&](const ApplyFillPattern&) -> bool {
-            return !flags.contains(AsTextFlag::IncludePlatformOperations);
-        }, [&](const ApplyStrokePattern&) -> bool {
-            return !flags.contains(AsTextFlag::IncludePlatformOperations);
-#endif
         }, [&](const auto&) -> bool {
             return true;
         }
@@ -93,5 +86,4 @@ TextStream& operator<<(TextStream& ts, const Item& item)
     return ts;
 }
 
-} // namespace DisplayList
-} // namespace WebCore
+} // namespace WebCore::DisplayList

@@ -29,7 +29,7 @@ struct Instance;
 using ModuleEvaluationStack = WTF::Vector<AbstractModuleRecord*, 8>;
 using ModuleLinkingStack = WTF::Vector<CyclicModuleRecord*, 8>;
 using StarExportTargets = WTF::Vector<AbstractModuleRecord*, 8>;
-using VisitedModuleRecords = UncheckedKeyHashSet<AbstractModuleRecord*>;
+using VisitedModuleRecords = HashSet<AbstractModuleRecord*>;
 
 class ModuleRecord final : public CyclicModuleRecord {
 public:

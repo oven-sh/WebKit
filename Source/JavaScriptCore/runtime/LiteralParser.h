@@ -47,6 +47,7 @@ class JSArray;
 class JSONCache;
 
 enum ParserMode : uint8_t { StrictJSON, SloppyJSON, JSONP };
+enum class SafeStringCharacterSet : uint8_t { Strict, Sloppy };
 enum class JSONReviverMode : uint8_t { Disabled, Enabled };
 
 enum JSONPPathEntryType : uint8_t {
@@ -85,7 +86,7 @@ struct JSONPData {
 class JSONRanges {
 public:
     struct Entry;
-    using Object = UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, Entry, IdentifierRepHash>;
+    using Object = HashMap<RefPtr<UniquedStringImpl>, Entry, IdentifierRepHash>;
     using Array = Vector<Entry>;
     struct Entry {
         JSValue value;
@@ -315,11 +316,15 @@ private:
         ALWAYS_INLINE TokenType lexString(LiteralParserToken<CharType>&, CharType terminator);
         template<JSONStringScan = isUTF8 ? JSONStringScan::StopsAtNonASCII : JSONStringScan::PassesOverNonASCII>
         ALWAYS_INLINE const CharType* findUnsafeStringCharacter(const CharType* start, const CharType* end, CharType terminator) const;
-        ALWAYS_INLINE void appendToBuilder(std::span<const CharType>, bool isASCII);
         bool tryLexThreeByteCharacters(LiteralParserToken<CharType>&) requires isUTF8;
         ALWAYS_INLINE std::span<const char16_t> decodeInPlace(std::span<const char8_t>) requires isUTF8;
         ALWAYS_INLINE TokenType decodeString(LiteralParserToken<CharType>&, std::span<const char8_t>) requires isUTF8;
         TokenType lexStringSlow(LiteralParserToken<CharType>&, const CharType* runStart, CharType terminator);
+        template<SafeStringCharacterSet>
+        ALWAYS_INLINE TokenType lexStringWithEscapes(LiteralParserToken<CharType>&, const CharType* runStart, CharType terminator);
+        template<SafeStringCharacterSet, typename OutputCharType>
+        TokenType lexStringWithEscapesImpl(LiteralParserToken<CharType>&, Vector<OutputCharType>&, size_t length, const CharType*, CharType terminator);
+        TokenType lexStringError(const CharType*);
         ALWAYS_INLINE TokenType lexNumber(LiteralParserToken<CharType>&);
         TokenType lexDouble(LiteralParserToken<CharType>&, const CharType* initial, const CharType* start, uint64_t integer);
         TokenType lexNumberError(LiteralParserToken<CharType>&);
@@ -331,7 +336,9 @@ private:
         ParserMode m_mode;
         const CharType* m_ptr;
         const CharType* m_end;
-        StringBuilder m_builder { OverflowPolicy::RecordOverflow };
+        // What a string with escapes is unescaped into. Of UTF-8 bytes the first holds decoded Latin-1 characters, not bytes.
+        Vector<CachedCharType> m_unescapedCharacters;
+        Vector<char16_t> m_widenedUnescapedCharacters;
         static constexpr size_t maxLengthDecodedInPlace = 256;
         struct Nothing { };
         NO_UNIQUE_ADDRESS std::conditional_t<isUTF8, std::array<char16_t, maxLengthDecodedInPlace>, Nothing> m_decodedCharacters;
@@ -376,7 +383,7 @@ private:
     const ParserMode m_mode;
     bool m_needsIterativeParser { false };
     String m_parseErrorMessage;
-    UncheckedKeyHashSet<JSObject*> m_visitedUnderscoreProto;
+    HashSet<JSObject*> m_visitedUnderscoreProto;
     MarkedArgumentBuffer m_objectStack;
     MarkedArgumentBuffer m_elementStack;
     Vector<ParserState, 16, UnsafeVectorOverflow> m_stateStack;

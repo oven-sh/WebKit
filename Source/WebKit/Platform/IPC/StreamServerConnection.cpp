@@ -32,6 +32,7 @@
 #include "MessageLog.h"
 #include "StreamConnectionWorkQueue.h"
 #include <mutex>
+#include <wtf/Borrow.h>
 #include <wtf/NeverDestroyed.h>
 
 namespace IPC {
@@ -188,10 +189,6 @@ StreamServerConnection::DispatchResult StreamServerConnection::dispatchStreamMes
         }
         if (!currentReceiver) {
             auto key = std::make_pair(static_cast<uint8_t>(currentReceiverName), m_currentDestinationID);
-            if (!ReceiversMap::isValidKey(key)) {
-                dispatchDidReceiveInvalidMessage(decoder);
-                return DispatchResult::HasNoMessages;
-            }
             Locker locker { m_receiversLock };
             currentReceiver = m_receivers.get(key);
         }
@@ -301,7 +298,7 @@ auto StreamServerConnection::processOutOfStreamMessage(Decoder& decoder) -> Proc
 
     auto key = std::make_pair(static_cast<uint8_t>(message->messageReceiverName()), static_cast<uint64_t>(message->destinationID()));
 
-    if (!message->isValid() || !m_receivers.isValidKey(key)) {
+    if (!message->isValid()) {
         // The ignoreInvalidMessageForTesting() path for sync messages that dispatchStreamMessage() has
         //  is not supported here because it is likely we don't have a id to reply to. No clients for this.
         sendAsyncReplyCancelIfNeeded(*message);
@@ -371,7 +368,7 @@ bool StreamServerConnection::dispatchStreamMessage(Decoder& message, StreamMessa
 
 void StreamServerConnection::dispatchDidReceiveInvalidMessage(Decoder& message)
 {
-    CheckedPtr { m_client }->didReceiveInvalidMessage(*this, message.messageName(), message.indicesOfObjectsFailingDecoding());
+    CheckedPtr { m_client }->didReceiveInvalidMessage(*this, message.messageName(), borrow(message)->indicesOfObjectsFailingDecoding());
     invalidate();
 }
 

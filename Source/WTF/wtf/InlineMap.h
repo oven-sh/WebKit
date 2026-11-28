@@ -39,7 +39,7 @@
 
 namespace WTF {
 
-template<typename IteratorType> struct InlineMapAddResult {
+template<typename IteratorType> struct WTF_VIEW_TYPE InlineMapAddResult {
     IteratorType iterator;
     bool isNewEntry;
 };
@@ -49,7 +49,7 @@ template<typename IteratorType> struct InlineMapAddResult {
 // happens when the map size exceeds the InlineCapacity template parameter. InlineCapacity
 // does not need to be any special value such as a power of 2.
 //
-// InlineMap is to a large extent compatible with UncheckedKeyHashMap. Inserted keys are
+// InlineMap is to a large extent compatible with HashMap. Inserted keys are
 // only checked for not being empty or deleted values in debug builds. In release builds
 // such insertions would corrupt the map.
 
@@ -147,7 +147,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
     class ValuesIterator;
 
-    class iterator {
+    class WTF_VIEW_TYPE iterator {
         friend class InlineMap;
         friend class ValuesIterator;
     public:
@@ -185,7 +185,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
         Entry* m_end { nullptr };
     };
 
-    class ValuesIterator {
+    class WTF_VIEW_TYPE ValuesIterator {
     public:
         ValuesIterator() = default;
         ValuesIterator(const iterator& it)
@@ -207,7 +207,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
         iterator m_impl;
     };
 
-    struct ValuesRange {
+    struct WTF_VIEW_TYPE ValuesRange {
         ValuesIterator m_begin;
         ValuesIterator m_end;
 
@@ -584,19 +584,19 @@ private:
 
     ALWAYS_INLINE unsigned deletedCount() const
     {
-        ASSERT(!isInline());
+        ASSERT_WITH_SECURITY_IMPLICATION(!isInline());
         return m_storage.hashedData.deletedCount;
     }
 
     ALWAYS_INLINE void incrementDeletedCount()
     {
-        ASSERT(!isInline());
+        ASSERT_WITH_SECURITY_IMPLICATION(!isInline());
         ++m_storage.hashedData.deletedCount;
     }
 
     ALWAYS_INLINE void decrementDeletedCount()
     {
-        ASSERT(!isInline());
+        ASSERT_WITH_SECURITY_IMPLICATION(!isInline());
         ASSERT(m_storage.hashedData.deletedCount);
         --m_storage.hashedData.deletedCount;
     }
@@ -675,8 +675,8 @@ private:
 
     void transitionToInline()
     {
-        ASSERT(!isInline());
-        ASSERT(m_size <= InlineCapacity);
+        RELEASE_ASSERT(!isInline());
+        RELEASE_ASSERT(m_size <= InlineCapacity);
 
         Entry* oldEntries = m_storage.hashedData.entries;
         unsigned oldCapacity = m_capacity;
@@ -721,13 +721,13 @@ private:
     template<typename K>
     Entry* findKeyOrEmpty(const K& key) const
     {
-        ASSERT(!isInline());
+        ASSERT_WITH_SECURITY_IMPLICATION(!isInline());
         return findKeyOrEmptyInStorage(key, m_storage.hashedData.entries, m_capacity);
     }
 
     Entry* findKeyOrEmptyOrDeleted(const KeyType& key) const
     {
-        ASSERT(!isInline());
+        ASSERT_WITH_SECURITY_IMPLICATION(!isInline());
         ASSERT(isPowerOfTwo(m_capacity));
 
         Entry* data = m_storage.hashedData.entries;

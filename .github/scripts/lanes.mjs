@@ -372,6 +372,16 @@ const SLOW = {
   minutes: lane => (lane.dockerfile === "Dockerfile.musl" && lane.build_args.LTO_FLAG && lane.aot ? 75 : 40),
 };
 
+// `build --fail-if-slow` also says why a build failed as annotations of the job: the first lines that name an error, and
+// the last lines. They show on the page of the run and of the pull request, and the API gives them without the log.
+// GitHub shows ten error annotations of a step.
+const FAILURE = {
+  names: /\berror\b|\bERROR\b|FAILED:|Undefined symbols|undefined (reference|symbol)|No such file or directory/,
+  firstLines: 7,
+  lastLines: 3,
+  lineLength: 800,
+};
+
 const labels = lanes.map(lane => lane.label);
 const duplicate = labels.find((label, i) => labels.indexOf(label) !== i);
 if (duplicate) throw new Error(`two lanes are called ${duplicate}`);
@@ -416,14 +426,26 @@ function dockerUnlessSlow(lane, argv) {
   };
   setTimeout(giveUp, SLOW.minutes(lane) * 60_000, `the build has taken ${SLOW.minutes(lane)} minutes`);
   let compress;
+  const firstErrors = [];
+  const lastLines = [];
   createInterface({ input: child.stderr }).on("line", line => {
     console.error(line);
+    if (firstErrors.length < FAILURE.firstLines && FAILURE.names.test(line)) firstErrors.push(line);
+    if (lastLines.push(line) > FAILURE.lastLines) lastLines.shift();
     if (line.includes("[icu-compress] round-trip OK")) compress = setTimeout(giveUp, SLOW.compressSeconds * 1000, `icu/compress-data.ts has taken ${SLOW.compressSeconds} seconds`);
     else if (/\[icu-compress\] \d+ items/.test(line)) clearTimeout(compress);
   });
   child.on("error", error => { throw error; });
   child.on("exit", () => gaveUp && process.exit(1));
-  child.on("close", status => process.exit(status ?? 1));
+  child.on("close", status => {
+    if (status && !gaveUp) {
+      for (const line of new Set([...firstErrors, ...lastLines])) {
+        const text = line.slice(0, FAILURE.lineLength).replaceAll("%", "%25").replaceAll("\r", "%0D").replaceAll("\n", "%0A");
+        console.log(`::error::${lane.label}: ${text}`);
+      }
+    }
+    process.exit(status ?? 1);
+  });
 }
 
 function option(args, name) {

@@ -25,6 +25,7 @@
 
 #include "CSSTokenizerInputStream.h"
 #include "ContainerNodeInlines.h"
+#include "CustomElementRegistry.h"
 #include "Document.h"
 #include "ElementIterator.h"
 #include "HTMLDocumentParser.h"
@@ -43,8 +44,6 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(DocumentFragment);
 DocumentFragment::DocumentFragment(Document& document, OptionSet<TypeFlag> typeFlags)
     : ContainerNode(document, NodeType::DocumentFragment, typeFlags)
 {
-    if (document.usesNullCustomElementRegistry())
-        setUsesNullCustomElementRegistry();
 }
 
 Ref<DocumentFragment> DocumentFragment::create(Document& document)
@@ -95,7 +94,7 @@ Ref<Node> DocumentFragment::cloneNodeInternal(Document& document, CloningOperati
 void DocumentFragment::parseHTML(const String& source, Element& contextElement, OptionSet<ParserContentPolicy> parserContentPolicy, CustomElementRegistry* registry)
 {
     Ref document = this->document();
-    if (!registry && !usesNullCustomElementRegistry() && tryFastParsingHTMLFragment(source, document, *this, contextElement, parserContentPolicy)) {
+    if ((!registry || !registry->isScoped()) && !usesNullCustomElementRegistry() && tryFastParsingHTMLFragment(source, document, *this, contextElement, parserContentPolicy)) {
         setWasParsedWithFastPath();
 #if ASSERT_ENABLED
         // As a sanity check for the fast-path, create another fragment using the full parser and compare the results.

@@ -30,6 +30,7 @@
 #include "Filter.h"
 #include "FilterImage.h"
 #include "FloatRoundedRect.h"
+#include "FreeformGradientRendererCPU.h"
 #include "Gradient.h"
 #include "ImageBuffer.h"
 #include "ImageOrientation.h"
@@ -70,28 +71,48 @@ GraphicsContext::~GraphicsContext()
 
 void GraphicsContext::save(GraphicsContextState::Purpose purpose)
 {
-    ASSERT(purpose == GraphicsContextState::Purpose::SaveRestore || purpose == GraphicsContextState::Purpose::TransparencyLayer);
+    ASSERT(purpose == GraphicsContextState::Purpose::SaveRestore || purpose == GraphicsContextState::Purpose::TransparencyLayer || purpose == GraphicsContextState::Purpose::Transform);
     m_stack.append(m_state);
+    // For the contexts that do not keep the CTM in m_state.
+    if (purpose == GraphicsContextState::Purpose::Transform)
+        m_stack.last().setCTM(getCTM());
     m_state.repurpose(purpose);
 }
 
-void GraphicsContext::restore(GraphicsContextState::Purpose purpose)
+bool GraphicsContext::restore(GraphicsContextState::Purpose purpose)
 {
-    if (m_stack.isEmpty()) {
-        LOG_ERROR("ERROR void GraphicsContext::restore() stack is empty");
-        return;
+    if (!canRestore(purpose)) {
+        LOG_ERROR("ERROR bool GraphicsContext::restore() no matching save()");
+        return false;
     }
 
-    ASSERT_UNUSED(purpose, purpose == m_state.purpose());
-    ASSERT_UNUSED(purpose, purpose == GraphicsContextState::Purpose::SaveRestore || purpose == GraphicsContextState::Purpose::TransparencyLayer);
-
-    m_state = m_stack.last();
-    m_stack.removeLast();
+    if (purpose == GraphicsContextState::Purpose::Transform)
+        m_state.restoreTransform(m_stack.takeLast());
+    else
+        m_state = m_stack.takeLast();
 
     // Make sure we deallocate the state stack buffer when it goes empty.
     // Canvas elements will immediately save() again, but that goes into inline capacity.
     if (m_stack.isEmpty())
         m_stack.clear();
+    return true;
+}
+
+void GraphicsContext::saveTransform()
+{
+    GraphicsContext::save(GraphicsContextState::Purpose::Transform);
+}
+
+bool GraphicsContext::restoreTransform()
+{
+    if (!canRestore(GraphicsContextState::Purpose::Transform)) {
+        LOG_ERROR("ERROR bool GraphicsContext::restoreTransform() no matching saveTransform()");
+        return false;
+    }
+    GraphicsContext::restore(GraphicsContextState::Purpose::Transform);
+    // Apply the restored CTM to the contexts that do not keep the CTM in m_state.
+    setCTM(m_state.ctm());
+    return true;
 }
 
 void GraphicsContext::unwindStateStack(unsigned count)
@@ -104,6 +125,9 @@ void GraphicsContext::unwindStateStack(unsigned count)
             break;
         case GraphicsContextState::Purpose::TransparencyLayer:
             endTransparencyLayer();
+            break;
+        case GraphicsContextState::Purpose::Transform:
+            restoreTransform();
             break;
         default:
             ASSERT_NOT_REACHED();
@@ -238,7 +262,7 @@ Vector<TextRun> GraphicsContext::visuallyOrderedSubruns(const TextRun& run)
 void GraphicsContext::drawBidiText(const FontCascade& font, const TextRun& run, const FloatPoint& point, FontCascade::CustomFontNotReadyAction customFontNotReadyAction)
 {
     auto currentPoint = point;
-    for (CheckedRef subrun : visuallyOrderedSubruns(run)) {
+    for (auto& subrun : visuallyOrderedSubruns(run)) {
         auto advance = font.drawText(*this, subrun, currentPoint, 0, std::nullopt, customFontNotReadyAction);
         currentPoint.move(advance);
     }
@@ -275,9 +299,10 @@ RenderingMode GraphicsContext::renderingModeForCompatibleBuffer() const
     switch (renderingMode()) {
     case RenderingMode::Accelerated:
     case RenderingMode::Unaccelerated:
-    case RenderingMode::DisplayList:
         return renderingMode();
     case RenderingMode::PDFDocument:
+    case RenderingMode::DisplayList:
+        // Compatible buffers are drawn into and then read back, masked or filtered, which needs pixels.
         return RenderingMode::Unaccelerated;
     }
 
@@ -450,6 +475,11 @@ void GraphicsContext::drawControlPart(ControlPart& part, const FloatRoundedRect&
     part.draw(*this, borderRect, deviceScaleFactor, style);
 }
 
+void GraphicsContext::drawFreeformGradient(FreeformGradient& gradient, const FloatRect& destination)
+{
+    FreeformGradientRendererCPU { }.draw(*this, gradient, destination);
+}
+
 void GraphicsContext::drawMeshGradient(MeshGradient& gradient, const FloatRect& destination)
 {
     MeshGradientRendererCPU { }.draw(*this, gradient, destination);
@@ -504,7 +534,7 @@ IntRect GraphicsContext::clipBounds() const
     return IntRect();
 }
 
-void GraphicsContext::fillRect(const FloatRect& rect, Gradient& gradient)
+void GraphicsContext::fillRect(const FloatRect& rect, const Gradient& gradient)
 {
     gradient.fill(*this, rect);
 }

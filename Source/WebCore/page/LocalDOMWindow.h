@@ -57,6 +57,9 @@ template <typename, ShouldStrongDestructorGrabLock> class Strong;
 namespace WebCore {
 
 class CloseWatcherManager;
+#if ENABLE(DOCUMENT_PIP)
+class DocumentPictureInPicture;
+#endif
 class JSDOMGlobalObject;
 class SecurityOriginData;
 class Viewport;
@@ -135,6 +138,7 @@ public:
     Screen& screen();
     WEBCORE_EXPORT History& history();
     Crypto& crypto() const;
+    Scheduler& scheduler() const;
     BarProp& locationbar();
     BarProp& menubar();
     BarProp& personalbar();
@@ -249,8 +253,8 @@ public:
     void moveBy(int x, int y) const;
     void moveTo(int x, int y) const;
 
-    void resizeBy(int x, int y) const;
-    void resizeTo(int width, int height) const;
+    ExceptionOr<void> resizeBy(int x, int y);
+    ExceptionOr<void> resizeTo(int width, int height);
 
     Viewport& viewport();
     VisualViewport& visualViewport();
@@ -310,8 +314,7 @@ public:
     Storage* optionalSessionStorage() const { return m_sessionStorage.get(); }
     Storage* optionalLocalStorage() const { return m_localStorage.get(); }
 
-    CustomElementRegistry* customElementRegistry() { return m_customElementRegistry.get(); }
-    CustomElementRegistry& ensureCustomElementRegistry();
+    NODELETE CustomElementRegistry& customElementRegistry();
 
     ExceptionOr<Ref<NodeList>> collectMatchingElementsInFlatTree(Node&, const String& selectors);
     ExceptionOr<RefPtr<Element>> matchingElementInFlatTree(Node&, const String& selectors);
@@ -389,10 +392,19 @@ public:
 
     CookieStore& cookieStore();
 
+#if ENABLE(DOCUMENT_PIP)
+    DocumentPictureInPicture& documentPictureInPicture();
+    DocumentPictureInPicture* documentPictureInPictureIfExists() const { return m_documentPictureInPicture.get(); }
+#endif
+
     CloseWatcherManager& closeWatcherManager();
 
 #if ENABLE(DECLARATIVE_WEB_PUSH)
     PushManager& pushManager();
+#endif
+
+#if ENABLE(DOCUMENT_PIP)
+    void closePage() final;
 #endif
 
 private:
@@ -402,7 +414,9 @@ private:
 
     NODELETE ScriptExecutionContext* scriptExecutionContext() const final;
 
+#if !ENABLE(DOCUMENT_PIP)
     void closePage() final;
+#endif
     void eventListenersDidChange() final;
     void setLocation(LocalDOMWindow& activeWindow, const URL& completedURL, NavigationHistoryBehavior, ReplaceIfNotCompletelyLoaded, SetLocationLocking, CanNavigateState) final;
 
@@ -449,21 +463,22 @@ private:
     WeakHashSet<LocalDOMWindowObserver> m_observers;
 
     mutable RefPtr<Crypto> m_crypto;
-    mutable RefPtr<History> m_history;
-    mutable RefPtr<BarProp> m_locationbar;
-    mutable RefPtr<StyleMedia> m_media;
-    mutable RefPtr<BarProp> m_menubar;
+    const RefPtr<History> m_history;
+    const RefPtr<BarProp> m_locationbar;
+    const RefPtr<StyleMedia> m_media;
+    const RefPtr<BarProp> m_menubar;
     mutable RefPtr<Navigator> m_navigator;
-    mutable RefPtr<BarProp> m_personalbar;
-    mutable RefPtr<Screen> m_screen;
-    mutable RefPtr<BarProp> m_scrollbars;
-    mutable RefPtr<DOMSelection> m_selection;
-    mutable RefPtr<BarProp> m_statusbar;
-    mutable RefPtr<BarProp> m_toolbar;
-    mutable RefPtr<Viewport> m_viewport;
-    mutable RefPtr<VisualViewport> m_visualViewport;
-    mutable RefPtr<Navigation> m_navigation;
-    mutable RefPtr<CloseWatcherManager> m_closeWatcherManager;
+    const RefPtr<BarProp> m_personalbar;
+    const RefPtr<Scheduler> m_scheduler;
+    const RefPtr<Screen> m_screen;
+    const RefPtr<BarProp> m_scrollbars;
+    const RefPtr<DOMSelection> m_selection;
+    const RefPtr<BarProp> m_statusbar;
+    const RefPtr<BarProp> m_toolbar;
+    const RefPtr<Viewport> m_viewport;
+    const RefPtr<VisualViewport> m_visualViewport;
+    const RefPtr<Navigation> m_navigation;
+    const RefPtr<CloseWatcherManager> m_closeWatcherManager;
 
     // Equivalent to the list of PerformanceEventTiming objects mentioned in https://www.w3.org/TR/event-timing/#sec-modifications-HTML :
     Vector<PerformanceEventTimingCandidate, 6> m_performanceEventTimingCandidates;
@@ -482,7 +497,7 @@ private:
         PerformanceEventTimingCandidate keyDown;
         std::optional<PerformanceEventTimingCandidate> keyPress { std::nullopt };
     };
-    HashMap<int64_t, PendingKeyDownState, IntHash<int64_t>, WTF::SignedWithZeroKeyHashTraits<int64_t>> m_pendingKeyDowns;
+    HashMap<int64_t, PendingKeyDownState> m_pendingKeyDowns;
 
     EventTimingInteractionID m_userInteractionValue;
     uint64_t m_interactionCount { 0 };
@@ -502,10 +517,8 @@ private:
     uint64_t m_gamepadEventListenerCount { 0 };
 #endif
 
-    mutable RefPtr<Storage> m_sessionStorage;
-    mutable RefPtr<Storage> m_localStorage;
-
-    RefPtr<CustomElementRegistry> m_customElementRegistry;
+    const RefPtr<Storage> m_sessionStorage;
+    const RefPtr<Storage> m_localStorage;
 
     mutable RefPtr<Performance> m_performance;
 
@@ -532,10 +545,13 @@ private:
     bool m_mayReuseForNavigation { true };
     bool m_isStopping { false };
 #if ENABLE(USER_MESSAGE_HANDLERS)
-    mutable RefPtr<WebKitNamespace> m_webkitNamespace;
+    const RefPtr<WebKitNamespace> m_webkitNamespace;
 #endif
 
     const RefPtr<CookieStore> m_cookieStore;
+#if ENABLE(DOCUMENT_PIP)
+    const RefPtr<DocumentPictureInPicture> m_documentPictureInPicture;
+#endif
 
 #if ENABLE(DECLARATIVE_WEB_PUSH)
     const std::unique_ptr<PushManager> m_pushManager;

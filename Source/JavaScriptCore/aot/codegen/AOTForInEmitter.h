@@ -21,7 +21,7 @@ public:
     void generateForInStep(const ValueContext&);
 
     struct EnumeratorFields {
-        Word32 cachedStructureID;
+        Word32 cachedStructureIDForNames;
         Word32 indexedLength;
         Word32 endOwnPropertyIndex;
         Word32 endGenericPropertyIndex;
@@ -34,6 +34,9 @@ public:
     Condition hasCachedKeys(CellPointer enumerator, const EnumeratorFields&, CellPointer object);
     Condition isInStructurePart(CellPointer enumerator, Integer nameIndex) { return below(nameIndex, zeroExtended(loadField<Word32>(enumerator, m_heaps.JSPropertyNameEnumerator_endStructurePropertyIndex))); }
     Condition describesOrdinaryObject(CellPointer enumerator) { return isZero(loadField<Word32>(enumerator, m_heaps.JSPropertyNameEnumerator_cachedOrderWordMask)); }
+    // EnumeratorGetByVal loads the value of a name of an ordinary object from the slot at the index of the name. The index is the offset only under the enumerator's Structure for names and offsets,
+    // which is null or the Structure for names that hasCachedKeys() tests. A compiled object has none and is asked by the name.
+    Condition canLoadValues(CellPointer enumerator) { return logicalOr(isNotZero(loadField<Word32>(enumerator, m_heaps.JSPropertyNameEnumerator_cachedStructureIDForNamesAndOffsets)), logicalNot(describesOrdinaryObject(enumerator))); }
 
 private:
     std::array<Operand, 2> openEnumerator(const ValueContext&, bool countsCurrentNames);

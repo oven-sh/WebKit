@@ -48,7 +48,7 @@ class RenderBlock;
 class RenderBlockFlow;
 class RenderBox;
 class RenderLayoutState;
-class RenderListOutsideMarker;
+class RenderListItem;
 class RenderView;
 namespace Layout {
 class LayoutState;
@@ -71,7 +71,7 @@ struct UpdateScrollInfoAfterLayoutTransaction {
     SingleThreadWeakHashSet<RenderBlock> blocks;
 };
 
-class LocalFrameViewLayoutContext final : public CanMakeCheckedPtr<LocalFrameViewLayoutContext, WTF::DefaultedOperatorEqual::No, WTF::CheckedPtrDeleteCheckException::Yes> {
+class LocalFrameViewLayoutContext final : public CanMakeCheckedPtr<LocalFrameViewLayoutContext> {
     WTF_MAKE_TZONE_ALLOCATED(LocalFrameViewLayoutContext);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(LocalFrameViewLayoutContext);
 public:
@@ -175,14 +175,18 @@ public:
 
     UpdateScrollInfoAfterLayoutTransaction& updateScrollInfoAfterLayoutTransaction() LIFETIME_BOUND;
     NODELETE UpdateScrollInfoAfterLayoutTransaction* updateScrollInfoAfterLayoutTransactionIfExists() LIFETIME_BOUND { return m_updateScrollInfoAfterLayoutTransaction.get(); }
-    void setBoxNeedsTransformUpdateAfterContainerLayout(RenderBox&, RenderBlock& container);
-    Vector<SingleThreadWeakPtr<RenderBox>> takeBoxesNeedingTransformUpdateAfterContainerLayout(RenderBlock&);
+    void setBoxNeedsTransformUpdateAfterContainerLayout(RenderBox&, RenderBoxModelObject& container);
+    Vector<SingleThreadWeakPtr<RenderBox>> takeBoxesNeedingTransformUpdateAfterContainerLayout(RenderBoxModelObject&);
 
     void startTrackingLayoutUpdates() { m_layoutUpdateCount = 0; }
     unsigned layoutUpdateCount() const { return m_layoutUpdateCount; }
 
     void startTrackingRenderLayerPositionUpdates() { m_renderLayerPositionUpdateCount = 0; }
     unsigned renderLayerPositionUpdateCount() const { return m_renderLayerPositionUpdateCount; }
+
+    void incrementRenderersWithNamedPage() { ++m_renderersWithNamedPageCount; }
+    void decrementRenderersWithNamedPage() { ASSERT(m_renderersWithNamedPageCount > 0); --m_renderersWithNamedPageCount; }
+    bool hasRenderersWithNamedPage() const { return m_renderersWithNamedPageCount; }
 
     bool addToDetachedRendererList(RenderPtr<RenderObject>&& renderer) const { return m_detachedRendererList.append(WTF::move(renderer)); }
     void deleteDetachedRenderersNow() const { m_detachedRendererList.clear(); }
@@ -199,11 +203,12 @@ public:
 
     bool repaintsBlocked() const { return m_repaintsBlocked; }
 
-    using ExcludedMarkerList = Vector<SingleThreadWeakPtr<RenderListOutsideMarker>>;
-    const ExcludedMarkerList& excludedMarkers() const LIFETIME_BOUND { return m_excludedMarkers; }
+    // The list items laying out an outside marker, which their first formatted line aligns with.
+    using ListItemList = Vector<SingleThreadWeakPtr<RenderListItem>>;
+    const ListItemList& listItemsWithOutsideMarker() const LIFETIME_BOUND { return m_listItemsWithOutsideMarker; }
 
 private:
-    friend class ListItemExcludedMarkerScope;
+    friend class ListItemOutsideMarkerScope;
     friend class LayoutFrameScope;
     friend class LayoutStateMaintainer;
     friend class LayoutStateDisabler;
@@ -288,7 +293,7 @@ private:
     bool m_revealedWhenFoundIgnored { false };
     bool m_updateCompositingLayersIsPending { false };
     bool m_repaintsBlocked { false };
-    ExcludedMarkerList m_excludedMarkers;
+    ListItemList m_listItemsWithOutsideMarker;
     LayoutPhase m_layoutPhase { LayoutPhase::OutsideLayout };
     enum class LayoutNestedState : uint8_t  { NotInLayout, NotNested, Nested };
     LayoutNestedState m_layoutNestedState { LayoutNestedState::NotInLayout };
@@ -296,9 +301,10 @@ private:
     unsigned m_paintOffsetCacheDisableCount { 0 };
     unsigned m_layoutUpdateCount { 0 };
     unsigned m_renderLayerPositionUpdateCount { 0 };
+    unsigned m_renderersWithNamedPageCount { 0 };
     LayoutStateStack m_layoutStateStack;
     const std::unique_ptr<UpdateScrollInfoAfterLayoutTransaction> m_updateScrollInfoAfterLayoutTransaction;
-    SingleThreadWeakHashMap<RenderBlock, Vector<SingleThreadWeakPtr<RenderBox>>> m_containersWithDescendantsNeedingTransformUpdate;
+    SingleThreadWeakHashMap<RenderBoxModelObject, Vector<SingleThreadWeakPtr<RenderBox>>> m_containersWithDescendantsNeedingTransformUpdate;
     SingleThreadWeakHashSet<RenderBox> m_percentHeightIgnoreList;
     SingleThreadWeakHashSet<RenderBox> m_boxesInOrthogonalIntrinsicContributionLayout;
     SingleThreadWeakHashSet<RenderBox> m_intrinsicLogicalWidthComputationList;
@@ -361,10 +367,10 @@ private:
     const Ref<Document> m_document;
 };
 
-class ListItemExcludedMarkerScope {
+class ListItemOutsideMarkerScope {
 public:
-    ListItemExcludedMarkerScope(LocalFrameViewLayoutContext&, RenderListOutsideMarker&);
-    NODELETE ~ListItemExcludedMarkerScope();
+    ListItemOutsideMarkerScope(LocalFrameViewLayoutContext&, RenderListItem&);
+    NODELETE ~ListItemOutsideMarkerScope();
 
 private:
     const CheckedRef<LocalFrameViewLayoutContext> m_layoutContext;

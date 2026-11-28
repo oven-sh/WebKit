@@ -67,7 +67,7 @@ ALWAYS_INLINE Event::Event(MonotonicTime createTime, enum EventInterfaceType eve
     , m_type { type }
     , m_createTime { createTime }
 {
-    ASSERT(m_eventInterface == std::to_underlying(eventInterface));
+    ASSERT_WITH_SECURITY_IMPLICATION(m_eventInterface == std::to_underlying(eventInterface));
 }
 
 Event::Event(enum EventInterfaceType eventInterface, IsTrusted isTrusted)
@@ -188,8 +188,10 @@ DOMHighResTimeStamp Event::timeStampForBindings(ScriptExecutionContext& context)
     RefPtr<Performance> performance;
     if (auto* globalScope = dynamicDowncast<WorkerGlobalScope>(context))
         performance = globalScope->performance();
-    else if (RefPtr window = downcast<Document>(context).window())
-        performance = window->performance();
+    else if (RefPtr document = dynamicDowncast<Document>(context)) {
+        if (RefPtr window = document->window())
+            performance = window->performance();
+    }
 
     if (!performance)
         return 0;

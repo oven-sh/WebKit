@@ -63,7 +63,7 @@ public:
     // Decoding
     virtual DecodingDestination preferredDecodingDestination(GraphicsContext&, const ImageDrawDescriptor&) const { return DecodingDestination::Base; }
     virtual bool isLargeForDecoding() const { return false; }
-    virtual void stopDecodingWorkQueue() { RELEASE_ASSERT_NOT_REACHED(); }
+    virtual void cancelPendingDecodingRequests() { RELEASE_ASSERT_NOT_REACHED(); }
     virtual void decode(Function<void(DecodingStatus)>&&)  { RELEASE_ASSERT_NOT_REACHED(); }
 
     // ImageFrame
@@ -112,6 +112,10 @@ public:
 
 #if ENABLE(QUICKLOOK_FULLSCREEN)
     virtual bool isPanorama() const { return false; }
+#endif
+
+#if ENABLE(IMAGE_ELEMENT_IMMERSIVE)
+    virtual std::optional<float> focalLengthIn35mm() const { return std::nullopt; }
 #endif
 
 #if ENABLE(SPATIAL_IMAGE_DETECTION)

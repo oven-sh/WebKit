@@ -30,8 +30,7 @@
 #include <WebCore/CSSTypeSpecifier.h>
 #include <WebCore/CSSValueTypes.h>
 
-namespace WebCore {
-namespace CSS {
+namespace WebCore::CSS {
 
 // <param-spec> = color | accent-color | [ <dashed-ident> <css-type>? ]
 struct ParamSpec {
@@ -92,8 +91,12 @@ struct LinkParameters : ListOrNone<LinkParameterList> {
     using ListOrNone<LinkParameterList>::ListOrNone;
 };
 
-} // namespace CSS
-} // namespace WebCore
+// MARK: - Hashing
+
+void add(Hasher&, const ParamSpec&);
+void add(Hasher&, const LinkParameter&);
+
+} // namespace WebCore::CSS
 
 DEFINE_SPACE_SEPARATED_TUPLE_LIKE_CONFORMANCE(WebCore::CSS::ParamSpec::Custom, 2)
 DEFINE_VARIANT_LIKE_CONFORMANCE(WebCore::CSS::ParamSpec)

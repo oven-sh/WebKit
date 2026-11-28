@@ -34,51 +34,72 @@
 
 namespace WebKit::WebGPU {
 
-class ConvertToBackingContext;
+// The values a texture was created with, which the getters of the C++ API return. Outside the
+// class, so that a default argument of RemoteTextureProxy can use its default member initializers.
+// The format is std::nullopt when the Web Process does not know the values.
+struct RemoteTextureProxyProperties {
+    ::WebGPU::Extent3D size;
+    uint32_t mipLevelCount { 1 };
+    uint32_t sampleCount { 1 };
+    ::WebGPU::TextureDimension dimension { ::WebGPU::TextureDimension::_2d };
+    std::optional<::WebGPU::TextureFormat> format;
+    OptionSet<::WebGPU::TextureUsage> usage;
+};
 
 class RemoteTextureProxy final : public ::WebGPU::Texture {
     WTF_MAKE_TZONE_ALLOCATED(RemoteTextureProxy);
 public:
-    static Ref<RemoteTextureProxy> create(Ref<RemoteGPUProxy>&& root, ConvertToBackingContext& convertToBackingContext, WebGPUIdentifier identifier, bool isCanvasBacking = false)
+    using Properties = RemoteTextureProxyProperties;
+
+    static Ref<RemoteTextureProxy> create(RemoteDeviceProxy& device, WebGPUTextureIdentifier identifier, const Properties& properties = { }, bool isCanvasBacking = false)
     {
-        return adoptRef(*new RemoteTextureProxy(WTF::move(root), convertToBackingContext, identifier, isCanvasBacking));
+        return adoptRef(*new RemoteTextureProxy(device, identifier, properties, isCanvasBacking));
     }
 
     virtual ~RemoteTextureProxy();
 
     RemoteGPUProxy& root() const { return m_root; }
+    WebGPUTextureIdentifier backing() const { return m_backing; }
 
+    RemoteDeviceProxy& device() const final { return m_device; }
     RefPtr<::WebGPU::TextureView> createView(const std::optional<::WebGPU::TextureViewDescriptor>&) final;
+    RefPtr<::WebGPU::TextureView> createInvalidView() final;
 
     void destroy() final;
     void setLabel(String&&) final;
     bool isValid() const final;
     void undestroy() final;
 
-private:
-    friend class DowncastConvertToBackingContext;
+    uint32_t width() const final { return m_properties.size.width; }
+    uint32_t height() const final { return m_properties.size.height; }
+    uint32_t depthOrArrayLayers() const final { return m_properties.size.depthOrArrayLayers; }
+    uint32_t mipLevelCount() const final { return m_properties.mipLevelCount; }
+    uint32_t sampleCount() const final { return m_properties.sampleCount; }
+    ::WebGPU::TextureDimension dimension() const final { return m_properties.dimension; }
+    std::optional<::WebGPU::TextureFormat> optionalFormat() const final { return m_properties.format; }
+    OptionSet<::WebGPU::TextureUsage> usage() const final { return m_properties.usage; }
 
-    RemoteTextureProxy(Ref<RemoteGPUProxy>&&, ConvertToBackingContext&, WebGPUIdentifier, bool isCanvasBacking);
+private:
+    RemoteTextureProxy(RemoteDeviceProxy&, WebGPUTextureIdentifier, const Properties&, bool isCanvasBacking);
 
     RemoteTextureProxy(const RemoteTextureProxy&) = delete;
     RemoteTextureProxy(RemoteTextureProxy&&) = delete;
     RemoteTextureProxy& operator=(const RemoteTextureProxy&) = delete;
     RemoteTextureProxy& operator=(RemoteTextureProxy&&) = delete;
 
-    WebGPUIdentifier backing() const { return m_backing; }
-    
     template<typename T>
     [[nodiscard]] IPC::Error send(T&& message)
     {
         return protect(root().streamClientConnection())->send(std::forward<T>(message), backing());
     }
 
-    WebGPUIdentifier m_backing;
-    const Ref<ConvertToBackingContext> m_convertToBackingContext;
+    WebGPUTextureIdentifier m_backing;
     const Ref<RemoteGPUProxy> m_root;
+    const Ref<RemoteDeviceProxy> m_device;
 
     RefPtr<::WebGPU::TextureView> m_lastCreatedView;
     std::optional<::WebGPU::TextureViewDescriptor> m_lastCreatedViewDescriptor;
+    const Properties m_properties;
     bool m_isCanvasBacking { false };
 };
 

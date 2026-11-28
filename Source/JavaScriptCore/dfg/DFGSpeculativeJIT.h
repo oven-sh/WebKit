@@ -1475,6 +1475,7 @@ public:
     void compileMakeRope(Node*);
     void compileMakeAtomString(Node*);
     void compileArithAbs(Node*);
+    void compileArithSign(Node*);
     void compileArithClz32(Node*);
     void compileArithSub(Node*);
     void compileIncOrDec(Node*);
@@ -1502,6 +1503,7 @@ public:
     void compileResolveRope(Node*);
     JITCompiler::Jump jumpForTypedArrayOutOfBounds(Node*, GPRReg baseGPR, GPRReg indexGPR, GPRReg scratchGPR, GPRReg scratch2GPR);
     void compileGetTypedArrayByteOffset(Node*);
+    void compileGetTypedArrayBuffer(Node*);
 #if USE(LARGE_TYPED_ARRAYS)
     void compileGetTypedArrayByteOffsetAsInt52(Node*);
 #endif
@@ -1915,7 +1917,7 @@ public:
     unsigned appendOSRExit(OSRExit&&, bool isExceptionHandler = false);
     unsigned appendExceptionHandlingOSRExit(ExitKind, unsigned eventStreamIndex, CodeOrigin, HandlerInfo* exceptionHandler, CallSiteIndex, MacroAssembler::JumpList jumpsToFail = MacroAssembler::JumpList());
 
-    void unboxRealNumberDouble(Node*, FPRReg boxedFPR, FPRReg resultFPR, GPRReg scratchGPR);
+    void unboxNumberAsDouble(Node*, FPRReg boxedFPR, FPRReg resultFPR, GPRReg scratchGPR);
     void boxDoubleAsDouble(FPRReg inputFPR, FPRReg resultFPR);
 
     template<bool strict>

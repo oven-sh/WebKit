@@ -41,9 +41,7 @@
 #include "StylePrimitiveNumericTypes+Evaluation.h"
 #include <wtf/TZoneMallocInlines.h>
 
-namespace WebCore {
-
-namespace LayoutIntegration {
+namespace WebCore::LayoutIntegration {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(FlexItemContentCache);
 
@@ -148,10 +146,8 @@ void FlexIntegrationUtils::layoutFlexItemWithMainSize(FlexLayoutItem& flexLayout
         flexLayoutState().setFlexItemHasCompletedLayout(flexItem);
     }
 
-    if (!flexLayoutItem.everHadLayout && flexItem->checkForRepaintDuringLayout()) {
+    if (!flexLayoutItem.everHadLayout && flexItem->checkForRepaintDuringLayout())
         flexItem->repaint();
-        flexItem->repaintOverhangingFloats(true);
-    }
 }
 
 FlexContainerUsedExtents FlexIntegrationUtils::updateFlexContainerLogicalHeight(LayoutUnit flexContentBlockExtent)
@@ -288,10 +284,24 @@ void FlexIntegrationUtils::invalidateFlexItemContentLogicalWidthsIfNeeded(const 
         flexItem->invalidateContentLogicalWidths(MarkingBehavior::OnlyThis);
 }
 
-LayoutUnit FlexIntegrationUtils::adjustBorderBoxLogicalWidthForBoxSizing(LayoutUnit computedLogicalWidth) const
+LayoutUnit FlexIntegrationUtils::adjustBorderBoxLogicalWidthForBoxSizing(const FlexLayoutItem& flexLayoutItem, LayoutUnit computedLogicalWidth) const
 {
-    return flexBox().adjustBorderBoxLogicalWidthForBoxSizing(computedLogicalWidth);
+    CheckedRef flexItem = flexLayoutItem.renderer;
+    return flexItem->adjustBorderBoxLogicalWidthForBoxSizing(computedLogicalWidth);
 }
+
+template<typename SizeType> LayoutUnit FlexIntegrationUtils::adjustBorderBoxCrossSizeForBoxSizing(const FlexLayoutItem& flexLayoutItem, const SizeType& crossSize, LayoutUnit computedCrossSize) const
+{
+    CheckedRef flexItem = flexLayoutItem.renderer;
+    auto containingBlockLogicalWidth = flexItem->containingBlockLogicalWidthForBoxSizing(crossSize);
+    if (flexLayoutItem.mainAxisIsInlineAxis)
+        return flexItem->adjustBorderBoxLogicalHeightForBoxSizing(crossSize, computedCrossSize, containingBlockLogicalWidth);
+    return flexItem->adjustBorderBoxLogicalWidthForBoxSizing(crossSize, computedCrossSize, containingBlockLogicalWidth);
+}
+
+template LayoutUnit FlexIntegrationUtils::adjustBorderBoxCrossSizeForBoxSizing<Style::PreferredSize>(const FlexLayoutItem&, const Style::PreferredSize&, LayoutUnit) const;
+template LayoutUnit FlexIntegrationUtils::adjustBorderBoxCrossSizeForBoxSizing<Style::MinimumSize>(const FlexLayoutItem&, const Style::MinimumSize&, LayoutUnit) const;
+template LayoutUnit FlexIntegrationUtils::adjustBorderBoxCrossSizeForBoxSizing<Style::MaximumSize>(const FlexLayoutItem&, const Style::MaximumSize&, LayoutUnit) const;
 
 void FlexIntegrationUtils::dirtyPercentHeightDescendantsWithinFlexItem(RenderBox& flexItem)
 {
@@ -814,5 +824,4 @@ FlexItemIntrinsicWidthComputationScope::FlexItemIntrinsicWidthComputationScope(R
 {
 }
 
-} // namespace LayoutIntegration
-} // namespace WebCore
+} // namespace WebCore::LayoutIntegration

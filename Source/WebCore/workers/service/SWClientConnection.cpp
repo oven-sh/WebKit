@@ -84,11 +84,11 @@ void SWClientConnection::scheduleJob(ServiceWorkerOrClientIdentifier contextIden
 
 bool SWClientConnection::postTaskForJob(ServiceWorkerJobIdentifier jobIdentifier, IsJobComplete isJobComplete, Function<void(ServiceWorkerJob&)>&& task)
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
 
     auto iterator = m_scheduledJobSources.find(jobIdentifier);
     if (iterator == m_scheduledJobSources.end()) {
-        LOG_ERROR("Job %s was not found", jobIdentifier.loggingString().utf8());
+        LOG_ERROR("Job %s was not found", makeUTF8CString(jobIdentifier.loggingString()));
         return false;
     }
     auto isPosted = dispatchToContextThreadIfNecessary(iterator->value, [jobIdentifier, task = WTF::move(task)] (ScriptExecutionContext& context) mutable {
@@ -137,7 +137,7 @@ static void postMessageToContainer(ScriptExecutionContext& context, MessageWithM
 
 void SWClientConnection::dispatchMessageToServiceWorkerClient(ScriptExecutionContextIdentifier destinationContextIdentifier, MessageWithMessagePorts&& message, ServiceWorkerData&& sourceData, const SecurityOriginData& sourceOrigin, CompletionHandlerCallingScope&& messageDispatched)
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
 
     if (RefPtr destinationDocument = Document::allDocumentsMap().get(destinationContextIdentifier)) {
         postMessageToContainer(*destinationDocument, WTF::move(message), WTF::move(sourceData), sourceOrigin);
@@ -156,7 +156,7 @@ static void forDedicatedAndSharedWorkers(NOESCAPE const Function<Function<void(S
 
 void SWClientConnection::updateRegistrationState(ServiceWorkerRegistrationIdentifier identifier, ServiceWorkerRegistrationState state, const std::optional<ServiceWorkerData>& serviceWorkerData)
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
 
     for (auto& document : Document::allDocuments()) {
         if (RefPtr container = document->serviceWorkerContainer())
@@ -173,7 +173,7 @@ void SWClientConnection::updateRegistrationState(ServiceWorkerRegistrationIdenti
 
 void SWClientConnection::updateWorkerState(ServiceWorkerIdentifier identifier, ServiceWorkerState state)
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
 
     for (auto& document : Document::allDocuments()) {
         if (RefPtr container = document->serviceWorkerContainer())
@@ -190,7 +190,7 @@ void SWClientConnection::updateWorkerState(ServiceWorkerIdentifier identifier, S
 
 void SWClientConnection::fireUpdateFoundEvent(ServiceWorkerRegistrationIdentifier identifier)
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
 
     for (auto& document : Document::allDocuments()) {
         if (RefPtr container = document->serviceWorkerContainer())
@@ -207,7 +207,7 @@ void SWClientConnection::fireUpdateFoundEvent(ServiceWorkerRegistrationIdentifie
 
 void SWClientConnection::setRegistrationLastUpdateTime(ServiceWorkerRegistrationIdentifier identifier, WallTime lastUpdateTime)
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
 
     for (auto& document : Document::allDocuments()) {
         if (RefPtr container = document->serviceWorkerContainer()) {
@@ -228,7 +228,7 @@ void SWClientConnection::setRegistrationLastUpdateTime(ServiceWorkerRegistration
 
 void SWClientConnection::setRegistrationUpdateViaCache(ServiceWorkerRegistrationIdentifier identifier, ServiceWorkerUpdateViaCache updateViaCache)
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
 
     for (auto& document : Document::allDocuments()) {
         if (RefPtr container = document->serviceWorkerContainer()) {
@@ -278,7 +278,7 @@ static void updateController(ScriptExecutionContext& context, const std::optiona
 
 void SWClientConnection::notifyClientsOfControllerChange(const HashSet<ScriptExecutionContextIdentifier>& contextIdentifiers, std::optional<ServiceWorkerData>&& newController)
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     ASSERT(!contextIdentifiers.isEmpty());
 
     for (auto& clientIdentifier : contextIdentifiers) {
@@ -302,7 +302,7 @@ void SWClientConnection::notifyClientsOfControllerChange(const HashSet<ScriptExe
 
 void SWClientConnection::clearPendingJobs()
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
 
     auto jobSources = WTF::move(m_scheduledJobSources);
     for (auto& keyValue : jobSources) {
@@ -327,7 +327,7 @@ void SWClientConnection::registerServiceWorkerClients()
 #if ENABLE(CONTENT_EXTENSIONS)
 void SWClientConnection::reportNetworkUsageToWorkerClient(ScriptExecutionContextIdentifier destinationContextIdentifier, uint64_t bytesTransferredOverNetworkDelta)
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
 
     if (RefPtr destinationDocument = Document::allDocumentsMap().get(destinationContextIdentifier)) {
         if (RefPtr resourceMonitor = destinationDocument->resourceMonitorIfExists())

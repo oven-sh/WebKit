@@ -27,8 +27,7 @@
 
 #include "StylePreferredSize.h"
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 std::optional<PreferredSize> FlexBasis::tryPreferredSize() const
 {
@@ -37,8 +36,10 @@ std::optional<PreferredSize> FlexBasis::tryPreferredSize() const
 
     if (isCalcSize())
         return PreferredSize { get<typename NumericOrKeyword::CalcSize>() };
+    if (isFitContentFunction())
+        return PreferredSize { get<FitContentFunction>() };
 
-    return WTF::switchOn(*this,
+    return switchOnUsingNumeric(
         [&](const CSS::Keyword::Content&) -> std::optional<PreferredSize> {
             return { };
         },
@@ -48,5 +49,4 @@ std::optional<PreferredSize> FlexBasis::tryPreferredSize() const
     );
 }
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

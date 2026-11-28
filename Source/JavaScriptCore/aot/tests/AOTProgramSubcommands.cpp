@@ -205,7 +205,7 @@ static bool takeDirectivesOfProgramText(const TestCommand& command, const Progra
         }
     }
     for (const OptionWord& option : test.jscOptions) {
-        if (!Options::setOption(byteCast<char>(option.word.utf8().span().subspan(2).data()), false)) {
+        if (!Options::setOption(byteCast<char>(makeUTF8CString(option.word).span().subspan(2).data()), false)) {
             errors.println(path, ":", option.line, ": unknown JSC option ", option.word);
             isUsable = false;
         }

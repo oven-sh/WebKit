@@ -33,8 +33,7 @@
 #include <WebCore/InlineLineTypes.h>
 #include <WebCore/LineLayoutResult.h>
 
-namespace WebCore {
-namespace Layout {
+namespace WebCore::Layout {
 
 struct LineInput {
     InlineItemRange needsLayoutRange;
@@ -86,13 +85,11 @@ protected:
 
 private:
     InlineFormattingContext& m_inlineFormattingContext;
-    const ElementBox& m_rootBox; // Note that this is not necessarily a block container (see range builder).
+    const CheckedRef<const ElementBox> m_rootBox; // Note that this is not necessarily a block container (see range builder).
     HorizontalConstraints m_rootHorizontalConstraints;
 
     InlineContentBreaker m_inlineContentBreaker;
     std::optional<IntrinsicWidthMode> m_intrinsicWidthMode;
 };
 
-
-}
 }

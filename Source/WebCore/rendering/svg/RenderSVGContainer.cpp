@@ -48,12 +48,12 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderSVGContainer);
 
-RenderSVGContainer::RenderSVGContainer(Type type, Document& document, Style::ComputedStyle&& style, OptionSet<SVGModelObjectFlag> svgFlags)
+RenderSVGContainer::RenderSVGContainer(Type type, Document& document, UniqueRef<Style::ComputedStyle>&& style, OptionSet<SVGModelObjectFlag> svgFlags)
     : RenderSVGModelObject(type, document, WTF::move(style), svgFlags | SVGModelObjectFlag::IsContainer)
 {
 }
 
-RenderSVGContainer::RenderSVGContainer(Type type, SVGElement& element, Style::ComputedStyle&& style, OptionSet<SVGModelObjectFlag> svgFlags)
+RenderSVGContainer::RenderSVGContainer(Type type, SVGElement& element, UniqueRef<Style::ComputedStyle>&& style, OptionSet<SVGModelObjectFlag> svgFlags)
     : RenderSVGModelObject(type, element, WTF::move(style), svgFlags | SVGModelObjectFlag::IsContainer)
 {
 }
@@ -184,10 +184,8 @@ void RenderSVGContainer::paint(PaintInfo& paintInfo, const LayoutPoint& paintOff
 
     // For layer-backed containers, clipping is handled by RenderLayer::calculateClipRects().
     if (isRenderSVGViewportContainer() && SVGRenderSupport::isOverflowHidden(*this)) {
-        if (auto clipRect = overflowClipRectForPainting(adjustedPaintOffset); !clipRect.isInfinite()) {
-            // FIXME: Remove suppression once rdar://189998444 is fixed.
-            SUPPRESS_MEMORY_UNSAFE_CAST childPaintInfo.context().clip(FloatRect(clipRect));
-        }
+        if (auto clipRect = overflowClipRectForPainting(adjustedPaintOffset); !clipRect.isInfinite())
+            childPaintInfo.context().clip(FloatRect(clipRect));
     }
 
     childPaintInfo.updateSubtreePaintRootForChildren(this);

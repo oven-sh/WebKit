@@ -100,7 +100,7 @@ private:
     void cleanUpVisibilityPropagationViewsIfNeeded();
 #endif
 #if ENABLE(WEBXR_LAYERS)
-    void createCompositionLayer(PlatformXR::CompositionLayerType, WebCore::IntSize, PlatformXR::LayerLayout, PlatformXRCoordinator::CreateCompositionLayerCallback&&) override { }
+    void createCompositionLayer(PlatformXR::CompositionLayerType, WebCore::IntSize, PlatformXR::LayerLayout, PlatformXR::LayerUpdateMode, PlatformXRCoordinator::CreateCompositionLayerCallback&&) override { }
 #endif
 
     void getSupportedFeatures(WebPageProxy&);
@@ -127,6 +127,9 @@ private:
     std::atomic<bool> m_mirrorLayerReady { false };
     bool m_mirrorWindowRequested { false };
     bool m_mirrorFormatMismatchLogged { false };
+#endif
+#if PLATFORM(VISION)
+    bool m_isPresentingBuiltInImmersiveSpace { false };
 #endif
     RetainPtr<WKXRTrackingManager> m_xrTrackingManager;
     RetainPtr<id> m_lastKnownDeviceAnchor;

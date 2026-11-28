@@ -27,8 +27,7 @@
 
 #include <WebCore/StylePrimitiveNumeric.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 // <'stroke-miterlimit'> = <number [0,∞]>
 // FIXME: The current spec grammar is `<number [1,∞]>`, though this does not match what SVG specified.
@@ -43,12 +42,10 @@ struct StrokeMiterlimit {
     constexpr StrokeMiterlimit(CSS::ValueLiteral<CSS::NumberUnit::Number> literal) : value { literal } { }
 
     constexpr bool operator==(const StrokeMiterlimit&) const = default;
-    // FIXME: Remove suppression once rdar://189998444 is fixed.
-    IGNORE_CLANG_STATIC_ANALYZER_WARNINGS_ATTRIBUTE_ON_FUNCTION("alpha.webkit.MemoryUnsafeCastChecker") constexpr auto operator<=>(const StrokeMiterlimit&) const = default;
+    constexpr auto operator<=>(const StrokeMiterlimit&) const = default;
 };
 DEFINE_TYPE_WRAPPER_GET(StrokeMiterlimit, value);
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style
 
 DEFINE_TUPLE_LIKE_CONFORMANCE_FOR_TYPE_WRAPPER(WebCore::Style::StrokeMiterlimit)

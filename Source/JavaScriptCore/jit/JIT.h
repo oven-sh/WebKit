@@ -189,7 +189,7 @@ namespace JSC {
         NODELETE static int stackPointerOffsetFor(UnlinkedCodeBlock*);
         static int stackPointerOffsetFor(CodeBlock*);
 
-        JS_EXPORT_PRIVATE static UncheckedKeyHashMap<ASCIICString, Seconds> compileTimeStats();
+        JS_EXPORT_PRIVATE static HashMap<ASCIICString, Seconds> compileTimeStats();
         NODELETE JS_EXPORT_PRIVATE static Seconds totalCompileTime();
 
     private:
@@ -837,8 +837,8 @@ namespace JSC {
         BaselineJITPlan& m_plan;
         Vector<FarCallRecord> m_farCalls;
         Vector<Label> m_labels;
-        UncheckedKeyHashMap<BytecodeIndex, Label> m_checkpointLabels;
-        UncheckedKeyHashMap<BytecodeIndex, Label> m_fastPathResumeLabels;
+        HashMap<BytecodeIndex, Label> m_checkpointLabels;
+        HashMap<BytecodeIndex, Label> m_fastPathResumeLabels;
         Vector<JITGetByIdGenerator> m_getByIds;
         Vector<JITGetByValGenerator> m_getByVals;
         Vector<JITGetByIdWithThisGenerator> m_getByIdsWithThis;
@@ -880,12 +880,12 @@ namespace JSC {
         Label m_arityCheck;
 
         std::unique_ptr<JITDisassembler> m_disassembler;
-        RefPtr<Profiler::Compilation> m_compilation;
+        const RefPtr<Profiler::Compilation> m_compilation;
 
         PCToCodeOriginMapBuilder m_pcToCodeOriginMapBuilder;
 
-        UncheckedKeyHashMap<const JSInstruction*, void*> m_instructionToMathIC;
-        UncheckedKeyHashMap<const JSInstruction*, UniqueRef<MathICGenerationState>> m_instructionToMathICGenerationState;
+        HashMap<const JSInstruction*, void*> m_instructionToMathIC;
+        HashMap<const JSInstruction*, UniqueRef<MathICGenerationState>> m_instructionToMathICGenerationState;
 
         bool m_canBeOptimized;
         bool m_shouldEmitProfiling;

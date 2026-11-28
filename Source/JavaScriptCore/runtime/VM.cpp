@@ -43,6 +43,7 @@
 #include "CodeBlock.h"
 #include "CallLinkInfo.h"
 #include "CodeCache.h"
+#include "Collector.h"
 #include "CommonIdentifiers.h"
 #include "ControlFlowProfiler.h"
 #include "CrossTaskToken.h"
@@ -308,7 +309,7 @@ private:
         return FinalizeResult::KeepImpl;
     }
 
-    UncheckedKeyHashMap<Key, Weak<NativeExecutable>, KeyHash> m_executables;
+    HashMap<Key, Weak<NativeExecutable>, KeyHash> m_executables;
 };
 
 static bool vmCreationShouldCrash = false;
@@ -695,9 +696,11 @@ void VM::setCrossTaskToken(RefPtr<CrossTaskToken>&& token)
 }
 
 #if USE(BUN_JSC_ADDITIONS)
+// A tick callback counts for as long as it is installed, whether or not a call is requested: requestMicrotaskTickCallback() can
+// run on another thread and callMicrotaskTickCallback() ends the request at every call, and neither updates this.
 void VM::updateHostObservesMicrotaskBoundaries()
 {
-    m_hostObservesMicrotaskBoundaries = m_onEachMicrotaskTick || m_crossTaskToken;
+    m_hostObservesMicrotaskBoundaries = m_microtaskTickCallback || m_crossTaskToken;
 #if ENABLE(AOT)
     if (hasCompiledCode())
         AOT::RuntimeHooks::didChangeMicrotaskQueueing(*this);
@@ -994,6 +997,8 @@ NODELETE static ThunkGenerator thunkGeneratorForIntrinsic(Intrinsic intrinsic)
         return sqrtThunkGenerator;
     case AbsIntrinsic:
         return absThunkGenerator;
+    case SignIntrinsic:
+        return signThunkGenerator;
     case FloorIntrinsic:
         return floorThunkGenerator;
     case CeilIntrinsic:
@@ -1641,13 +1646,24 @@ size_t VM::updateSoftReservedZoneSize(size_t softReservedZoneSize)
 // By touching every page up to the stack limit with a dummy operation,
 // we force the system to move the guard page, and commit memory.
 
-static void preCommitStackMemory(void* stackLimit)
+static void preCommitStackMemory(Thread& thread, void* stackLimit)
 {
+    // Stack pages stay committed, so only touch the pages below the lowest one touched so far.
+    char* lowestPreCommittedAddress = static_cast<char*>(thread.lowestPreCommittedStackAddress());
+
     const int pageSize = 4096;
-    for (volatile char* p = reinterpret_cast<char*>(&stackLimit); p > stackLimit; p -= pageSize) {
+    char* start = reinterpret_cast<char*>(&stackLimit);
+    if (lowestPreCommittedAddress && lowestPreCommittedAddress < start)
+        start = lowestPreCommittedAddress;
+    if (start <= stackLimit)
+        return;
+
+    volatile char* p = start;
+    for (; p > stackLimit; p -= pageSize) {
         char ch = *p;
         *p = ch;
     }
+    thread.setLowestPreCommittedStackAddress(const_cast<char*>(p + pageSize));
 }
 #endif
 
@@ -1655,7 +1671,8 @@ void VM::updateStackLimits()
 {
     void* lastSoftStackLimit = traps().softStackLimit();
 
-    const StackBounds& stack = Thread::currentSingleton().stack();
+    Thread& thread = Thread::currentSingleton();
+    const StackBounds& stack = thread.stack();
     size_t reservedZoneSize = Options::reservedZoneSize();
     // We should have already ensured that Options::reservedZoneSize() >= minimumReserveZoneSize at
     // options initialization time, and the option value should not have been changed thereafter.
@@ -1692,7 +1709,7 @@ void VM::updateStackLimits()
         // which raises EXCEPTION_STACK_OVERFLOW on commit-constrained hosts when the reserve
         // is large.
         if (m_stackPointerAtVMEntry)
-            preCommitStackMemory(newSoftStackLimit);
+            preCommitStackMemory(thread, newSoftStackLimit);
 #endif
     }
 }
@@ -1714,6 +1731,8 @@ void VM::forEachActiveScratchBuffer(const ScopedLambda<void(void* begin, void* e
 void VM::gatherScratchBufferRoots(ConservativeRoots& conservativeRoots)
 {
     auto add = [&](void* begin, void* end) {
+        // For thread-safety analysis, which does not carry the capability this function requires into this lambda.
+        heap.collector().assertIsMarkerWithWorldStopped();
         conservativeRoots.add(begin, end);
     };
     forEachActiveScratchBuffer(add);
@@ -1731,7 +1750,6 @@ void VM::forEachConservativelyScannedBuffer(const ScopedLambda<void(void* begin,
 
 void VM::scanSideState(ConservativeRoots& roots) const
 {
-    ASSERT(heap.worldIsStopped());
     for (const auto& sideState : m_checkpointSideState) {
         static_assert(sizeof(sideState->tmps) / sizeof(JSValue) == maxNumCheckpointTmps);
         roots.add(sideState->tmps, sideState->tmps + maxNumCheckpointTmps);

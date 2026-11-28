@@ -28,8 +28,7 @@
 #include <WebCore/CSSCustomPropertySyntax.h>
 #include <WebCore/CSSValueTypes.h>
 
-namespace WebCore {
-namespace CSS {
+namespace WebCore::CSS {
 
 // <css-type> = <syntax-component> | <type()>
 // https://drafts.csswg.org/css-mixins-1/#typedef-css-type
@@ -45,9 +44,12 @@ template<> struct Serialize<TypeSpecifier> {
     void operator()(StringBuilder&, const SerializationContext&, const TypeSpecifier&);
 };
 
+// MARK: - Hashing
+
+void add(Hasher&, const TypeSpecifier&);
+
 // MARK: - Logging
 
 WTF::TextStream& operator<<(WTF::TextStream&, const TypeSpecifier&);
 
-} // namespace CSS
-} // namespace WebCore
+} // namespace WebCore::CSS

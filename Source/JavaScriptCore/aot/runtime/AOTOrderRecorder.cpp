@@ -103,7 +103,7 @@ private:
         char kind;
         uint32_t rank;
     };
-    using NumberMap = UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+    using NumberMap = HashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
     UnitName nameUnit(uint32_t unit) WTF_REQUIRES_LOCK(m_lock);
     void appendLineForUnit(Vector<uint8_t>&, const ModuleTable&, uint32_t unit) WTF_REQUIRES_LOCK(m_lock);
     void findBodies() WTF_REQUIRES_LOCK(m_lock);
@@ -133,7 +133,7 @@ private:
     uint32_t m_numberOfListedUnits WTF_GUARDED_BY_LOCK(m_lock) { 0 };
     Vector<uint8_t> m_bytesToWrite WTF_GUARDED_BY_LOCK(m_lock);
     bool m_hasWrittenNumberOfFunctions WTF_GUARDED_BY_LOCK(m_lock) { false };
-    UncheckedKeyHashMap<String, uint32_t> m_numbersOfFiles WTF_GUARDED_BY_LOCK(m_lock);
+    HashMap<String, uint32_t> m_numbersOfFiles WTF_GUARDED_BY_LOCK(m_lock);
     NumberMap m_firstFunctionsOfModules WTF_GUARDED_BY_LOCK(m_lock);
     Vector<uint32_t> m_ranksOfOtherUnits WTF_GUARDED_BY_LOCK(m_lock);
     static constexpr uint32_t noBody = UINT32_MAX;
@@ -314,7 +314,7 @@ ASCIILiteral OrderRecorder::start()
 
 static void appendTextToOrder(Vector<uint8_t>& out, StringView text)
 {
-    for (uint8_t byte : byteCast<uint8_t>(text.utf8().span()))
+    for (uint8_t byte : byteCast<uint8_t>(makeUTF8CString(text).span()))
         out.append(std::max<uint8_t>(byte, ' '));
 }
 
@@ -420,7 +420,7 @@ HashOfNames OrderRecorder::hashNamesOfFile(uint32_t first, ModuleID module) cons
         if (definition && definition->source != module)
             break;
         if (definition)
-            hash.add(byteCast<uint8_t>(writtenFunctionName(FunctionID(function)).utf8().span()));
+            hash.add(byteCast<uint8_t>(makeUTF8CString(writtenFunctionName(FunctionID(function))).span()));
     }
     return hash;
 }

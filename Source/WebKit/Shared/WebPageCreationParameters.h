@@ -56,6 +56,7 @@
 #include <WebCore/LayerHostingContextIdentifier.h>
 #include <WebCore/LayoutMilestone.h>
 #include <WebCore/MediaProducer.h>
+#include <WebCore/NetworkInterception.h>
 #include <WebCore/PageIdentifier.h>
 #include <WebCore/Pagination.h>
 #include <WebCore/RegistrableDomain.h>
@@ -113,6 +114,7 @@ struct RemotePageParameters {
     FrameTreeCreationParameters frameTreeParameters;
     std::optional<WebsitePoliciesData> websitePoliciesData;
     Ref<WebCore::DocumentSyncData> topDocumentSyncData;
+    double pageScaleFactor { 1 };
 };
 
 struct WebPageCreationParameters {
@@ -145,6 +147,7 @@ struct WebPageCreationParameters {
     bool alwaysShowsVerticalScroller { false };
 
     bool suppressScrollbarAnimations { false };
+    std::optional<WebCore::ScrollbarStyle> scrollbarStyleOverride { };
 
     WebCore::Pagination::Mode paginationMode { WebCore::Pagination::Mode::Unpaginated };
     bool paginationBehavesLikeColumns { false };
@@ -178,6 +181,8 @@ struct WebPageCreationParameters {
     bool mayStartMediaWhenInWindow { false };
     bool mediaPlaybackIsSuspended { false };
     bool areActiveDOMObjectsAndAnimationsSuspended { false };
+    bool shouldSuppressHDR { false };
+    bool isTakingSnapshotsForApplicationSuspension { false };
 
     WebCore::IntSize minimumSizeForAutoLayout { };
     WebCore::IntSize sizeToContentAutoSizeMaximumSize { };
@@ -196,6 +201,7 @@ struct WebPageCreationParameters {
     Vector<String> mimeTypesWithCustomContentProviders { };
 
     bool controlledByAutomation { false };
+    Inspector::NetworkInterception networkInterception { };
     bool isProcessSwap { false };
 
     bool useDarkAppearance { false };
@@ -226,6 +232,7 @@ struct WebPageCreationParameters {
     WebCore::FloatSize overrideAvailableScreenSize { };
     float textAutosizingWidth { 0 };
     WebCore::IntDegrees deviceOrientation { 0 };
+    WebCore::FloatBoxExtent unobscuredSafeAreaInsets { };
     HardwareKeyboardState hardwareKeyboardState { };
     bool canShowWhileLocked { false };
     bool isCapturingScreen { false };

@@ -25,6 +25,10 @@
 
 #pragma once
 
+#if !__has_feature(objc_arc)
+#error This header requires ARC. Include it only from files compiled with -fobjc-arc.
+#endif
+
 #import "Pipeline.h"
 #import "PipelineLayout.h"
 
@@ -53,7 +57,7 @@ public:
         uint64_t lastStride { 0 };
         WebGPU::VertexStepMode stepMode { WebGPU::VertexStepMode::Vertex };
     };
-    using RequiredBufferIndicesContainer = HashMap<uint32_t, BufferData, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+    using RequiredBufferIndicesContainer = HashMap<uint32_t, BufferData>;
 
     static Ref<RenderPipeline> create(MTLPrimitiveType primitiveType, std::optional<MTLIndexType> indexType, MTLWinding frontFace, MTLCullMode cullMode, MTLDepthClipMode depthClipMode, MTLDepthStencilDescriptor *depthStencilDescriptor, Ref<PipelineLayout>&& pipelineLayout, float depthBias, float depthBiasSlopeScale, float depthBiasClamp, uint32_t sampleMask, MTLRenderPipelineDescriptor* renderPipelineDescriptor, uint32_t colorAttachmentCount, WebGPU::PrimitiveTopology primitiveTopology, std::optional<WebGPU::IndexFormat> stripIndexFormat, uint32_t sampleCount, bool hasFragment, Vector<std::optional<WebGPU::TextureFormat>>&& colorTargetFormats, std::optional<WebGPU::TextureFormat> depthStencilFormat, bool writesStencil, RequiredBufferIndicesContainer&& requiredBufferIndices, BufferBindingSizesForPipeline&& minimumBufferSizes, uint64_t uniqueId, uint32_t vertexShaderBindingCount, Device& device)
     {

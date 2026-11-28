@@ -97,9 +97,10 @@ bool InjectedBundle::decodeBundleParameters(API::Data* bundleParameterDataPtr)
 
     RetainPtr<NSDictionary> dictionary;
     @try {
-        dictionary = [unarchiver.get() decodeObjectOfClasses:classesForCoder().get() forKey:@"parameters"];
-        if (![dictionary isKindOfClass:[NSDictionary class]]) {
-            RELEASE_LOG_ERROR(Process, "InjectedBundle::decodeBundleParameters failed - Resulting object was not an NSDictionary (was %{public}s)", dictionary ? object_getClassName(dictionary.get()) : "nil");
+        RetainPtr<id> decodedObject = [unarchiver.get() decodeObjectOfClasses:classesForCoder().get() forKey:@"parameters"];
+        dictionary = dynamic_objc_cast<NSDictionary>(decodedObject.get());
+        if (!dictionary) {
+            RELEASE_LOG_ERROR(Process, "InjectedBundle::decodeBundleParameters failed - Resulting object was not an NSDictionary (was %{public}s)", decodedObject ? object_getClassName(decodedObject.get()) : "nil");
             return false;
         }
     } @catch (NSException *exception) {
@@ -116,14 +117,14 @@ bool InjectedBundle::initialize(const WebProcessCreationParameters& parameters, 
 {
     if (auto sandboxExtension = std::exchange(m_sandboxExtension, nullptr)) {
         if (!sandboxExtension->consumePermanently()) {
-            RELEASE_LOG_ERROR(Process, "InjectedBundle::initialize failed - Could not consume bundle sandbox extension for [%{public}s]", m_path.utf8());
+            RELEASE_LOG_ERROR(Process, "InjectedBundle::initialize failed - Could not consume bundle sandbox extension for [%{public}s]", makeUTF8CString(m_path));
             return false;
         }
     }
 
     m_platformBundle = adoptNS([[NSBundle alloc] initWithPath:m_path.createNSString().get()]);
     if (!m_platformBundle) {
-        RELEASE_LOG_ERROR(Process, "InjectedBundle::initialize failed - Could not create the bundle for [%{public}s]", m_path.utf8());
+        RELEASE_LOG_ERROR(Process, "InjectedBundle::initialize failed - Could not create the bundle for [%{public}s]", makeUTF8CString(m_path));
         return false;
     }
 
@@ -143,11 +144,11 @@ bool InjectedBundle::initialize(const WebProcessCreationParameters& parameters, 
     if (!initializeFunction) {
         NSError *error = nil;
         if (![m_platformBundle preflightAndReturnError:&error]) {
-            RELEASE_LOG_ERROR(Process, "InjectedBundle::initialize failed - preflightAndReturnError failed for [%{public}s]: %{public}@", m_path.utf8(), error);
+            RELEASE_LOG_ERROR(Process, "InjectedBundle::initialize failed - preflightAndReturnError failed for [%{public}s]: %{public}@", makeUTF8CString(m_path), error);
             return false;
         }
         if (![m_platformBundle loadAndReturnError:&error]) {
-            RELEASE_LOG_ERROR(Process, "InjectedBundle::initialize failed - loadAndReturnError failed for [%{public}s]: %{public}@", m_path.utf8(), error);
+            RELEASE_LOG_ERROR(Process, "InjectedBundle::initialize failed - loadAndReturnError failed for [%{public}s]: %{public}@", makeUTF8CString(m_path), error);
             return false;
         }
         initializeFunction = std::bit_cast<WKBundleInitializeFunctionPtr>(CFBundleGetFunctionPointerForName(RetainPtr { [m_platformBundle _cfBundle] }.get(), CFSTR("WKBundleInitialize")));
@@ -177,7 +178,7 @@ bool InjectedBundle::initialize(const WebProcessCreationParameters& parameters, 
     // Otherwise, look to see if the bundle has a principal class
     RetainPtr<Class> principalClass = [m_platformBundle principalClass];
     if (!principalClass) {
-        RELEASE_LOG_ERROR(Process, "InjectedBundle::initialize failed - No initialize function or principal class found in the bundle executable [%{public}s]", m_path.utf8());
+        RELEASE_LOG_ERROR(Process, "InjectedBundle::initialize failed - No initialize function or principal class found in the bundle executable [%{public}s]", makeUTF8CString(m_path));
         return false;
     }
 
@@ -232,7 +233,7 @@ void InjectedBundle::extendClassesForParameterCoder(API::Array& classes)
             break;
         }
 
-        auto className = classNameString->string().utf8();
+        auto className = makeUTF8CString(classNameString->string());
         RetainPtr objectClass = objcLookUpClass(className);
         if (!objectClass) {
             RELEASE_LOG_ERROR(Process, "InjectedBundle::extendClassesForParameterCoder - Class %{public}s is not a valid Objective C class", className);
@@ -260,7 +261,7 @@ void InjectedBundle::setBundleParameter(const String& key, std::span<const uint8
     @try {
         parameter = [unarchiver decodeObjectOfClasses:classesForCoder().get() forKey:@"parameter"];
     } @catch (NSException *exception) {
-        RELEASE_LOG_ERROR(Process, "InjectedBundle::setBundleParameter failed to decode bundle parameter '%{public}s': %{public}s -- %{public}s", key.utf8(), exception.name.UTF8String, exception.reason.UTF8String);
+        RELEASE_LOG_ERROR(Process, "InjectedBundle::setBundleParameter failed to decode bundle parameter '%{public}s': %{public}s -- %{public}s", makeUTF8CString(key), exception.name.UTF8String, exception.reason.UTF8String);
         return;
     }
 
@@ -275,15 +276,13 @@ void InjectedBundle::setBundleParameters(std::span<const uint8_t> value)
     RetainPtr<NSDictionary> parameters;
     auto unarchiver = createUnarchiver(value);
     @try {
-        parameters = [unarchiver decodeObjectOfClasses:classesForCoder().get() forKey:@"parameters"];
+        parameters = checked_objc_cast<NSDictionary>([unarchiver decodeObjectOfClasses:classesForCoder().get() forKey:@"parameters"]);
     } @catch (NSException *exception) {
         RELEASE_LOG_ERROR(Process, "InjectedBundle::setBundleParameters failed to decode bundle parameters: %{public}s -- %{public}s", exception.name.UTF8String, exception.reason.UTF8String);
     }
 
     if (!parameters)
         return;
-
-    RELEASE_ASSERT_WITH_SECURITY_IMPLICATION([parameters isKindOfClass:[NSDictionary class]]);
 
     if (!m_bundleParameters) {
         m_bundleParameters = adoptNS([[WKWebProcessBundleParameters alloc] initWithDictionary:parameters.get()]);

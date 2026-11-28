@@ -113,6 +113,7 @@ public:
     JS_EXPORT_PRIVATE void push(JSGlobalObject*, JSValue);
     JS_EXPORT_PRIVATE JSValue pop(JSGlobalObject*);
     JSValue fastShift(VM&);
+    JSValue fastUnshift(VM&, JSValue);
 
     static constexpr unsigned shiftThreshold = 128;
 
@@ -144,6 +145,8 @@ public:
     bool fastSplice(JSGlobalObject*, uint64_t length, uint64_t start, uint64_t deleteCount, std::span<const EncodedJSValue> items);
 
     JSString* fastToString(JSGlobalObject*);
+
+    JSArray* fastFlatForNoHoles(JSGlobalObject*, uint64_t length);
 
     JSArray* fastFlat(JSGlobalObject*, uint64_t depth, uint64_t length);
 

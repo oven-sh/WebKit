@@ -486,7 +486,7 @@ public:
 private:
     Walker& m_walker;
     const BodyIndex& m_index;
-    UncheckedKeyHashMap<uint32_t, bool, WTF::IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_lists;
+    HashMap<uint32_t, bool, WTF::IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_lists;
 };
 
 } // anonymous namespace
