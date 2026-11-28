@@ -204,6 +204,7 @@ struct QuestionsInLinkCalls {
     bool askConstructorsOfInstances { false };
     bool whatIsFoundIsOnlyInspected { false };
     bool listKeys { false };
+    bool functionsAreOnlyReadWhereTheySpread { false };
 
     bool isEmpty() const { return keys.isEmpty() && keysAnsweredByProgramAlone.isEmpty() && !readEverything && !readOwnValues && !readPrivateFields && !describeObjects && !convertToPrimitive && !callMembers; }
     bool isConversionAlone() const
@@ -1228,7 +1229,9 @@ private:
     void addPrototypes(const Values& objects, Values&);
     bool hasKnownPrototypeChain(LayoutID, ClassSide) const;
     LinkType prototypeOfObjectsOf(LayoutID) const;
-    Values contentsOf(const Values& holders, NamesRead = NamesRead::All);
+    enum class FunctionsRead : bool { All, WhereTheySpread };
+    Values contentsOf(const Values& holders, NamesRead = NamesRead::All, FunctionsRead = FunctionsRead::All);
+    FunctionsRead functionsReadOf(const RowCall&, BuiltinOperand) const;
     void settle(Values&, bool rowHasJustMadeThem = false);
     void storeAt(RowCall&, const BuiltinPlace&, const Values&);
     bool isBoundAsReceiverThatNoRowSpeaksOf(const RowCall&, const BuiltinPlace&);
@@ -1330,6 +1333,8 @@ private:
     bool isDataDescriptorInSight(const Source*) const;
     bool isMapOfAccessorsAsWritten(const Values&) const;
     bool mayAnswer(const LinkType&, const Source*, const Questions&, bool ownValuesAreFollowed);
+    bool functionsMaySpread(const LinkType&, const Source*);
+    bool onlyReadsFunctionsWhereTheySpread(const BuiltinParameter& parameter) const { return parameter.operand != BuiltinOperand::receiver() && std::ranges::contains(parameter.namedMembers, m_builtins.nameOf(WellKnownSymbol::IsConcatSpreadable)); }
     bool tableAloneAnswersFrom(BuiltinID, const Questions&);
     bool onlyNamesThatTableAnswersAreRead(BuiltinID, const Questions&);
     bool ownValuesAreListed(const LinkType&);
@@ -5943,9 +5948,15 @@ bool CallInLinkCalls::findsNoElements(const RowCall& call, const BuiltinProperty
     if (action.kind != BuiltinPropertyActionKind::ReadsByKey || action.key.kind != BuiltinKeyKind::Indexes || m_program.admitsReplacedBuiltins)
         return false;
     bool mayFind = false;
-    forEachType(valuesAt(call, action.object), [&](const LinkType& type, const Source*) {
+    FunctionsRead functionsRead = functionsReadOf(call, action.object);
+    forEachType(valuesAt(call, action.object), [&](const LinkType& type, const Source* source) {
         LinkType beside = type;
         beside.primitives = 0;
+        if (functionsRead == FunctionsRead::WhereTheySpread && type.functions != LinkType::Functions::None && !functionsMaySpread(type, source)) {
+            beside.functions = LinkType::Functions::None;
+            beside.function = { };
+            beside.constructorsOf = { };
+        }
         mayFind |= !beside.isNever() || type.holdsLostBuiltins || (type.primitives & LinkType::closed(Primitive::AnyString));
     });
     return !mayFind;
@@ -6551,7 +6562,7 @@ ValuesInLinkCalls CallInLinkCalls::valuesAtPlace(RowCall& call, const BuiltinPla
         addIteratedValues(valuesAt(call, *place.operand), values);
         break;
     case BuiltinPlaceKind::OwnValues:
-        values = contentsOf(valuesAt(call, *place.operand));
+        values = contentsOf(valuesAt(call, *place.operand), NamesRead::All, functionsReadOf(call, *place.operand));
         add(values, undefined);
         break;
     case BuiltinPlaceKind::Result:
@@ -6850,8 +6861,12 @@ void CallInLinkCalls::handHolesOn(RowCall& call, SiteID made)
         m_flow.markSite(made, SlotOfContents::mayHaveHoles());
         return;
     }
-    auto handOn = [&](const Values& values) {
-        forEachType(values, [&](const LinkType& type, const Source*) {
+    enum class Taken : bool { AsReceiver, AsItem };
+    auto functionsMayBringHoles = [&](const LinkType& type, const Source* source, Taken taken) {
+        return type.functions != LinkType::Functions::None && (taken == Taken::AsReceiver || functionsMaySpread(type, source));
+    };
+    auto handOn = [&](const Values& values, Taken taken) {
+        forEachType(values, [&](const LinkType& type, const Source* source) {
             bool isList = type.classes == LinkType::Classes::Site && type.builtinClass == BuiltinClasses::Array && !m_flow.hasEscaped(type.site);
             if (isList && m_flow.isCreatedWithoutHoles(type.site)) {
                 FlowNodeID mayHaveHoles = m_flow.contents(made, SlotOfContents::mayHaveHoles());
@@ -6860,14 +6875,14 @@ void CallInLinkCalls::handHolesOn(RowCall& call, SiteID made)
                 m_flow.addEdge(m_flow.contents(type.site, SlotOfContents::mayHaveNumberNames()), mayHaveHoles);
                 if (isMapped)
                     m_flow.addEdge(m_flow.contents(type.site, SlotOfContents::mayLoseElements()), mayHaveHoles);
-            } else if (isList || type.hasUnknownObjects || type.holdsLostBuiltins || type.builtin || type.objects != LinkType::Objects::None || type.classes != LinkType::Classes::None)
+            } else if (isList || type.hasUnknownObjects || type.holdsLostBuiltins || type.builtin || type.objects != LinkType::Objects::None || type.classes != LinkType::Classes::None || functionsMayBringHoles(type, source, taken))
                 m_flow.markSite(made, SlotOfContents::mayHaveHoles());
         });
     };
-    handOn(*call.passed.receiver);
+    handOn(*call.passed.receiver, Taken::AsReceiver);
     if (isJoined) {
         for (const Values& argument : call.passed.arguments)
-            handOn(argument);
+            handOn(argument, Taken::AsItem);
     }
 }
 
@@ -6935,7 +6950,13 @@ void CallInLinkCalls::addContentsOf(const LinkType& holder, const Source* source
     add(contents, m_flow.contentsOf(holder, holdsIndexesApart ? SlotOfContents::underUnknownNames() : SlotOfContents::underAnyName()), beyond(source));
 }
 
-ValuesInLinkCalls CallInLinkCalls::contentsOf(const Values& holders, NamesRead names)
+CallInLinkCalls::FunctionsRead CallInLinkCalls::functionsReadOf(const RowCall& call, BuiltinOperand operand) const
+{
+    const BuiltinParameter* parameter = m_builtins.parameterFor(*call.row, operand);
+    return parameter && onlyReadsFunctionsWhereTheySpread(*parameter) ? FunctionsRead::WhereTheySpread : FunctionsRead::All;
+}
+
+ValuesInLinkCalls CallInLinkCalls::contentsOf(const Values& holders, NamesRead names, FunctionsRead functions)
 {
     Values contents;
     forEachType(holders, [&](const LinkType& holder, const Source* source) {
@@ -6943,6 +6964,9 @@ ValuesInLinkCalls CallInLinkCalls::contentsOf(const Values& holders, NamesRead n
         if (holder.primitives & LinkType::closed(Primitive::AnyString))
             add(contents, primitivesForLinkCalls(Primitive::String));
         if (holder.objects == LinkType::Objects::None && holder.functions == LinkType::Functions::None && !holder.hasUnknownObjects && !holder.builtin)
+            return;
+        bool holdsFunctionsAlone = holder.functions != LinkType::Functions::None && holder.objects == LinkType::Objects::None && !holder.hasUnknownObjects && !holder.builtin && !holder.holdsLostBuiltins;
+        if (functions == FunctionsRead::WhereTheySpread && holdsFunctionsAlone && !functionsMaySpread(holder, source))
             return;
         if (ownValuesAreListed(holder)) {
             forEachLayoutWithListedOwnValues(holder, [&](LayoutID layout) {
@@ -7570,6 +7594,7 @@ QuestionsInLinkCalls CallInLinkCalls::questionsOf(const BuiltinParameter& parame
     questions.describeObjects = parameter.roles.contains(BuiltinOperandRole::DescribedWhenRefused);
     questions.onlyBoxedPrimitivesAreConverted = parameter.roles.contains(BuiltinOperandRole::OnlyBoxedPrimitivesAreConverted);
     questions.whatIsFoundIsOnlyInspected = parameter.roles.contains(BuiltinOperandRole::MembersAreOnlyInspected);
+    questions.functionsAreOnlyReadWhereTheySpread = onlyReadsFunctionsWhereTheySpread(parameter);
     return questions;
 }
 
@@ -7654,10 +7679,29 @@ bool CallInLinkCalls::onlyNamesThatTableAnswersAreRead(BuiltinID builtin, const 
     });
 }
 
+bool CallInLinkCalls::functionsMaySpread(const LinkType& type, const Source* source)
+{
+    LinkType functions;
+    functions.functions = type.functions;
+    functions.function = type.function;
+    functions.constructorsOf = type.constructorsOf;
+    PropertyKeyID spreadable = m_program.keyOf(m_builtins.nameOf(WellKnownSymbol::IsConcatSpreadable));
+    return mayFind(functions, spreadable, source ? source->distance : 0, false, false);
+}
+
 bool CallInLinkCalls::mayAnswer(const LinkType& type, const Source* source, const Questions& questions, bool ownValuesAreFollowed)
 {
     if (type.classes == LinkType::Classes::Mixed || (type.builtin && !tableAloneAnswersFrom(type.builtin, questions)))
         return true;
+    if (questions.functionsAreOnlyReadWhereTheySpread && type.functions != LinkType::Functions::None) {
+        if (functionsMaySpread(type, source))
+            return true;
+        LinkType others = type;
+        others.functions = LinkType::Functions::None;
+        others.function = { };
+        others.constructorsOf = { };
+        return !others.holdsPrimitivesAlone() && mayAnswer(others, source, questions, ownValuesAreFollowed);
+    }
     bool holdsObjectsOfProgram = type.objects != LinkType::Objects::None || type.functions != LinkType::Functions::None;
     if (!holdsObjectsOfProgram && type.classes == LinkType::Classes::None)
         return false;
