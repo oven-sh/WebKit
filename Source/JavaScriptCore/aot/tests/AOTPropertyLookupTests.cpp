@@ -32,6 +32,7 @@
 #include "ProxyObject.h"
 #include "PutPropertySlot.h"
 #include "Symbol.h"
+#include <array>
 #include <bit>
 #include <optional>
 #include <span>
@@ -686,6 +687,31 @@ static void testNamesOfEvictedDependentsAreNotReadBehindCreatedMembers(LoadedPro
     }
 }
 
+static void testDependentOfCompiledStructureLeavesOtherStructureWithItsIDAlone(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    ObjectBelowPrototype fixture(program);
+    ChainDependents& dependents = *program.state().chainDependents;
+    Structure* ordinary = fixture.object->structure();
+    std::array<JSObject*, 1> chain { fixture.prototype };
+    dependents.addStateOfStructure(chain, ordinary, fixture.label.impl());
+    AOT_TEST_CHECK(dependents.numberOfDependents(fixture.prototype) == 1);
+
+    // What areStoresPassedAbove() had added for CompiledStructures that have died since. A debug build or AddressSanitizer stops where one of them is taken for the Structure that has the ID now.
+    ChainDependentOwnerID owner = dependents.idOfStructuresThatPassStores();
+    constexpr unsigned numberOfNames = 4000;
+    Vector<Identifier> names;
+    for (unsigned index = 0; index < numberOfNames; ++index) {
+        names.append(Identifier::fromString(vm, makeString("passed"_s, index)));
+        dependents.add(chain, { names.last().impl(), ordinary->id().bits(), owner });
+    }
+    AOT_TEST_CHECK(dependents.numberOfDependents(fixture.prototype) == numberOfNames + 1);
+    didChangeChainObject(vm, fixture.prototype, names[0].impl());
+    AOT_TEST_CHECK(dependents.numberOfDependents(fixture.prototype) == numberOfNames);
+    vm.heap.collectNow(Sync, CollectionScope::Full);
+    AOT_TEST_CHECK(dependents.numberOfDependents(fixture.prototype) == 1);
+}
+
 static Object* allocateLabeledObject(LoadedProgram& program)
 {
     const ProgramTables& tables = program.state().tables;
@@ -1008,6 +1034,7 @@ std::span<const NativeTest> propertyLookupTests()
         { "property-lookup/symbol-of-each-realm-is-never-filed-in-front"_s, runSymbolOfEachRealmIsNeverFiledInFront },
         { "property-lookup/evicted-dependents-are-dropped-when-the-table-has-doubled"_s, withProgram<testEvictedDependentsAreDroppedWhenTheTableHasDoubled> },
         { "property-lookup/names-of-evicted-dependents-are-not-read-behind-created-members"_s, withProgram<testNamesOfEvictedDependentsAreNotReadBehindCreatedMembers> },
+        { "property-lookup/dependent-of-compiled-structure-leaves-other-structure-with-its-id-alone"_s, withProgram<testDependentOfCompiledStructureLeavesOtherStructureWithItsIDAlone> },
         { "property-lookup/named-changes-of-an-object-with-many-dependents"_s, withProgram<testNamedChangesOfAnObjectWithManyDependents> },
         { "property-lookup/reads-below-empty-slots-ask-the-first-object-that-has-one"_s, withProgram<testReadsBelowEmptySlotsAskTheFirstObjectThatHasOne> },
         { "property-lookup/empty-slot-of-receiver-defers-to-unboxed-field-of-compiled-prototype"_s, withProgramReadingCount<testEmptySlotOfReceiverDefersToUnboxedFieldOfCompiledPrototype> },

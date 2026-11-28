@@ -11,6 +11,7 @@
 #include "AOTClassPrototype.h"
 #include "AOTClassTable.h"
 #include "AOTClosure.h"
+#include "AOTCompiledStructure.h"
 #include "AOTGenerator.h"
 #include "AOTGlobalBindings.h"
 #include "AOTHeapCacheRegistry.h"
@@ -64,17 +65,26 @@ bool ChainDependents::hasChainDependent(VM&, uint32_t structureIDBits, UniquedSt
     return m_structuresWithState.contains(std::bit_cast<StructureID>(structureIDBits));
 }
 
+static CompiledStructure* compiledStructureOrNull(uint32_t structureIDBits)
+{
+    return const_cast<CompiledStructure*>(compiledObjectStructureOrNull(std::bit_cast<StructureID>(structureIDBits).decode()));
+}
+
+// A dependent outlives its Structure, and the ID may have become that of any other Structure since.
 void ChainDependents::StructuresThatPassStores::dropChainDependent(VM&, uint32_t structureIDBits, UniquedStringImpl*)
 {
-    StructureID id = std::bit_cast<StructureID>(structureIDBits);
-    if (m_dependents.m_structuresWithState.contains(id))
-        uncheckedDowncast<CompiledStructure>(id.decode())->clear(CompiledStructure::FurtherFlag::PassesStoresAbove);
+    if (!m_dependents.m_structuresWithState.contains(std::bit_cast<StructureID>(structureIDBits)))
+        return;
+    if (CompiledStructure* structure = compiledStructureOrNull(structureIDBits))
+        structure->clear(CompiledStructure::FurtherFlag::PassesStoresAbove);
 }
 
 bool ChainDependents::StructuresThatPassStores::hasChainDependent(VM&, uint32_t structureIDBits, UniquedStringImpl*) const
 {
-    StructureID id = std::bit_cast<StructureID>(structureIDBits);
-    return m_dependents.m_structuresWithState.contains(id) && uncheckedDowncast<CompiledStructure>(id.decode())->has(CompiledStructure::FurtherFlag::PassesStoresAbove);
+    if (!m_dependents.m_structuresWithState.contains(std::bit_cast<StructureID>(structureIDBits)))
+        return false;
+    CompiledStructure* structure = compiledStructureOrNull(structureIDBits);
+    return structure && structure->has(CompiledStructure::FurtherFlag::PassesStoresAbove);
 }
 
 bool ChainDependents::StructuresThatPassStores::keepChainDependent(VM& vm, uint32_t, UniquedStringImpl* uid, unsigned hashOfUID, const CreatedMembers& created)

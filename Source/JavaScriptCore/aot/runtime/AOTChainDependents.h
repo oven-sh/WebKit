@@ -120,6 +120,7 @@ public:
     explicit ChainDependents(State&);
 
     ChainDependentOwnerID addOwner(ChainDependentOwner&);
+    ChainDependentOwnerID idOfStructuresThatPassStores() const { return m_idOfStructuresThatPassStores; }
 
     void add(std::span<JSObject* const> chainObjects, const ChainDependent&);
     void addStateOfStructure(std::span<JSObject* const> chainObjects, Structure*, UniquedStringImpl*);
