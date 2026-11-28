@@ -25,7 +25,9 @@
 #include "GlobalObjectMethodTable.h"
 #include "InternalFunction.h"
 #include "IteratorOperations.h"
+#include "JSAsyncFunctionGenerator.h"
 #include "JSAsyncGenerator.h"
+#include "JSAsyncGeneratorInlines.h"
 #include "JSBoundFunction.h"
 #include "JSCInlines.h"
 #include "JSCallee.h"
@@ -528,6 +530,49 @@ static void testDriverWithoutSavedFrameIsNotResumed(LoadedProgram& program)
     AOT_TEST_CHECK(generator->state() == static_cast<int32_t>(JSAsyncGenerator::AsyncGeneratorState::Executing));
 }
 
+static unsigned s_numberOfBodiesEntered;
+
+static JSC_DECLARE_HOST_FUNCTION(countEntryOfBody);
+
+JSC_DEFINE_HOST_FUNCTION(countEntryOfBody, (JSGlobalObject*, CallFrame*))
+{
+    ++s_numberOfBodiesEntered;
+    return encodedJSUndefined();
+}
+
+static void testInterpretedDriverIsResumedOnlyWhereItIsSuspended(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    JSGlobalObject* realm = program.realm();
+    JSFunction* body = JSFunction::create(vm, realm, 0, String(), countEntryOfBody, ImplementationVisibility::Private);
+    constexpr int32_t init = static_cast<int32_t>(JSGenerator::State::Init);
+    constexpr int32_t executing = static_cast<int32_t>(JSGenerator::State::Executing);
+    constexpr int32_t suspendedAtAwait = 1 << JSAsyncGenerator::reasonShift;
+
+    auto numberOfEntries = [&](JSObject* driver) {
+        s_numberOfBodiesEntered = 0;
+        realm->queueMicrotask(vm, InternalMicrotask::AsyncGeneratorDriverResume, static_cast<uint8_t>(JSPromise::Status::Fulfilled), jsUndefined(), jsNumber(1), driver, jsUndefined());
+        AOT_TEST_CHECK(!vm.defaultMicrotaskQueue().isEmpty());
+        vm.drainMicrotasks();
+        AOT_TEST_CHECK(vm.defaultMicrotaskQueue().isEmpty());
+        return s_numberOfBodiesEntered;
+    };
+    for (int32_t state : { init, executing, suspendedAtAwait }) {
+        unsigned expected = state == suspendedAtAwait;
+        JSAsyncFunctionGenerator* asyncFunction = JSAsyncFunctionGenerator::create(vm, realm->asyncFunctionGeneratorStructure());
+        asyncFunction->internalField(JSAsyncFunctionGenerator::Field::Next).set(vm, asyncFunction, body);
+        asyncFunction->internalField(JSAsyncFunctionGenerator::Field::Context).set(vm, asyncFunction, JSPromise::create(vm, realm->promiseStructure()));
+        asyncFunction->setState(state);
+        AOT_TEST_CHECK(numberOfEntries(asyncFunction) == expected);
+
+        JSAsyncGenerator* generator = JSAsyncGenerator::create(vm, realm->asyncGeneratorStructure());
+        generator->internalField(JSAsyncGenerator::Field::Next).set(vm, generator, body);
+        generator->enqueue(vm, jsUndefined(), static_cast<int32_t>(JSAsyncGenerator::AsyncGeneratorResumeMode::Normal), JSPromise::create(vm, realm->promiseStructure()));
+        generator->setState(state);
+        AOT_TEST_CHECK(numberOfEntries(generator) == expected);
+    }
+}
+
 static void testInstanceClassInfos(LoadedProgram& program)
 {
     const ClassInfo* const* classInfos = program.instance().realm.instanceClassInfos;
@@ -635,6 +680,7 @@ std::span<const NativeTest> engineHookTests()
         { "engine-hooks/image-is-attached-to-vm"_s, withProgram<testImageIsAttachedToVM> },
         { "engine-hooks/deliver-step-to-driver"_s, withProgram<testDeliverStepToDriver> },
         { "engine-hooks/a-driver-whose-frame-is-not-saved-is-not-resumed"_s, withProgram<testDriverWithoutSavedFrameIsNotResumed> },
+        { "engine-hooks/an-interpreted-driver-is-resumed-only-where-it-is-suspended"_s, withProgram<testInterpretedDriverIsResumedOnlyWhereItIsSuspended> },
         { "engine-hooks/instance-class-infos"_s, withProgram<testInstanceClassInfos> },
         { "engine-hooks/create-with-properties"_s, withProgram<testCreateWithProperties> },
         { "engine-hooks/structures-with-properties-come-and-go-between-collections"_s, withProgram<testStructuresWithPropertiesComeAndGo> },
