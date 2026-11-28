@@ -7902,21 +7902,45 @@ static bool buildCopyBehindTestsForTypedAccess(Walker& walker, const BodyValue& 
             walker.jumpTo(behindCopy, singleElementSpan(empty));
         }
     } else {
-        Vector<Reference, 8> values;
-        for (FieldIndex index : copied) {
-            if (plan.slot(layoutOfSource, index).holdsAccessor) {
-                Reference value = walker.isUnreachable() ? Reference() : valueOfCopiedKey(walker, copy, ofLayoutWritten, layoutOfSource, index, origin);
-                if (!value)
-                    break;
-                values.append(value);
-                continue;
+        auto holdsFieldThatMayLeaveItsSlot = [&](std::span<const FieldIndex> behindGetter) {
+            return std::ranges::any_of(behindGetter, [&](FieldIndex index) {
+                return !plan.slot(layoutOfSource, index).holdsAccessor && !fieldStaysInSlot(program, plan.slot(layoutOfSource, index));
+            });
+        };
+        auto fillFrom = [&](auto& self, size_t place, Vector<Reference, 8> values, OwnKeyIsRead isRead) -> void {
+            bool asksCell = isRead == OwnKeyIsRead::BehindNoCall;
+            for (; place < copied.size() && !walker.isUnreachable() && !walker.hasFailed(); ++place) {
+                FieldIndex index = copied[place];
+                if (plan.slot(layoutOfSource, index).holdsAccessor || isRead == OwnKeyIsRead::BehindCallOfGetter) {
+                    Reference value = valueOfCopiedKey(walker, copy, ofLayoutWritten, layoutOfSource, index, origin, isRead);
+                    if (!value)
+                        return;
+                    values.append(value);
+                    if (!asksCell || walker.isUnreachable())
+                        continue;
+                    isRead = OwnKeyIsRead::BehindNoCall;
+                    if (!holdsFieldThatMayLeaveItsSlot(copied.span().subspan(place + 1)))
+                        continue;
+                    Draft question(Opcode::HasNoExtraProperties, origin);
+                    question.setObjectOperand(ofLayoutWritten);
+                    question.setHasNoFieldOutsideSlot(true);
+                    BlockID someFieldLeftItsSlot = walker.addBlock(BlockFrequency::Rare);
+                    walker.letGuessFailUnasked(someFieldLeftItsSlot, origin);
+                    continueIf(walker.build(WTF::move(question)), someFieldLeftItsSlot);
+                    BlockID everyFieldIsInItsSlot = walker.currentBlock();
+                    walker.continueIn(someFieldLeftItsSlot);
+                    self(self, place + 1, values, OwnKeyIsRead::BehindCallOfGetter);
+                    walker.continueIn(everyFieldIsInItsSlot);
+                    continue;
+                }
+                Draft read(Opcode::GetSlot, origin);
+                fillSlotOperationForTypedAccess(read, ofLayoutWritten, *receivers, program.at(layoutOfSource).fields[index].key);
+                values.append(walker.build(WTF::move(read)));
             }
-            Draft read(Opcode::GetSlot, origin);
-            fillSlotOperationForTypedAccess(read, ofLayoutWritten, *receivers, program.at(layoutOfSource).fields[index].key);
-            values.append(walker.build(WTF::move(read)));
-        }
-        if (Reference object = walker.isUnreachable() || walker.hasFailed() ? Reference() : buildTargetOfCopyForTypedAccess(walker, origin, layout, fields->span(), values.span()))
-            walker.jumpTo(behindCopy, singleElementSpan(object));
+            if (Reference object = walker.isUnreachable() || walker.hasFailed() ? Reference() : buildTargetOfCopyForTypedAccess(walker, origin, layout, fields->span(), values.span()))
+                walker.jumpTo(behindCopy, singleElementSpan(object));
+        };
+        fillFrom(fillFrom, 0, { }, OwnKeyIsRead::BehindNoCall);
     }
     if (walker.hasFailed())
         return true;

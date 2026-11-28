@@ -105,9 +105,10 @@ static Reference nameOfOwnKeyInListedOwnKeys(Walker& walker, LayoutID layout, Fi
 static Reference buildListOfOrderInListedOwnKeys(Walker& walker, const CallOfOwnKeyList& asked, Reference object, const OwnKeyOrder& order)
 {
     Vector<Reference, 16> elements;
+    OwnKeyIsRead isRead = OwnKeyIsRead::BehindNoCall;
     for (FieldIndex field : order.fields) {
         Reference name = asked.list == OwnKeyList::Values ? Reference() : nameOfOwnKeyInListedOwnKeys(walker, order.layout, field, asked.origin);
-        Reference value = asked.list == OwnKeyList::Keys ? Reference() : valueOfCopiedKey(walker, asked.call, object, order.layout, field, asked.origin);
+        Reference value = asked.list == OwnKeyList::Keys ? Reference() : valueOfCopiedKey(walker, asked.call, object, order.layout, field, asked.origin, isRead);
         if ((asked.list != OwnKeyList::Values && !name) || (asked.list != OwnKeyList::Keys && !value))
             return { };
         Reference element = name ? name : value;

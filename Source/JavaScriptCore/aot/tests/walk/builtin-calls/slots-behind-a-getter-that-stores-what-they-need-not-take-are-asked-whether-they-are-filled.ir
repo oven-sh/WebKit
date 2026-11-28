@@ -1,0 +1,205 @@
+# interface Line { readonly b: number; c: number; } class Held implements Line { c: number; constructor(c: number) { this.c = c; } } const lines: Line[] = [new Held(1)];
+# function square(line: Line) { return line.c * line.c; }   the slot of `c` is typed for it
+# function values(n: number) { const record: Line = { get b() { record.c = n; return 2; }, c: 3.5 }; const made = Object.values(record); lines.push(record); return made; }
+# the getter writes `c` over with what was handed in, which its slot need not take: the field has then moved out of it, so the slot is asked whether it is filled
+# the names alone are read without the slots and without the getter. In `valuesWithNumberStored` the getter stores a written number, and nothing is asked
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetSlotGetter [[object]] key="b"
+# CHECK: = IsSlotFilled [[object]] key="c"
+# CHECK: = GetSlot [[object]] key="c"
+# CHECK: = PropGet {{*}}key="c"
+# CHECK: = NewArray
+# CHECK-NOT: inlineBuiltin=ObjectValues
+# RUN(KEYS): walk f2 mechanisms=all
+# KEYS-LABEL: code f2:Body
+# KEYS-NOT: GetSlotGetter
+# KEYS-NOT: IsSlotFilled
+# KEYS: = NewArray
+# KEYS-NOT: inlineBuiltin=OwnPropertyKeys
+# RUN(FITS): walk f6 mechanisms=all
+# FITS-LABEL: code f6:Body
+# FITS: = GetSlotGetter {{*}}key="b"
+# FITS-NOT: IsSlotFilled
+# FITS: = GetSlot {{*}}key="d"
+# FITS-NOT: PropGet
+# RUN(PLAN): plan layouts mechanisms=all
+# PLAN-LABEL: layout L0
+# PLAN: "c" OptionalDouble
+# PLAN-LABEL: layout L3
+# PLAN: "d" OptionalDouble
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 module=m0 fields=[{key="b" declared={type=number} flags=[IsRequired]}, {key="c" declared={type=number} flags=[IsRequired]}]
+layout L1 kind=Environment module=m0 fields=[{key=@"0" declared={type=number} flags=[IsRequired, IsImmutable] variableName="n"}, {key=@"1" declared={type=undefined|null|absent|L0 flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable] variableName="record"}]
+layout L2 kind=Instance name="Held0" module=m0 constructor=f4 fields=[{key="c" declared={type=number} flags=[IsRequired] originLayout=L0 originField=1}] supertypes=[L0]
+variable g0 name="lines0" module=m0 declared={type=undefined|null|absent|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+layout L3 module=m0 fields=[{key="b" declared={type=number} flags=[IsRequired]}, {key="d" declared={type=number} flags=[IsRequired]}]
+layout L4 kind=Environment module=m0 fields=[{key=@"0" declared={type=number} flags=[IsRequired, IsImmutable] variableName="n"}, {key=@"1" declared={type=undefined|null|absent|L3 flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable] variableName="record"}]
+layout L5 kind=Instance name="Held3" module=m0 constructor=f9 fields=[{key="d" declared={type=number} flags=[IsRequired] originLayout=L3 originField=1}] supertypes=[L3]
+variable g1 name="lines3" module=m0 declared={type=undefined|null|absent|Array<undefined|null|L3> flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f5
+    v5 = NewClosure function=f4
+    v6 = NewClass v5 layout=L2
+    v7 = FinishClass v6 layout=L2
+    v8 = Convert v7 declared={type=f4 flags=[IsFromCompiler]}
+    v9 = Integer integer=1
+    v10 = Construct v8, -, v9 calleeName="Held0"
+    v11 = NewArray v10 contents=undefined|null|L0
+    v12 = Convert v11 declared={type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]}
+    PutModuleVariable v12 variable=g0
+    v14 = Call v1, -, v2, v3, v4
+    v15 = NewClosure function=f6
+    v16 = NewClosure function=f7
+    v17 = NewClosure function=f10
+    v18 = NewClosure function=f9
+    v19 = NewClass v18 layout=L5
+    v20 = FinishClass v19 layout=L5
+    v21 = Convert v20 declared={type=f9 flags=[IsFromCompiler]}
+    v22 = Integer integer=1
+    v23 = Construct v21, -, v22 calleeName="Held3"
+    v24 = NewArray v23 contents=undefined|null|L3
+    v25 = Convert v24 declared={type=undefined|null|Array<undefined|null|L3> flags=[OmitsNull, OmitsUndefined]}
+    PutModuleVariable v25 variable=g1
+    v27 = Call v1, -, v15, v16, v17
+    Return v1
+}
+function f1 name="values" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = NewObject layout=L0
+    v3 = NewClosure v1 function=f3
+    DefineGetter v2, v3 key="b"
+    v5 = Double number=3.5
+    v6 = Convert v5 declared={type=number}
+    PropDefine v2, v6 key="c"
+    v8 = FinishObject v2
+    v9 = Convert v8 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    PutEnvironmentField v1, v9 layout=L1 field=1
+    v11 = Builtin builtin=Object
+    v12 = Builtin builtin=ObjectValues
+    v13 = Call v12, v11, v9
+    v14 = GetModuleVariable variable=g0
+    v15 = CheckInitialized v14 name="lines0"
+    v16 = PropGet v15 key="push"
+    v17 = Call v16, v15, v9 calleeKey="push" calleeName="push"
+    Return v13
+}
+function f2 name="keys" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = NewObject layout=L0
+    v3 = NewClosure v1 function=f3
+    DefineGetter v2, v3 key="b"
+    v5 = Double number=3.5
+    v6 = Convert v5 declared={type=number}
+    PropDefine v2, v6 key="c"
+    v8 = FinishObject v2
+    v9 = Convert v8 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    PutEnvironmentField v1, v9 layout=L1 field=1
+    v11 = Builtin builtin=Object
+    v12 = Builtin builtin=ObjectKeys
+    v13 = Call v12, v11, v9
+    v14 = GetModuleVariable variable=g0
+    v15 = CheckInitialized v14 name="lines0"
+    v16 = PropGet v15 key="push"
+    v17 = Call v16, v15, v9 calleeKey="push" calleeName="push"
+    Return v13
+}
+function f3 name="b" module=m0 kind=Getter flags=[IsChecked, HasExplicitName] captures=[{type=env L1 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: env L1):
+    v1 = GetEnvironmentField v0 layout=L1 field=1
+    v2 = CheckInitialized v1 name="record"
+    v3 = GetEnvironmentField v0 layout=L1
+    PropSet v2, v3 key="c"
+    v5 = Integer integer=2
+    Return v5
+}
+function f4 name="Held0" module=m0 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=object flags=[IsFromCompiler]}] {
+  b0(v0: anything, v1: number):
+    v2 = GetConstructPrototype v0 layout=L2
+    v3 = NewObject v2 layout=L2
+    v4 = Convert v3 declared={type=L2}
+    PropDefine v4, v1 key="c"
+    Return v4
+}
+function f5 name="square0" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|L0):
+    v1 = PropGet v0 key="c"
+    v2 = PropGet v0 key="c"
+    v3 = Mul v1, v2
+    Return v3
+}
+function f6 name="valuesWithNumberStored" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = NewObject -, v0 layout=L4 fields=[0]
+    v2 = NewObject layout=L3
+    v3 = NewClosure v1 function=f8
+    DefineGetter v2, v3 key="b"
+    v5 = Double number=3.5
+    v6 = Convert v5 declared={type=number}
+    PropDefine v2, v6 key="d"
+    v8 = FinishObject v2
+    v9 = Convert v8 declared={type=undefined|null|L3 flags=[OmitsNull, OmitsUndefined]}
+    PutEnvironmentField v1, v9 layout=L4 field=1
+    v11 = Builtin builtin=Object
+    v12 = Builtin builtin=ObjectValues
+    v13 = Call v12, v11, v9
+    v14 = GetModuleVariable variable=g1
+    v15 = CheckInitialized v14 name="lines3"
+    v16 = PropGet v15 key="push"
+    v17 = Call v16, v15, v9 calleeKey="push" calleeName="push"
+    Return v13
+}
+function f7 name="keysWithNumberStored" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = NewObject -, v0 layout=L4 fields=[0]
+    v2 = NewObject layout=L3
+    v3 = NewClosure v1 function=f8
+    DefineGetter v2, v3 key="b"
+    v5 = Double number=3.5
+    v6 = Convert v5 declared={type=number}
+    PropDefine v2, v6 key="d"
+    v8 = FinishObject v2
+    v9 = Convert v8 declared={type=undefined|null|L3 flags=[OmitsNull, OmitsUndefined]}
+    PutEnvironmentField v1, v9 layout=L4 field=1
+    v11 = Builtin builtin=Object
+    v12 = Builtin builtin=ObjectKeys
+    v13 = Call v12, v11, v9
+    v14 = GetModuleVariable variable=g1
+    v15 = CheckInitialized v14 name="lines3"
+    v16 = PropGet v15 key="push"
+    v17 = Call v16, v15, v9 calleeKey="push" calleeName="push"
+    Return v13
+}
+function f8 name="b" module=m0 kind=Getter flags=[IsChecked, HasExplicitName] captures=[{type=env L4 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: env L4):
+    v1 = GetEnvironmentField v0 layout=L4 field=1
+    v2 = CheckInitialized v1 name="record"
+    v3 = Double number=0.5
+    PropSet v2, v3 key="d"
+    v5 = Integer integer=2
+    Return v5
+}
+function f9 name="Held3" module=m0 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=object flags=[IsFromCompiler]}] {
+  b0(v0: anything, v1: number):
+    v2 = GetConstructPrototype v0 layout=L5
+    v3 = NewObject v2 layout=L5
+    v4 = Convert v3 declared={type=L5}
+    PropDefine v4, v1 key="d"
+    Return v4
+}
+function f10 name="square3" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L3 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|L3):
+    v1 = PropGet v0 key="d"
+    v2 = PropGet v0 key="d"
+    v3 = Mul v1, v2
+    Return v3
+}
