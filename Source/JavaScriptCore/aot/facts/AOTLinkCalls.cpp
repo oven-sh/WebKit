@@ -6850,8 +6850,22 @@ void CallInLinkCalls::handHolesOn(RowCall& call, SiteID made)
         m_flow.markSite(made, SlotOfContents::mayHaveHoles());
         return;
     }
-    auto handOn = [&](const Values& values) {
-        forEachType(values, [&](const LinkType& type, const Source*) {
+    enum class Taken : bool { AsReceiver, AsItem };
+    auto functionsMayBringHoles = [&](const LinkType& type, const Source* source, Taken taken) {
+        if (type.functions == LinkType::Functions::None || taken == Taken::AsReceiver)
+            return type.functions != LinkType::Functions::None;
+        LinkType functions = type;
+        functions.primitives = 0;
+        functions.objects = LinkType::Objects::None;
+        functions.builtin = { };
+        functions.hasUnknownObjects = false;
+        functions.holdsLostBuiltins = false;
+        functions.dropInstances();
+        PropertyKeyID spreadable = m_program.keyOf(m_builtins.nameOf(WellKnownSymbol::IsConcatSpreadable));
+        return !spreadable || mayFind(functions, spreadable, source ? source->distance : 0, false, false);
+    };
+    auto handOn = [&](const Values& values, Taken taken) {
+        forEachType(values, [&](const LinkType& type, const Source* source) {
             bool isList = type.classes == LinkType::Classes::Site && type.builtinClass == BuiltinClasses::Array && !m_flow.hasEscaped(type.site);
             if (isList && m_flow.isCreatedWithoutHoles(type.site)) {
                 FlowNodeID mayHaveHoles = m_flow.contents(made, SlotOfContents::mayHaveHoles());
@@ -6860,14 +6874,14 @@ void CallInLinkCalls::handHolesOn(RowCall& call, SiteID made)
                 m_flow.addEdge(m_flow.contents(type.site, SlotOfContents::mayHaveNumberNames()), mayHaveHoles);
                 if (isMapped)
                     m_flow.addEdge(m_flow.contents(type.site, SlotOfContents::mayLoseElements()), mayHaveHoles);
-            } else if (isList || type.hasUnknownObjects || type.holdsLostBuiltins || type.builtin || type.objects != LinkType::Objects::None || type.classes != LinkType::Classes::None)
+            } else if (isList || type.hasUnknownObjects || type.holdsLostBuiltins || type.builtin || type.objects != LinkType::Objects::None || type.classes != LinkType::Classes::None || functionsMayBringHoles(type, source, taken))
                 m_flow.markSite(made, SlotOfContents::mayHaveHoles());
         });
     };
-    handOn(*call.passed.receiver);
+    handOn(*call.passed.receiver, Taken::AsReceiver);
     if (isJoined) {
         for (const Values& argument : call.passed.arguments)
-            handOn(argument);
+            handOn(argument, Taken::AsItem);
     }
 }
 
