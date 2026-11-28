@@ -2130,6 +2130,7 @@ bool LinkFlow::PrototypeHelperReader::readAccess(const SummaryAccess& access)
     step.key = access.key;
     if (nameClass == NameClass::Proto) {
         step.kind = Step::Kind::LinksParent;
+        step.isStoreOfPrototypeLink = true;
         add(step);
         return !value.isOther();
     }
@@ -2408,6 +2409,7 @@ LinkFlow::HelperProgress LinkFlow::visitPrototypeHelper(const HelperEntered& hel
             PrototypeHelperStep taken;
             taken.kind = step.kind;
             taken.writer = helperEntered.function;
+            taken.isStoreOfPrototypeLink = step.isStoreOfPrototypeLink;
             taken.object = functionOf(step.object);
             taken.objectIsPrototype = step.object.kind == Operand::Kind::PrototypeOfParameter;
             taken.value = functionOf(step.value);
@@ -2556,9 +2558,39 @@ bool LinkFlow::findsOwnNameBuiltin(const PrototypeHelperStep& step) const
     return held.isNever() || (isBuiltinAlone && (!held.builtin || program.builtins().canonicalID(held.builtin) == program.builtins().canonicalID(Builtins::ObjectPrototypeHasOwnProperty)));
 }
 
+bool LinkFlow::mayBeReplacedByTest(BuiltinID member, const Invocable<void(FlowNodeID)> auto& watch)
+{
+    if (program.isUnlocked(member))
+        return true;
+    if (program.isLockLeftToProgram(member)) {
+        FlowNodeID written = writtenAtMember(member);
+        watch(written);
+        if (!takeForConstant(member) || !typeAt(written).isNever())
+            return true;
+    }
+    // What a test adds to an object below the one that holds the member answers in its place.
+    FlowNodeID added = testRuns().nodeOfNameAdded(program.keyOf(program.builtins().at(member).name));
+    if (!added)
+        return false;
+    watch(added);
+    return testRuns().isNameAdded(added);
+}
+
+bool LinkFlow::mayBeReplacedByTest(BuiltinID member, Vector<FlowNodeID, 2>& watched)
+{
+    return mayBeReplacedByTest(member, [&](FlowNodeID node) { watched.append(node); });
+}
+
 bool LinkFlow::mayEnterCodeOfProgram(const PrototypeHelperStep& step, const Invocable<void(FlowNodeID)> auto& watch)
 {
-    if (step.kind != PrototypeHelper::Step::Kind::AsksOwnName)
+    using Kind = PrototypeHelper::Step::Kind;
+    bool asksOwnName = step.kind == Kind::AsksOwnName;
+    if (!asksOwnName && !step.isStoreOfPrototypeLink)
+        return false;
+    BuiltinID entered = !asksOwnName ? BuiltinID(Builtins::ObjectPrototype__proto__) : step.stored ? BuiltinID(Builtins::FunctionPrototypeCall) : BuiltinID(Builtins::ObjectPrototypeHasOwnProperty);
+    if (mayBeReplacedByTest(entered, watch))
+        return true;
+    if (!asksOwnName)
         return false;
     if (step.stored || escapedFunctions.get(step.object.index()))
         return false;

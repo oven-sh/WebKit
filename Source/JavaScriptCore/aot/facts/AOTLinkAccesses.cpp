@@ -3805,7 +3805,11 @@ void AccessInLinkAccesses::resolveOnPrototype(LayoutID id)
         }
         if (m_access.kind == Kind::Store && m_value && m_flow.isOfConstructorFunction(id) && m_flow.findsPrototypeLinkOfSubject(id, ClassSide::Prototype, m_access.key, m_receiver != m_subject)) {
             tellAgainOnceClimbs(m_value);
-            if (m_flow.namesParentOfPrototype(m_flow.typeAt(m_value), id))
+            Vector<FlowNodeID, 2> watched;
+            bool mayRunOtherCode = m_flow.mayBeReplacedByTest(Builtins::ObjectPrototype__proto__, watched);
+            for (FlowNodeID node : watched)
+                tellAgainOnceClimbs(node);
+            if (!mayRunOtherCode && m_flow.namesParentOfPrototype(m_flow.typeAt(m_value), id))
                 return;
         }
         noteChange(id, LayoutChange::ChangesPrototype);

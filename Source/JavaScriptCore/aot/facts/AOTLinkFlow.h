@@ -909,6 +909,7 @@ public:
             FlowNodeID stored;
             uint32_t call { 0 };
             bool resultIsUsed { false };
+            bool isStoreOfPrototypeLink { false };
         };
         enum class Result : uint8_t { IsOther, IsParameter, IsParameterThatNoStepTakes, IsUnknown };
 
@@ -927,6 +928,7 @@ public:
         FunctionID value;
         bool objectIsPrototype { false };
         bool valueIsPrototype { false };
+        bool isStoreOfPrototypeLink { false };
         PropertyKeyID key;
         FlowNodeID stored;
     };
@@ -944,6 +946,7 @@ public:
     const PrototypeHelper* findPrototypeHelper(FunctionID);
     void followPrototypeHelperCall(uint32_t call, FunctionID helper, Vector<FlowNodeID, 4>&& arguments);
     Vector<PrototypeHelperStep> prototypeHelperSteps() const;
+    bool mayBeReplacedByTest(BuiltinID member, Vector<FlowNodeID, 2>& watched);
     FlowNodeID objectsMadeForClassBelowConstructorFunction(LayoutID);
     FlowNodeID objectsMadeThroughConstructorOf(LayoutID);
     FlowNodeID objectsMadeBySuperCallsOf(LayoutID);
@@ -2493,6 +2496,7 @@ private:
     bool everyFunctionAboveIsConstructorFunction(FunctionID) const;
     bool findsOwnNameBuiltin(const PrototypeHelperStep&) const;
     bool mayEnterCodeOfProgram(const PrototypeHelperStep&, const Invocable<void(FlowNodeID)> auto& watch);
+    bool mayBeReplacedByTest(BuiltinID member, const Invocable<void(FlowNodeID)> auto& watch);
     bool someBodyStoresHasOwnProperty() const;
     mutable std::optional<bool> m_someBodyStoresHasOwnProperty;
     void storeOnClassHolder(FunctionID writer, LayoutID, ClassSide, PropertyKeyID, FlowNodeID value);
