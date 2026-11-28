@@ -2173,6 +2173,8 @@ static void runAsyncGeneratorDriverResume(JSGlobalObject* globalObject, VM& vm, 
 
 #if ENABLE(AOT)
     if (vm.hasCompiledCode() && context.isObject()) {
+        if (AOT::isDriverWithUnsavedFrame(asObject(context))) [[unlikely]]
+            return;
         if (bareStepIsDone.isBoolean())
             AOT::deliverBareStepToDriver(asObject(context), bareStepIsDone.asBoolean());
         else

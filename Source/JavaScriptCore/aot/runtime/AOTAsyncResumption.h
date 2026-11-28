@@ -62,6 +62,7 @@ ALWAYS_INLINE bool canRunJobHandler(JSGlobalObject* globalObject, VM& vm, JSValu
 {
     return promiseOrCapability.isCell() && promiseOrCapability.asCell()->structureID() == globalObject->promiseStructure()->id() && canEnterJobFunction(globalObject, vm, handler);
 }
+JS_EXPORT_PRIVATE bool isDriverWithUnsavedFrame(JSObject* driver);
 JS_EXPORT_PRIVATE JSValue deliverStepToDriver(JSObject* driver, JSValue resolution, bool isRejected);
 JS_EXPORT_PRIVATE bool acceptsBareSteps(JSValue settlementTarget);
 JS_EXPORT_PRIVATE JSValue driverResumeContext(JSValue settlementTarget);

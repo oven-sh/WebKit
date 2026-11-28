@@ -34,6 +34,7 @@
 #include "JSPromiseConstructor.h"
 #include "JSWeakObjectRef.h"
 #include "MapConstructor.h"
+#include "MicrotaskQueueInlines.h"
 #include "NullSetterFunction.h"
 #include "ObjectConstructor.h"
 #include "PropertyRun.h"
@@ -503,6 +504,30 @@ static void testDeliverStepToDriver(LoadedProgram& program)
     }
 }
 
+static void testDriverWithoutSavedFrameIsNotResumed(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    JSGlobalObject* realm = program.realm();
+    SavedFrame* asyncFunction = SavedFrame::create(vm, program.instance(), CoroutineKind::AsyncFunction, 2, 0, 0);
+    SavedFrame* bodyOfGenerator = SavedFrame::create(vm, program.instance(), CoroutineKind::AsyncGenerator, 2, 0, 0);
+    JSAsyncGenerator* generator = JSAsyncGenerator::create(vm, realm->asyncGeneratorStructure());
+    setSavedFrameOfGenerator(vm, generator, bodyOfGenerator);
+    generator->setState(static_cast<int32_t>(JSAsyncGenerator::AsyncGeneratorState::Executing));
+    AOT_TEST_CHECK(isDriverWithUnsavedFrame(asyncFunction) && isDriverWithUnsavedFrame(generator));
+
+    std::pair<JSObject*, SavedFrame*> drivers[] = { { asyncFunction, asyncFunction }, { generator, bodyOfGenerator } };
+    for (auto [driver, saved] : drivers) {
+        realm->queueMicrotask(vm, InternalMicrotask::AsyncGeneratorDriverResume, static_cast<uint8_t>(JSPromise::Status::Fulfilled), jsBoolean(false), jsNumber(1), driver, jsUndefined());
+        realm->queueMicrotask(vm, InternalMicrotask::AsyncGeneratorDriverResume, static_cast<uint8_t>(JSPromise::Status::Fulfilled), jsUndefined(), createIteratorResultObject(realm, jsNumber(1), false), driver, jsUndefined());
+        realm->queueMicrotask(vm, InternalMicrotask::AsyncGeneratorDriverResume, static_cast<uint8_t>(JSPromise::Status::Rejected), jsUndefined(), jsNumber(1), driver, jsUndefined());
+        AOT_TEST_CHECK(!vm.defaultMicrotaskQueue().isEmpty());
+        vm.drainMicrotasks();
+        AOT_TEST_CHECK(vm.defaultMicrotaskQueue().isEmpty());
+        AOT_TEST_CHECK(saved->isOnStack() && saved->stepStatus() == AsyncGeneratorStepStatus::Result);
+    }
+    AOT_TEST_CHECK(generator->state() == static_cast<int32_t>(JSAsyncGenerator::AsyncGeneratorState::Executing));
+}
+
 static void testInstanceClassInfos(LoadedProgram& program)
 {
     const ClassInfo* const* classInfos = program.instance().realm.instanceClassInfos;
@@ -609,6 +634,7 @@ std::span<const NativeTest> engineHookTests()
         { "engine-hooks/caches-made-at-first-use-lie-in-pages-of-instance"_s, withProgram<testCachesMadeAtFirstUseLieInPagesOfInstance> },
         { "engine-hooks/image-is-attached-to-vm"_s, withProgram<testImageIsAttachedToVM> },
         { "engine-hooks/deliver-step-to-driver"_s, withProgram<testDeliverStepToDriver> },
+        { "engine-hooks/a-driver-whose-frame-is-not-saved-is-not-resumed"_s, withProgram<testDriverWithoutSavedFrameIsNotResumed> },
         { "engine-hooks/instance-class-infos"_s, withProgram<testInstanceClassInfos> },
         { "engine-hooks/create-with-properties"_s, withProgram<testCreateWithProperties> },
         { "engine-hooks/structures-with-properties-come-and-go-between-collections"_s, withProgram<testStructuresWithPropertiesComeAndGo> },
