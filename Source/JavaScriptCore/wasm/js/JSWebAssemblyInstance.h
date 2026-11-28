@@ -128,14 +128,19 @@ public:
             RELEASE_ASSERT(!m_wasmMemory);
 
         m_memories[i].set(vm, this, value);
-        // during initialization, this cannot be run in updateCachedMemories()
-        updateCachedMemoryBaseSizePair(i);
-        if (!i) {
-            WTF::storeStoreFence();
-            m_cachedMemory0Size = m_memories[i]->memory().size();
-            m_wasmMemory = value->memory();
+        m_wasmMemories[i] = value->memory();
+        if (!i)
+            m_wasmMemory = m_wasmMemories[i];
+
+        value->memory().registerInstance(*this);
+        {
+            Locker locker { value->memory().handle().lock() };
+            cachedMemoryBaseSizePairs()[i] = { m_wasmMemories[i]->basePointer(), m_wasmMemories[i]->mappedCapacity() };
+            if (!i) {
+                WTF::storeStoreFence();
+                m_cachedMemory0Size = m_wasmMemories[i]->size();
+            }
         }
-        m_memories[i]->memory().registerInstance(*this);
     }
 
     // FIXME: is setDummyMemory necessary at all?
@@ -226,35 +231,24 @@ public:
 
     void updateCachedMemories()
     {
-        if (m_wasmMemory) {
-            // Note: In MemoryMode::BoundsChecking, mappedCapacity() == size().
-            // We assert this in the constructor of MemoryHandle.
-
-            // reload all of the cached base and size pointers
-            for (unsigned i = 0; i < m_moduleInformation->memoryCount(); i++) {
-                if (!m_memories[i])
-                    continue;
-                cachedMemoryBaseSizePairs()[i] = {
-                    m_memories[i]->basePointer(),
-                    m_memories[i]->mappedCapacity()
-                };
-            }
-            m_cachedMemory0Size = m_memories[0]->memory().size();
+        for (unsigned i = 0; i < m_wasmMemories.size(); ++i) {
+            if (!m_wasmMemories[i])
+                continue;
+            cachedMemoryBaseSizePairs()[i] = { m_wasmMemories[i]->basePointer(), m_wasmMemories[i]->mappedCapacity() };
+            if (!i)
+                m_cachedMemory0Size = m_wasmMemories[i]->size();
         }
     }
 
     NEVER_INLINE void updateMatchingCachedMemoriesConcurrently(const SharedArrayBufferContents& grownMemory)
     {
         JSC_REMOVABLE_DEFINITION(WebAssembly, &JSWebAssemblyInstance::updateMatchingCachedMemoriesConcurrently);
-        if (!m_wasmMemory)
-            return;
-
-        for (unsigned i = 0; i < m_moduleInformation->memoryCount(); i++) {
-            if (!m_memories[i] || m_memories[i]->memory().shared() != &grownMemory)
+        for (unsigned i = 0; i < m_wasmMemories.size(); ++i) {
+            if (!m_wasmMemories[i] || m_wasmMemories[i]->shared() != &grownMemory)
                 continue;
-            updateCachedMemoryBaseSizePair(i);
+            cachedMemoryBaseSizePairs()[i] = { m_wasmMemories[i]->basePointer(), m_wasmMemories[i]->mappedCapacity() };
             if (!i)
-                m_cachedMemory0Size = m_memories[i]->memory().size();
+                m_cachedMemory0Size = m_wasmMemories[i]->size();
         }
     }
 
@@ -501,6 +495,7 @@ private:
     WriteBarrier<JSWebAssemblyModule> m_jsModule;
     WriteBarrier<WebAssemblyModuleRecord> m_moduleRecord;
     FixedVector<WriteBarrier<JSWebAssemblyMemory>> m_memories;
+    FixedVector<RefPtr<Wasm::Memory>> m_wasmMemories;
     FixedVector<WriteBarrier<JSWebAssemblyTable>> m_tables;
     StackManager::Mirror m_stackMirror;
     Wasm::FuncRefTable::Function* m_cachedTable0Buffer { nullptr };
@@ -508,22 +503,22 @@ private:
     const Ref<Wasm::Module> m_module;
     const Ref<const Wasm::ModuleInformation> m_moduleInformation;
     RefPtr<Wasm::InstanceAnchor> m_anchor;
-    RefPtr<SourceProvider> m_sourceProvider;
+    const RefPtr<SourceProvider> m_sourceProvider;
     MemoryIsMemory64BitSet m_memoryIsMemory64Bits;
     uint64_t m_cachedMemory0Size { 0 }; // memory.size for memory 0, handled specially to avoid performance regressions
 
     RefPtr<Wasm::Memory> m_wasmMemory;
     Wasm::Global::Value* m_globals { nullptr };
 
-    using ConstantExpressionValueMap = UncheckedKeyHashMap<uint64_t, WriteBarrier<Unknown>, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
+    using ConstantExpressionValueMap = HashMap<uint64_t, WriteBarrier<Unknown>>;
     ConstantExpressionValueMap m_constantExpressionValues;
     BitVector m_globalsToMark;
     BitVector m_globalsToBinding;
     unsigned m_numImportFunctions { 0 };
-    UncheckedKeyHashMap<uint32_t, Ref<Wasm::Global>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_linkedGlobals;
-    using TagWrapperMap = UncheckedKeyHashMap<uint32_t, WriteBarrier<JSWebAssemblyTag>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+    HashMap<uint32_t, Ref<Wasm::Global>> m_linkedGlobals;
+    using TagWrapperMap = HashMap<uint32_t, WriteBarrier<JSWebAssemblyTag>>;
     TagWrapperMap m_tagWrappers;
-    using GlobalWrapperMap = UncheckedKeyHashMap<uint32_t, WriteBarrier<JSWebAssemblyGlobal>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+    using GlobalWrapperMap = HashMap<uint32_t, WriteBarrier<JSWebAssemblyGlobal>>;
     GlobalWrapperMap m_importedGlobalWrappers;
     BitVector m_passiveElements;
     BitVector m_passiveDataSegments;

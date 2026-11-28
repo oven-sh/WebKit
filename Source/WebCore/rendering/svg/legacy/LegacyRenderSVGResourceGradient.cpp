@@ -27,6 +27,7 @@
 #include "GradientAttributes.h"
 #include "GraphicsContext.h"
 #include "LegacyRenderSVGResourceGradientInlines.h"
+#include "NativeImage.h"
 #include "RenderSVGText.h"
 #include "SVGRenderingContext.h"
 #include "StyleComputedStyle+GettersInlines.h"
@@ -37,7 +38,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(LegacyRenderSVGResourceGradient);
 
-LegacyRenderSVGResourceGradient::LegacyRenderSVGResourceGradient(Type type, SVGGradientElement& node, Style::ComputedStyle&& style)
+LegacyRenderSVGResourceGradient::LegacyRenderSVGResourceGradient(Type type, SVGGradientElement& node, UniqueRef<Style::ComputedStyle>&& style)
     : LegacyRenderSVGResourceContainer(type, node, WTF::move(style))
 {
 }
@@ -188,7 +189,7 @@ private:
 
 static inline std::tuple<FloatRect, FloatSize> calculateGradientGeometry(RenderElement& renderer)
 {
-    auto* textRootBlock = RenderSVGText::locateRenderSVGTextAncestor(renderer);
+    CheckedPtr textRootBlock = RenderSVGText::locateRenderSVGTextAncestor(renderer);
     ASSERT(textRootBlock);
 
     FloatRect decoratedBounds = textRootBlock->decoratedBoundingBox();
@@ -206,7 +207,7 @@ static inline AffineTransform calculateGradientUserspaceTransform(RenderElement&
     if (gradientUnits != SVGUnitTypes::SVG_UNIT_TYPE_OBJECTBOUNDINGBOX)
         return gradientTransform;
 
-    auto* textRootBlock = RenderSVGText::locateRenderSVGTextAncestor(renderer);
+    CheckedPtr textRootBlock = RenderSVGText::locateRenderSVGTextAncestor(renderer);
     ASSERT(textRootBlock);
 
     auto boundingBox = textRootBlock->objectBoundingBox();
@@ -255,12 +256,11 @@ void TextGradientClipper::postApplyResource(RenderElement& renderer, GraphicsCon
 
     GraphicsContextStateSaver stateSaver(*context);
 
-    SVGRenderingContext::clipToImageBuffer(*context, targetRect, scale, m_imageBuffer, false);
+    RefPtr maskImage = ImageBuffer::sinkIntoNativeImage(std::exchange(m_imageBuffer, nullptr));
+    SVGRenderingContext::clipToNativeImage(*context, targetRect, scale, maskImage, false);
 
     context->setFillGradient(WTF::move(gradient), userspaceTransform);
     context->fillRect(targetRect);
-
-    m_imageBuffer = nullptr;
 }
 
 class TextGradientCompositor : public GradientApplier {

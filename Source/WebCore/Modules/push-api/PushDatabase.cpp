@@ -198,7 +198,7 @@ static std::expected<UniqueRef<SQLiteDatabase>, ShouldDeleteAndRetry> openAndMig
     ASSERT(!RunLoop::isMain());
 
     if (path != ":memory:"_s && !FileSystem::fileExists(path) && !FileSystem::makeAllDirectories(FileSystem::parentPath(path))) {
-        RELEASE_LOG_ERROR(Push, "Couldn't create PushDatabase parent directories for path %s", path.utf8());
+        RELEASE_LOG_ERROR(Push, "Couldn't create PushDatabase parent directories for path %s", makeUTF8CString(path));
         return makeUnexpected(ShouldDeleteAndRetry::No);
     }
 
@@ -206,7 +206,7 @@ static std::expected<UniqueRef<SQLiteDatabase>, ShouldDeleteAndRetry> openAndMig
     db->disableThreadingChecks();
 
     if (!db->open(path)) {
-        RELEASE_LOG_ERROR(Push, "Couldn't open PushDatabase at path %s", path.utf8());
+        RELEASE_LOG_ERROR(Push, "Couldn't open PushDatabase at path %s", makeUTF8CString(path));
         return makeUnexpected(ShouldDeleteAndRetry::Yes);
     }
 
@@ -214,14 +214,14 @@ static std::expected<UniqueRef<SQLiteDatabase>, ShouldDeleteAndRetry> openAndMig
     {
         auto sql = db->prepareStatement("PRAGMA user_version"_s);
         if (!sql || sql->step() != SQLITE_ROW) {
-            RELEASE_LOG_ERROR(Push, "Couldn't get PushDatabase version at path %s", path.utf8());
+            RELEASE_LOG_ERROR(Push, "Couldn't get PushDatabase version at path %s", makeUTF8CString(path));
             return makeUnexpected(ShouldDeleteAndRetry::Yes);
         }
         version = sql->columnInt(0);
     }
 
     if (version < 0 || version > currentPushDatabaseVersion) {
-        RELEASE_LOG_ERROR(Push, "Found unexpected PushDatabase version: %d (expected: %d) at path: %s", version, currentPushDatabaseVersion, path.utf8());
+        RELEASE_LOG_ERROR(Push, "Found unexpected PushDatabase version: %d (expected: %d) at path: %s", version, currentPushDatabaseVersion, makeUTF8CString(path));
         return makeUnexpected(ShouldDeleteAndRetry::Yes);
     }
 
@@ -234,14 +234,14 @@ static std::expected<UniqueRef<SQLiteDatabase>, ShouldDeleteAndRetry> openAndMig
         for (auto i = version; i < currentPushDatabaseVersion; i++) {
             for (auto statement : pushDatabaseSchemaStatements[i]) {
                 if (!db->executeCommand(statement)) {
-                    RELEASE_LOG_ERROR(Push, "Error executing PushDatabase DDL statement %s at path %s: %d", statement.characters(), path.utf8(), db->lastError());
+                    RELEASE_LOG_ERROR(Push, "Error executing PushDatabase DDL statement %s at path %s: %d", statement.characters(), makeUTF8CString(path), db->lastError());
                     return makeUnexpected(ShouldDeleteAndRetry::Yes);
                 }
             }
         }
 
         if (!db->executeCommandSlow(makeString("PRAGMA user_version = "_s, currentPushDatabaseVersion)))
-            RELEASE_LOG_ERROR(Push, "Error setting user version for PushDatabase at path %s: %d", path.utf8(), db->lastError());
+            RELEASE_LOG_ERROR(Push, "Error setting user version for PushDatabase at path %s: %d", makeUTF8CString(path), db->lastError());
 
         transaction.commit();
     }
@@ -256,11 +256,11 @@ static std::unique_ptr<SQLiteDatabase> openAndMigrateDatabase(const String& path
     auto result = openAndMigrateDatabaseImpl(path);
     if (!result && result.error() == ShouldDeleteAndRetry::Yes) {
         if (path == SQLiteDatabase::inMemoryPath() || !SQLiteFileSystem::deleteDatabaseFile(path)) {
-            RELEASE_LOG_ERROR(Push, "Failed to delete PushDatabase at path %s; bailing on recreating from scratch", path.utf8());
+            RELEASE_LOG_ERROR(Push, "Failed to delete PushDatabase at path %s; bailing on recreating from scratch", makeUTF8CString(path));
             return nullptr;
         }
 
-        RELEASE_LOG_ERROR(Push, "Deleted PushDatabase at path %s and recreating from scratch", path.utf8());
+        RELEASE_LOG_ERROR(Push, "Deleted PushDatabase at path %s and recreating from scratch", makeUTF8CString(path));
         result = openAndMigrateDatabaseImpl(path);
     }
 
@@ -274,7 +274,7 @@ static std::unique_ptr<SQLiteDatabase> openAndMigrateDatabase(const String& path
 class PushDatabase::Storage : public ThreadSafeRefCounted<Storage, WTF::DestructionThread::Main> {
     WTF_MAKE_TZONE_ALLOCATED_INLINE(Storage);
 public:
-    static Ref<Storage> create(UniqueRef<SQLiteDatabase>&& database) { return adoptRef(*new Storage(WTF::move(database))); }
+    static Ref<Storage> create(Ref<WorkQueue>&& queue, UniqueRef<SQLiteDatabase>&& database) { return adoptRef(*new Storage(WTF::move(queue), WTF::move(database))); }
 
     NODELETE SQLiteDatabase& database() { return m_db; }
 
@@ -290,18 +290,20 @@ public:
     }
 
 private:
-    explicit Storage(UniqueRef<SQLiteDatabase>&& database)
-        : m_db(WTF::move(database))
+    Storage(Ref<WorkQueue>&& queue, UniqueRef<SQLiteDatabase>&& database)
+        : m_queue(WTF::move(queue))
+        , m_db(WTF::move(database))
     {
     }
 
+    const Ref<WorkQueue> m_queue;
     const UniqueRef<SQLiteDatabase> m_db;
     HashMap<ASCIILiteral, UniqueRef<SQLiteStatement>> m_statements;
 };
 
 SQLiteStatementAutoResetScope PushDatabase::Storage::cachedStatement(ASCIILiteral query)
 {
-    ASSERT(!RunLoop::isMain());
+    releaseAssertIsCurrent(m_queue.get());
 
     auto it = m_statements.find(query);
     if (it != m_statements.end())
@@ -353,7 +355,7 @@ void PushDatabase::create(const String& path, CreationHandler&& completionHandle
 
 PushDatabase::PushDatabase(Ref<WorkQueue>&& queue, UniqueRef<SQLiteDatabase>&& db)
     : m_queue(WTF::move(queue))
-    , m_storage(Storage::create(WTF::move(db)))
+    , m_storage(Storage::create(m_queue.copyRef(), WTF::move(db)))
 {
 }
 

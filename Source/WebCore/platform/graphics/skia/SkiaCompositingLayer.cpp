@@ -164,7 +164,7 @@ void SkiaCompositingLayer::setUseBackingStore(bool useBackingStore, CoordinatedA
 
 void SkiaCompositingLayer::updateBackingStore(CoordinatedBackingStoreProxy::Update&& update, float scale)
 {
-    if (m_maskImage && !update.isEmpty())
+    if (m_maskImage)
         m_maskImage = nullptr;
 
     ASSERT(m_backingStore);
@@ -178,13 +178,32 @@ bool SkiaCompositingLayer::hasPendingBackingStoreTileUpdates() const
 
 void SkiaCompositingLayer::processPendingTileUpdates()
 {
-    if (m_backingStore)
-        m_backingStore->processPendingTileUpdates(SkiaBackingStore::ProcessHiddenTiles::No);
+    if (!m_backingStore)
+        return;
+
+#if ENABLE(DAMAGE_TRACKING)
+    if (damagePropagationEnabled() && !m_layerDamage && !m_rect.isEmpty())
+        m_layerDamage.emplace(m_rect.size(), Damage::Mode::Rectangles, Damage::MaxRectanglesForHighResolution);
+    auto& damage = m_layerDamage;
+#else
+    std::optional<Damage> damage;
+#endif
+    m_backingStore->processPendingTileUpdates(SkiaBackingStore::ProcessHiddenTiles::No, damage);
 }
 
 bool SkiaCompositingLayer::processPendingTileUpdatesIncludingPreRendered(const Function<bool()>& shouldStopProcessingTiles)
 {
-    return m_backingStore ? m_backingStore->processPendingTileUpdates(SkiaBackingStore::ProcessHiddenTiles::Yes, shouldStopProcessingTiles) : false;
+    if (!m_backingStore)
+        return false;
+
+#if ENABLE(DAMAGE_TRACKING)
+    if (damagePropagationEnabled() && !m_layerDamage && !m_rect.isEmpty())
+        m_layerDamage.emplace(m_rect.size(), Damage::Mode::Rectangles, Damage::MaxRectanglesForHighResolution);
+    auto& damage = m_layerDamage;
+#else
+    std::optional<Damage> damage;
+#endif
+    return m_backingStore->processPendingTileUpdates(SkiaBackingStore::ProcessHiddenTiles::Yes, damage, shouldStopProcessingTiles);
 }
 
 void SkiaCompositingLayer::setImageBackingStore(CoordinatedImageBackingStore* imageBackingStore)
@@ -202,12 +221,12 @@ std::unique_ptr<CoordinatedPlatformLayerBuffer> SkiaCompositingLayer::takeConten
     return WTF::move(m_contentsBuffer);
 }
 
-void SkiaCompositingLayer::setContentsSolidColor(const Color& color)
+void SkiaCompositingLayer::setContentsSolidColor(Color&& color)
 {
     if (m_contentsSolidColor == color)
         return;
 
-    m_contentsSolidColor = color;
+    m_contentsSolidColor = WTF::move(color);
     damageWholeLayer();
 }
 
@@ -235,7 +254,7 @@ void SkiaCompositingLayer::setReplica(RefPtr<SkiaCompositingLayer>&& replica)
     groupPropertyChanged();
 }
 
-void SkiaCompositingLayer::setFilters(const FilterOperations& filterOperations)
+void SkiaCompositingLayer::setFilters(FilterOperations&& filterOperations)
 {
     if (filterOperations.isEmpty()) {
         if (!m_filter)
@@ -247,10 +266,10 @@ void SkiaCompositingLayer::setFilters(const FilterOperations& filterOperations)
     groupPropertyChanged();
 }
 
-void SkiaCompositingLayer::setBackdropFilters(const FilterOperations& filterOperations)
+void SkiaCompositingLayer::setBackdropFilters(FilterOperations&& filterOperations)
 {
     m_backdrop.filter = SkiaCompositingLayerFilters::create(filterOperations, SkTileMode::kClamp);
-    m_backdrop.filterOperations = filterOperations;
+    m_backdrop.filterOperations = WTF::move(filterOperations);
 }
 
 void SkiaCompositingLayer::setBackdropFiltersRect(const FloatRoundedRect& clipRect)
@@ -309,7 +328,7 @@ void SkiaCompositingLayer::addDamage(Damage&& damage)
         m_layerDamage = WTF::move(damage);
 }
 
-void SkiaCompositingLayer::LayerRectTracker::recordVisit(uint64_t id, const FloatRect& rectInFrame)
+void SkiaCompositingLayer::LayerRectTracker::recordVisit(uint64_t id, const FloatRect& rectInFrame, Coverage coverage, FullyDamaged fullyDamaged)
 {
     auto& entry = m_entries.add(id, Entry { }).iterator->value;
 
@@ -318,8 +337,14 @@ void SkiaCompositingLayer::LayerRectTracker::recordVisit(uint64_t id, const Floa
     if (!wasVisitedThisFrame(entry)) {
         entry.lastVisitedFrameID = m_currentFrameID;
         entry.currentRect = rectInFrame;
-    } else
+        entry.currentRectCoverage = coverage;
+        entry.currentRectFullyDamaged = fullyDamaged;
+    } else {
         entry.currentRect.unite(rectInFrame);
+        entry.currentRectCoverage = Coverage::Bounds;
+        if (fullyDamaged == FullyDamaged::Yes)
+            entry.currentRectFullyDamaged = FullyDamaged::Yes;
+    }
 }
 
 void SkiaCompositingLayer::LayerRectTracker::damageStaleLayerRectsAndAdvanceEntries(Damage& frameDamage)
@@ -335,17 +360,25 @@ void SkiaCompositingLayer::LayerRectTracker::damageStaleLayerRectsAndAdvanceEntr
             return true;
         }
 
-        // The layer moved, so repaint both where it was and where it now is.
         if (entry.previousRect != entry.currentRect) {
-            frameDamage.add(std::exchange(entry.previousRect, entry.currentRect));
-            frameDamage.add(entry.currentRect);
+            // With exact rects, only the difference changed: changes to the layer itself are in its own
+            // damage. A clip sliding over static content only repaints the strips it uncovered or covered.
+            if (entry.previousRectCoverage == Coverage::Exact && entry.currentRectCoverage == Coverage::Exact && entry.currentRectFullyDamaged == FullyDamaged::No) {
+                // To avoid AA clipping artifacts at the edges, inflate by one device pixel.
+                frameDamage.addChangedArea(entry.previousRect, entry.currentRect, 1);
+            } else {
+                frameDamage.add(entry.previousRect);
+                frameDamage.add(entry.currentRect);
+            }
         }
+        entry.previousRect = entry.currentRect;
+        entry.previousRectCoverage = entry.currentRectCoverage;
 
         return false;
     });
 }
 
-void SkiaCompositingLayer::trackLayerRect(PaintContext& context, const FloatRect& layerRectInFrame)
+void SkiaCompositingLayer::trackLayerRect(PaintContext& context, const FloatRect& layerRectInFrame, LayerRectTracker::Coverage coverage, LayerRectTracker::FullyDamaged fullyDamaged)
 {
     auto& layerRectTracker = context.collectState->layerRectTracker;
 
@@ -353,7 +386,7 @@ void SkiaCompositingLayer::trackLayerRect(PaintContext& context, const FloatRect
     if (!m_layerRectID)
         m_layerRectID = layerRectTracker.generateLayerRectID();
 
-    layerRectTracker.recordVisit(m_layerRectID, layerRectInFrame);
+    layerRectTracker.recordVisit(m_layerRectID, layerRectInFrame, coverage, fullyDamaged);
 }
 
 void SkiaCompositingLayer::resolveBackdropDamage(const Vector<FloatRect>& backdropRectsInFrame, Damage& frameDamage)
@@ -502,10 +535,6 @@ bool SkiaCompositingLayer::computeTransformsAndAnimations(const TransformationMa
     TransformationMatrix futureCombinedForChildren;
 
     if (!m_rect.isEmpty() || !m_masksToBounds) {
-#if ENABLE(DAMAGE_TRACKING)
-        TransformationMatrix previousTransform = m_transforms.combined;
-#endif
-
         FloatPoint origin(m_anchorPoint.x(), m_anchorPoint.y());
         origin.scale(m_rect.size().width(), m_rect.size().height());
         m_transforms.combined = parentTransform;
@@ -541,8 +570,9 @@ bool SkiaCompositingLayer::computeTransformsAndAnimations(const TransformationMa
         futureCombinedForChildren.translate3d(-origin.x(), -origin.y(), -m_anchorPoint.z());
 
 #if ENABLE(DAMAGE_TRACKING)
-        if (previousTransform != m_transforms.combined)
-            damageWholeLayer();
+        // A new layer has no previous area, so the layer rect tracker damages it already.
+        if (!m_transformAtLastDamage || (combinedTransformMovedOnScreen() && damageWholeLayer()))
+            m_transformAtLastDamage = m_transforms.combined;
 #endif
 
         m_visible = m_backfaceVisibility || !m_transforms.combined.isBackFaceVisible();
@@ -842,8 +872,6 @@ void SkiaCompositingLayer::paintContents(SkCanvas& canvas, PaintContext& context
         if (shouldPaintNow) {
             canvas.concat(transform);
 
-            // A corner shape the clipping rect cannot express arrives as a path instead; the rect has had
-            // its radii dropped in that case, so the path is the whole clip.
             if (m_contentsClipPath)
                 canvas.clipPath(*m_contentsClipPath, true);
             else if (m_contentsClippingRect.hasNonZeroRadii() || !m_contentsClippingRect.rect().contains(m_contentsRect))
@@ -930,7 +958,10 @@ void SkiaCompositingLayer::collectFrameDamage(SkCanvas& canvas, PaintContext& co
     const IntRect clipBounds = canvas.getDeviceClipBounds();
     auto layerRectInFrame = FloatRect(projectedBoundingBox(transform, paintedLayerRect(), clipBounds));
 
-    trackLayerRect(context, layerRectInFrame);
+    // The bounding box is exact when both the layer and its clip are plain rectangles on screen.
+    const auto coverage = canvas.isClipRect() && SkM44(transform).asM33().rectStaysRect() ? LayerRectTracker::Coverage::Exact : LayerRectTracker::Coverage::Bounds;
+    const auto fullyDamaged = m_layerDamage && m_layerDamage->mode() == Damage::Mode::Full ? LayerRectTracker::FullyDamaged::Yes : LayerRectTracker::FullyDamaged::No;
+    trackLayerRect(context, layerRectInFrame, coverage, fullyDamaged);
 
     if (!m_layerDamage)
         return;
@@ -944,6 +975,29 @@ void SkiaCompositingLayer::collectFrameDamage(SkCanvas& canvas, PaintContext& co
 
     for (const auto& rect : *m_layerDamage)
         context.collectState->frameDamage.add(projectedBoundingBox(transform, FloatRect(rect), clipBounds));
+}
+
+bool SkiaCompositingLayer::combinedTransformMovedOnScreen() const
+{
+    ASSERT(m_transformAtLastDamage);
+    const auto& reference = *m_transformAtLastDamage;
+    if (reference == m_transforms.combined)
+        return false;
+    if (!reference.isAffine() || !m_transforms.combined.isAffine())
+        return true;
+
+    // Moved if any corner shifts by more than 1e-3 device pixels, as GrClip::kBoundsTolerance in Skia.
+    static constexpr double maximumIgnoredShift = 1e-3;
+    const auto rect = paintedLayerRect();
+    for (const auto& corner : { rect.minXMinYCorner(), rect.maxXMinYCorner(), rect.minXMaxYCorner(), rect.maxXMaxYCorner() }) {
+        // In double, since float precision is coarser than the tolerance far from the origin.
+        double beforeX, beforeY, afterX, afterY;
+        reference.map(corner.x(), corner.y(), beforeX, beforeY);
+        m_transforms.combined.map(corner.x(), corner.y(), afterX, afterY);
+        if (std::abs(beforeX - afterX) > maximumIgnoredShift || std::abs(beforeY - afterY) > maximumIgnoredShift)
+            return true;
+    }
+    return false;
 }
 
 void SkiaCompositingLayer::collectBackdropDamage(SkCanvas& canvas, PaintContext& context)
@@ -1157,8 +1211,12 @@ void SkiaCompositingLayer::paintSelfAndChildren(SkCanvas& canvas, PaintContext& 
             clippingRect = rect;
     }
 
-    ScopedFlush autoFlush(canvas, context.imageSetBatch, clippingRect.isEmpty() ? ScopedFlush::Mode::DoNothing : ScopedFlush::Mode::FlushBeforeAndAfter);
-    if (!clippingRect.isEmpty())
+    const bool clipsDescendantsToPath = contentsRectClipsDescendants && m_contentsClipPath;
+
+    ScopedFlush autoFlush(canvas, context.imageSetBatch, (clippingRect.isEmpty() && !clipsDescendantsToPath) ? ScopedFlush::Mode::DoNothing : ScopedFlush::Mode::FlushBeforeAndAfter);
+    if (clipsDescendantsToPath)
+        canvas.clipPath(m_contentsClipPath->makeTransform(SkM44(clipTransform).asM33()), true);
+    else if (!clippingRect.isEmpty())
         clipRectToDevicePixels(canvas, clippingRect, clipTransform);
 
     for (auto& child : m_children)

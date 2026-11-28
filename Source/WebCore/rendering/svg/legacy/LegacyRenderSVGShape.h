@@ -58,7 +58,7 @@ public:
         GlobalCoordinateSpace,
         LocalCoordinateSpace
     };
-    LegacyRenderSVGShape(Type, SVGGraphicsElement&, Style::ComputedStyle&&);
+    LegacyRenderSVGShape(Type, SVGGraphicsElement&, UniqueRef<Style::ComputedStyle>&&);
     virtual ~LegacyRenderSVGShape();
 
     inline SVGGraphicsElement& graphicsElement() const;
@@ -100,7 +100,7 @@ protected:
 
     inline bool hasNonScalingStroke() const;
     AffineTransform computeNonScalingStrokeTransform() const;
-    Path* nonScalingStrokePath(const Path*, const AffineTransform&) const;
+    Path nonScalingStrokePath(const Path&, const AffineTransform&) const;
 
     virtual FloatRect adjustStrokeBoundingBoxForMarkersAndZeroLengthLinecaps(RepaintRectCalculation, FloatRect strokeBoundingBox) const { return strokeBoundingBox; }
 
@@ -136,6 +136,8 @@ private:
     bool setupNonScalingStrokeContext(AffineTransform&, GraphicsContextStateSaver&);
 
     FloatRect calculateApproximateStrokeBoundingBox() const;
+    // Upper bound on strokeBoundingBox(), computed without stroking the path.
+    std::optional<FloatRect> boundOfStrokeBoundingBox() const;
     
     std::unique_ptr<Path> createPath() const;
 

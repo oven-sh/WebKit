@@ -437,9 +437,10 @@ private:
                     changed |= mergePrediction(SpecInt32Only);
                 else if (m_graph.unaryArithShouldSpeculateInt52(node, m_pass))
                     changed |= mergePrediction(SpecInt52Any);
-                else if (isBytecodeNumberSpeculation(prediction))
-                    changed |= mergePrediction(speculatedDoubleTypeForPrediction(node->child1()->prediction()));
-                else {
+                else if (isNotCellNorBigIntSpeculation(prediction)) {
+                    // Fixup computes this negation on doubles, so an Int32 prediction would make every Int32 speculation on the result fail.
+                    changed |= mergePrediction(speculatedDoubleTypeForPrediction(prediction));
+                } else {
                     changed |= mergePrediction(SpecInt32Only);
                     if (node->op() == ValueNegate && node->mayHaveBigIntResult())
                         changed |= mergePrediction(SpecBigInt);
@@ -533,6 +534,17 @@ private:
                         || (right & SpecBigInt)))
                         changed |= mergePrediction(SpecBigInt);
                 }
+            }
+            break;
+        }
+
+        case ArithSign: {
+            SpeculatedType childPrediction = node->child1()->prediction();
+            if (childPrediction) {
+                if (isInt32OrBooleanSpeculation(childPrediction))
+                    changed |= mergePrediction(SpecInt32Only);
+                else
+                    changed |= mergePrediction(speculatedDoubleTypeForPrediction(childPrediction));
             }
             break;
         }
@@ -862,7 +874,14 @@ private:
                 
             m_graph.voteNode(node->child1(), ballot, weight);
             break;
-                
+
+        case ArithSign:
+            if (node->child1()->shouldSpeculateNumber() && !node->child1()->shouldSpeculateInt32OrBoolean())
+                m_graph.voteNode(node->child1(), VoteDouble, weight);
+            else
+                m_graph.voteNode(node->child1(), VoteValue, weight);
+            break;
+
         case ArithSqrt:
         case ArithUnary:
             if (node->child1()->shouldSpeculateNumber())
@@ -1462,7 +1481,8 @@ private:
             break;
         }
 
-        case NewTypedArrayBuffer: {
+        case NewTypedArrayBuffer:
+        case GetTypedArrayBuffer: {
             setPrediction(SpecObjectOther);
             break;
         }
@@ -1670,6 +1690,7 @@ private:
         case ArithDiv:
         case ArithMod:
         case ArithAbs:
+        case ArithSign:
         case GetByVal:
         case MultiGetByVal:
         case ToThis:

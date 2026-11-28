@@ -79,7 +79,7 @@ class RenderGrid final : public RenderBlock {
     WTF_MAKE_TZONE_ALLOCATED(RenderGrid);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderGrid);
 public:
-    RenderGrid(Element&, Style::ComputedStyle&&);
+    RenderGrid(Element&, UniqueRef<Style::ComputedStyle>&&);
     virtual ~RenderGrid();
 
     Element& element() const { return downcast<Element>(nodeForNonAnonymous()); }
@@ -117,7 +117,7 @@ public:
     bool isBaselineAlignmentForGridItem(const RenderBox& gridItem, Style::GridTrackSizingDirection alignmentContext) const;
 
     StyleContentAlignmentData contentAlignment(Style::GridTrackSizingDirection) const;
-    StyleSelfAlignmentData selfAlignmentForGridItem(const RenderBox&, LogicalBoxAxis containingAxis, StretchingMode = StretchingMode::Normal, const Style::ComputedStyle* = nullptr) const;
+    StyleSelfAlignmentData selfAlignmentForGridItem(const RenderBox&, LogicalBoxAxis containingAxis, const Style::ComputedStyle& gridStyle, StretchingMode = StretchingMode::Normal) const;
     bool willStretchItem(const RenderBox& item, LogicalBoxAxis containingAxis, StretchingMode = StretchingMode::Normal) const override;
 
     // These functions handle the actual implementation of layoutBlock based on if
@@ -176,6 +176,10 @@ public:
     bool isExtrinsicallySized() const;
 
     LayoutRange gridAreaRangeForOutOfFlow(const RenderBox&, Style::GridTrackSizingDirection) const;
+    void setGridAreaContentSizeForOutOfFlow(RenderBox&) const;
+
+protected:
+    void willBeDestroyed() override;
 
 private:
     friend class GridTrackSizingAlgorithm;
@@ -207,6 +211,7 @@ private:
 
     NODELETE WTF::Range<size_t> autoRepeatTracksRange(Style::GridTrackSizingDirection) const;
     std::unique_ptr<OrderedTrackIndexSet> computeEmptyTracksForAutoRepeat(Style::GridTrackSizingDirection) const;
+    std::unique_ptr<OrderedTrackIndexSet> computeEmptyTracksForGridLanesAutoFit(Style::GridTrackSizingDirection) const;
 
     enum class ShouldUpdateGridAreaLogicalSize : bool { No, Yes };
     void performPreLayoutForGridItems(const GridTrackSizingAlgorithm&, const ShouldUpdateGridAreaLogicalSize) const;
@@ -231,7 +236,6 @@ private:
     bool canPerformSimplifiedLayout() const final;
     void prepareGridItemForPositionedLayout(RenderBox&);
     NODELETE bool hasStaticPositionForGridItem(const RenderBox&, Style::GridTrackSizingDirection) const;
-    void layoutOutOfFlowBox(RenderBox&, RelayoutChildren, bool fixedPositionObjectsOnly) override;
 
     void computeTrackSizesForDefiniteSize(Style::GridTrackSizingDirection, LayoutUnit availableSpace, RenderGridLayoutState&);
     std::pair<LayoutUnit, LayoutUnit> computeTrackSizesForIndefiniteSize(GridTrackSizingAlgorithm&, Style::GridTrackSizingDirection, RenderGridLayoutState&) const;
@@ -243,6 +247,7 @@ private:
 
     void layoutGridItems(RenderGridLayoutState&, GridLanesResultRef);
     void layoutGridLanesItems(RenderGridLayoutState&, const GridLanesResult&);
+    LayoutUnit gridLanesContentBoxLogicalHeightForMaxContent(const GridTrackSizingAlgorithm&) const;
 
     void populateGridPositionsForDirection(const GridTrackSizingAlgorithm&, Style::GridTrackSizingDirection, GridLanesResultRef);
 
@@ -250,16 +255,16 @@ private:
 
     GridAxisPosition columnAxisPositionForGridItem(const RenderBox&) const;
     GridAxisPosition rowAxisPositionForGridItem(const RenderBox&) const;
+    std::pair<LayoutUnit, LayoutUnit> alignmentStartAndOffsetForGridItem(const RenderBox&, Style::GridTrackSizingDirection, GridLanesResultRef, LayoutUnit gridItemSize) const;
     LayoutUnit columnAxisOffsetForGridItem(const RenderBox&, GridLanesResultRef) const;
     LayoutUnit rowAxisOffsetForGridItem(const RenderBox&, GridLanesResultRef) const;
     ContentAlignmentData computeContentPositionAndDistributionOffset(Style::GridTrackSizingDirection, const LayoutUnit& availableFreeSpace, unsigned numberOfGridTracks) const;
+    ContentAlignmentData stackingAxisContentAlignment(Style::GridTrackSizingDirection, LayoutUnit stackingRangeSize) const;
     void setLogicalPositionForGridItem(RenderBox&, GridLanesResultRef) const;
     LayoutUnit logicalOffsetForGridItem(const RenderBox&, Style::GridTrackSizingDirection, GridLanesResultRef) const;
 
     LayoutUnit gridAreaBreadthForGridItemIncludingAlignmentOffsets(const RenderBox&, Style::GridTrackSizingDirection) const;
 
-    void paintChildren(PaintInfo& forSelf, const LayoutPoint& paintOffset, PaintInfo& forChild, bool usePrintRect) override;
-    bool hitTestChildren(const HitTestRequest&, HitTestResult&, const HitTestLocation&, const LayoutPoint& adjustedLocation, HitTestAction) override;
     LayoutOptionalOutsets allowedLayoutOverflow() const override;
     LayoutRect contentOverflowRect() const;
 
@@ -345,6 +350,11 @@ private:
 
     bool layoutUsingGridFormattingContext();
 
+    const LayoutIntegration::GridLayout* gridLayout() const { return m_gridLayout.get(); }
+    LayoutIntegration::GridLayout* gridLayout() { return m_gridLayout.get(); }
+    LayoutIntegration::GridLayout& ensureGridLayout();
+
+    std::unique_ptr<LayoutIntegration::GridLayout> m_gridLayout;
     LayoutUnit m_gridLanesContentSizeForWebInspectorOverlay;
     std::optional<bool> m_hasGridFormattingContextLayout;
 

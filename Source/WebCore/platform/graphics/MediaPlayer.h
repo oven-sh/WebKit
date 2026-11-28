@@ -421,8 +421,6 @@ public:
 
 #if PLATFORM(IOS_FAMILY)
     NSArray *timedMetadata() const;
-    String accessLog() const;
-    String errorLog() const;
 #endif
 
     FloatSize naturalSize();
@@ -580,6 +578,7 @@ public:
     void repaint();
 
     bool hasAvailableVideoFrame() const;
+    bool videoFrameHasAlpha() const;
     void prepareForRendering();
 
     using MediaPlayerEnums::WirelessPlaybackTargetType;

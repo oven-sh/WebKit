@@ -31,6 +31,7 @@
 #include "ContextDestructionObserverInlines.h"
 #include "DOMException.h"
 #include "ExceptionOr.h"
+#include "HEVCUtilities.h"
 #include "JSDOMConvertDictionary.h"
 #include "JSDOMPromiseDeferred.h"
 #include "JSWebCodecsVideoEncoderSupport.h"
@@ -49,6 +50,7 @@
 #include "WebCodecsVideoFrame.h"
 #include <JavaScriptCore/ArrayBuffer.h>
 #include <JavaScriptCore/ConsoleTypes.h>
+#include <wtf/Borrow.h>
 #include <wtf/Scope.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -97,6 +99,23 @@ static bool isSupportedVP9EncoderCodec(const String& codec, const SettingsValues
     }
 }
 
+static bool isSupportedHEVCEncoderCodec(const String& codec, const SettingsValues& settings)
+{
+    if (!settings.webCodecsHEVCEnabled)
+        return false;
+#if PLATFORM(COCOA)
+    auto parameters = parseHEVCCodecParameters(codec);
+    if (!parameters)
+        return false;
+    // Main 4:2:2 10 is the only range extensions profile VideoToolbox encodes.
+    constexpr uint8_t rangeExtensionsProfileIDC = 4;
+    return parameters->generalProfileIDC != rangeExtensionsProfileIDC || isHEVCMain42210Profile(*parameters);
+#else
+    UNUSED_PARAM(codec);
+    return true;
+#endif
+}
+
 static bool isSupportedEncoderCodec(const WebCodecsVideoEncoderConfig& config, const SettingsValues& settings)
 {
     constexpr size_t maxFrameDimension = 32767;
@@ -105,8 +124,7 @@ static bool isSupportedEncoderCodec(const WebCodecsVideoEncoderConfig& config, c
 
     return config.codec.startsWith("vp8"_s) || config.codec.startsWith("avc1."_s)
         || (config.codec.startsWith("vp09."_s) && isSupportedVP9EncoderCodec(config.codec, settings))
-        || (config.codec.startsWith("hev1."_s) && settings.webCodecsHEVCEnabled)
-        || (config.codec.startsWith("hvc1."_s) && settings.webCodecsHEVCEnabled)
+        || ((config.codec.startsWith("hev1."_s) || config.codec.startsWith("hvc1."_s)) && isSupportedHEVCEncoderCodec(config.codec, settings))
         || (config.codec.startsWith("av01.0"_s) && settings.webCodecsAV1Enabled);
 }
 
@@ -342,7 +360,7 @@ ExceptionOr<void> WebCodecsVideoEncoder::encode(Ref<WebCodecsVideoFrame>&& frame
 
             if (!result) {
                 if (RefPtr context = protectedThis->scriptExecutionContext())
-                    context->addConsoleMessage(MessageSource::JS, MessageLevel::Error, makeString("VideoEncoder encode failed: "_s, result.error()));
+                    context->addConsoleMessage(MessageSource::Media, MessageLevel::Error, makeString("VideoEncoder encode failed: "_s, result.error()));
                 protectedThis->closeEncoder(Exception { ExceptionCode::EncodingError, WTF::move(result.error()) });
                 return;
             }
@@ -430,7 +448,7 @@ ExceptionOr<void> WebCodecsVideoEncoder::resetEncoder(const Exception& exception
     clearControlMessageQueueAndMaybeScheduleDequeueEvent();
 
     auto promises = std::exchange(m_pendingFlushPromises, { });
-    for (auto& promise : promises)
+    for (auto& promise : borrow(promises))
         promise->reject(exception);
 
     return { };

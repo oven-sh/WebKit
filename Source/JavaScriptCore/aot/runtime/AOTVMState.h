@@ -203,9 +203,9 @@ public:
         unsigned length { 0 };
         bool isOneOfSeveral { false };
     };
-    UncheckedKeyHashMap<uint32_t, ComputedFunctionName, WTF::IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> computedFunctionNames;
+    HashMap<uint32_t, ComputedFunctionName, WTF::IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> computedFunctionNames;
     struct KeysComparedLastWithLongNames {
-        UncheckedKeyHashMap<const UniquedStringImpl*, const JSString*> byName;
+        HashMap<const UniquedStringImpl*, const JSString*> byName;
         uint64_t versionOfHeap { 0 };
     };
     KeysComparedLastWithLongNames keysComparedLastWithLongNames;

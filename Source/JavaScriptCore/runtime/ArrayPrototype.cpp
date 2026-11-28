@@ -1284,7 +1284,14 @@ JSC_DEFINE_HOST_FUNCTION(arrayProtoFuncUnShift, (JSGlobalObject* globalObject, C
     auto scope = DECLARE_THROW_SCOPE(vm);
     // 15.4.4.13
 
-    JSObject* thisObj = callFrame->thisValue().toThis(globalObject, ECMAMode::strict()).toObject(globalObject);
+    JSValue thisValue = callFrame->thisValue().toThis(globalObject, ECMAMode::strict());
+
+    if (callFrame->argumentCount() == 1 && isJSArray(thisValue)) {
+        if (JSValue newLength = asArray(thisValue)->fastUnshift(vm, callFrame->uncheckedArgument(0)))
+            RELEASE_AND_RETURN(scope, JSValue::encode(newLength));
+    }
+
+    JSObject* thisObj = thisValue.toObject(globalObject);
     EXCEPTION_ASSERT(!!scope.exception() == !thisObj);
     if (!thisObj) [[unlikely]]
         return encodedJSValue();
@@ -1367,6 +1374,25 @@ ALWAYS_INLINE JSValue fastIndexOf(JSGlobalObject* globalObject, VM& vm, JSArray*
 
             if (searchElement.isString()) {
                 JSString* searchString = asString(searchElement);
+                if (!searchString->isRope() && searchString->getValueImpl()->isAtom()) {
+                    RefPtr impl = searchString->getValueImpl();
+                    for (; index < length; ++index) {
+                        JSValue value = data[index].get();
+                        if (!value || !value.isString())
+                            continue;
+                        JSString* string = asString(value);
+                        if (string->isDefinitelyAtom()) {
+                            if (string->getValueImpl() == impl)
+                                return jsNumber(index);
+                            continue;
+                        }
+                        bool isEqual = string->equal(globalObject, searchString);
+                        RETURN_IF_EXCEPTION(scope, { });
+                        if (isEqual)
+                            return jsNumber(index);
+                    }
+                    return jsNumber(-1);
+                }
                 unsigned searchLength = searchString->length();
                 for (; index < length; ++index) {
                     JSValue value = data[index].get();

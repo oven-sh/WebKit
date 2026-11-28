@@ -280,6 +280,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     Modules/encryptedmedia/legacy/LegacyCDMPrivate.h
     Modules/encryptedmedia/legacy/LegacyCDMPrivateClearKey.h
 
+    Modules/fetch/DeferredFetchIdentifier.h
     Modules/fetch/FetchBodyConsumer.h
     Modules/fetch/FetchBodySource.h
     Modules/fetch/FetchHeaders.h
@@ -529,7 +530,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     Modules/permissions/PermissionState.h
     Modules/permissions/Permissions.h
 
-    Modules/phonenumberpossession/AggregatorResponseDataFields.h
     Modules/phonenumberpossession/PhoneNumberPossessionCoordinatorClient.h
     Modules/phonenumberpossession/PhoneNumberPossessionRequest.h
     Modules/phonenumberpossession/PhoneNumberPossessionResponse.h
@@ -1133,6 +1133,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     css/values/primitives/CSSTypeSpecifier.h
     css/values/primitives/CSSURL.h
     css/values/primitives/CSSURLModifiers.h
+    css/values/primitives/CSSURLProvenance.h
     css/values/primitives/CSSUnevaluatedCalc.h
 
     css/values/shapes/CSSBasicShape.h
@@ -1451,7 +1452,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     history/CachedFramePlatformData.h
     history/CachedPage.h
     history/HistoryItem.h
-    history/ProcessSwapDisposition.h
 
     html/Allowlist.h
     html/AnchorElementFunctions.h
@@ -1652,6 +1652,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     inspector/InspectorResourceUtilities.h
     inspector/InspectorWebAgentBase.h
     inspector/LegacyWebSocketInspectorInstrumentation.h
+    inspector/NetworkInterception.h
     inspector/PageInspectorController.h
     inspector/UncachedLoadType.h
     inspector/WebInjectedScriptManager.h
@@ -2491,6 +2492,9 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/FontSizeAdjust.h
     platform/graphics/FontTaggedSettings.h
     platform/graphics/FourCC.h
+    platform/graphics/FreeformGradient.h
+    platform/graphics/FreeformGradientRenderer.h
+    platform/graphics/FreeformGradientRendererCPU.h
     platform/graphics/GainMap.h
     platform/graphics/GCGLExtension.h
     platform/graphics/GCGLSpan.h
@@ -2534,7 +2538,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/ImageBufferAllocator.h
     platform/graphics/ImageBufferBackend.h
     platform/graphics/ImageBufferParameters.h
-    platform/graphics/ImageBufferDisplayListBackend.h
     platform/graphics/ImageBufferFormat.h
     platform/graphics/ImageBufferResourceLimits.h
     platform/graphics/ImageBufferTransferIdentifier.h
@@ -2604,6 +2607,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/PixelBufferFormat.h
     platform/graphics/PixelFormat.h
     platform/graphics/PlaceholderFrameIdentifier.h
+    platform/graphics/PlanarImageConverter.h
     platform/graphics/PlatformAudioTrackConfiguration.h
     platform/graphics/PlatformColorSpace.h
     platform/graphics/PlatformDisplay.h
@@ -2636,6 +2640,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/ScreenDataOverrides.h
     platform/graphics/ShareableBitmap.h
     platform/graphics/ShareableBitmapHandle.h
+    platform/graphics/SharedPDFDocument.h
 
     platform/graphics/ShouldLocalizeAxisNames.h
     platform/graphics/SourceBrush.h
@@ -2710,6 +2715,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/displaylists/DisplayListItems.h
     platform/graphics/displaylists/DisplayListRecorder.h
     platform/graphics/displaylists/DisplayListRecorderImpl.h
+    platform/graphics/displaylists/DisplayListResourceCache.h
 
     platform/graphics/egl/BitmapTexture.h
     platform/graphics/egl/BitmapTexturePool.h
@@ -2902,6 +2908,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/network/HTTPParsers.h
     platform/network/HTTPSByDefaultMode.h
     platform/network/HTTPStatusCodes.h
+    platform/network/IncludesCredentials.h
     platform/network/NetworkLoadInformation.h
     platform/network/NetworkLoadMetrics.h
     platform/network/NetworkStateNotifier.h
@@ -2959,6 +2966,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/video-codecs/VideoCodecType.h
 
     platform/xr/PlatformXR.h
+    platform/xr/XRAnchorIdentifier.h
     platform/xr/XRHitTestSourceIdentifier.h
 
     plugins/PluginData.h
@@ -2972,7 +2980,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     rendering/CSSValueKey.h
     rendering/CaretRectComputation.h
     rendering/ClipRect.h
-    rendering/EllipsisBoxPainter.h
     rendering/EventRegion.h
     rendering/FloatingObjects.h
     rendering/GapRects.h
@@ -2991,9 +2998,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     rendering/OrderIterator.h
     rendering/OverlapTestRequestClient.h
     rendering/Pagination.h
-    rendering/PaintFrequencyTracker.h
-    rendering/PaintInfo.h
-    rendering/PaintPhase.h
     rendering/PathOperation.h
     rendering/PlatformRenderTheme.h
     rendering/RegionContext.h
@@ -3057,6 +3061,10 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     rendering/TransformOperationData.h
     rendering/VisibleRectContext.h
 
+    rendering/paint/EllipsisBoxPainter.h
+    rendering/paint/PaintFrequencyTracker.h
+    rendering/paint/PaintInfo.h
+    rendering/paint/PaintPhase.h
 
     rendering/shapes/LayoutShape.h
     rendering/shapes/PathLayoutShape.h
@@ -3214,6 +3222,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     style/values/backgrounds/StyleRepeatStyle.h
 
     style/values/borders/StyleBorderRadius.h
+    style/values/borders/StyleBorderShape.h
     style/values/borders/StyleBoxShadow.h
     style/values/borders/StyleCornerShapeValue.h
     style/values/borders/StyleShadow.h
@@ -3230,7 +3239,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
 
     style/values/color/StyleColor.h
     style/values/color/StyleColorOptions.h
-    style/values/color/StyleCurrentAccentColor.h
     style/values/color/StyleCurrentColor.h
     style/values/color/StyleDynamicRangeLimit.h
     style/values/color/StyleDynamicRangeLimitMix.h
@@ -3385,6 +3393,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     style/values/overflow/StyleScrollbarGutter.h
     style/values/overflow/StyleTextOverflow.h
 
+    style/values/page/StylePageName.h
     style/values/page/StylePageSize.h
 
     style/values/pointerevents/StyleTouchAction.h

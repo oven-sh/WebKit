@@ -28,11 +28,7 @@
 
 #include "StyleGeneratedImage.h"
 
-namespace WebCore {
-
-class CSSInvalidImageValue;
-
-namespace Style {
+namespace WebCore::Style {
 
 class InvalidImage final : public GeneratedImage {
 public:
@@ -66,7 +62,6 @@ private:
     Ref<DeprecatedCSSOMValue> computedStyleDeprecatedCSSOMValue(CSSValuePool&, const Style::ComputedStyle&, CSSStyleDeclaration&) const final;
 };
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style
 
 SPECIALIZE_TYPE_TRAITS_STYLE_IMAGE(InvalidImage, isInvalidImage)

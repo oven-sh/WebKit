@@ -49,7 +49,7 @@
 #include "TransformStream.h"
 #include "WritableStream.h"
 #include <JavaScriptCore/ArrayBufferView.h>
-#include <pal/text/TextCodecUTF8.h>
+#include <wtf/Borrow.h>
 #include <wtf/text/MakeString.h>
 
 namespace WebCore {
@@ -203,11 +203,11 @@ void FetchBody::consumeAsStream(FetchBodyOwner& owner, FetchBodySource& source)
     else if (isArrayBufferView())
         closeStream = source.enqueue(ArrayBuffer::tryCreate(protect(arrayBufferViewBody())->span()));
     else if (isText()) {
-        auto data = PAL::TextCodecUTF8::encodeUTF8(textBody());
-        closeStream = source.enqueue(ArrayBuffer::tryCreate(data));
+        auto data = utf8Bytes(textBody());
+        closeStream = source.enqueue(ArrayBuffer::tryCreate(borrow(data)->span()));
     } else if (isURLSearchParams()) {
-        auto data = PAL::TextCodecUTF8::encodeUTF8(protect(urlSearchParamsBody())->toString());
-        closeStream = source.enqueue(ArrayBuffer::tryCreate(data));
+        auto data = utf8Bytes(protect(urlSearchParamsBody())->toString());
+        closeStream = source.enqueue(ArrayBuffer::tryCreate(borrow(data)->span()));
     } else if (isBlob())
         owner.loadBlob(protect(blobBody()).get(), nullptr);
     else if (isFormData())
@@ -235,8 +235,8 @@ void FetchBody::consumeArrayBufferView(FetchBodyOwner& owner, Ref<DeferredPromis
 
 void FetchBody::consumeText(FetchBodyOwner& owner, Ref<DeferredPromise>&& promise, const String& text)
 {
-    auto data = PAL::TextCodecUTF8::encodeUTF8(text);
-    protect(consumer())->resolveWithData(WTF::move(promise), owner.contentType(), data.span());
+    auto data = utf8Bytes(text);
+    protect(consumer())->resolveWithData(WTF::move(promise), owner.contentType(), borrow(data)->span());
     m_data = nullptr;
 }
 
@@ -268,9 +268,9 @@ void FetchBody::loadingSucceeded(const String& contentType)
 RefPtr<FormData> FetchBody::bodyAsFormData() const
 {
     if (isText())
-        return FormData::create(PAL::TextCodecUTF8::encodeUTF8(textBody()));
+        return FormData::create(utf8Bytes(textBody()));
     if (isURLSearchParams())
-        return FormData::create(PAL::TextCodecUTF8::encodeUTF8(protect(urlSearchParamsBody())->toString()));
+        return FormData::create(utf8Bytes(protect(urlSearchParamsBody())->toString()));
     if (isBlob()) {
         auto body = FormData::create();
         body->appendBlob(blobBody().url());
@@ -385,9 +385,9 @@ FetchBody::TakenData FetchBody::take()
         return formDataBody();
 
     if (isText())
-        return SharedBuffer::create(PAL::TextCodecUTF8::encodeUTF8(textBody()));
+        return SharedBuffer::create(utf8Bytes(textBody()));
     if (isURLSearchParams())
-        return SharedBuffer::create(PAL::TextCodecUTF8::encodeUTF8(protect(urlSearchParamsBody())->toString()));
+        return SharedBuffer::create(utf8Bytes(protect(urlSearchParamsBody())->toString()));
 
     if (isArrayBuffer())
         return SharedBuffer::create(protect(arrayBufferBody())->span());
@@ -427,10 +427,10 @@ FetchBody FetchBody::clone(JSDOMGlobalObject& globalObject)
         ASSERT(!clones.hasException());
         if (!clones.hasException()) {
             auto pair = clones.releaseReturnValue();
-            m_data = pair[0];
-            m_readableStream = WTF::move(pair[0]);
-            clone.m_data = pair[1];
-            clone.m_readableStream = WTF::move(pair[1]);
+            m_data = borrow(pair)[0];
+            m_readableStream = WTF::move(borrow(pair)[0]);
+            clone.m_data = borrow(pair)[1];
+            clone.m_readableStream = WTF::move(borrow(pair)[1]);
         }
     }
     return clone;

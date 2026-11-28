@@ -33,6 +33,7 @@
 #if ENABLE(C_LOOP)
 
 #include "Register.h"
+#include <JavaScriptCore/GCConductor.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/PageReservation.h>
 
@@ -59,7 +60,7 @@ namespace JSC {
         bool containsAddress(Register* address) { return (lowAddress() <= address && address < highAddress()); }
         static size_t committedByteCount();
 
-        void gatherConservativeRoots(ConservativeRoots&, JITStubRoutineSet&, CodeBlockSet&);
+        void gatherConservativeRoots(ConservativeRoots&, JITStubRoutineSet&, CodeBlockSet&) WTF_REQUIRES_SHARED_CAPABILITY(markerWithWorldStoppedRole);
         void sanitizeStack();
 
         inline void* currentStackPointer() const

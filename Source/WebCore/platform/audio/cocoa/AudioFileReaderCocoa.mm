@@ -333,7 +333,7 @@ static std::optional<size_t> framesInSamples(Vector<Ref<MediaSampleAVFObjC>>& sa
         RetainPtr formatDescription = PAL::CMSampleBufferGetFormatDescription(sampleBuffer.get());
         if (!formatDescription)
             continue;
-        const AudioStreamBasicDescription* const asbd = PAL::CMAudioFormatDescriptionGetStreamBasicDescription(formatDescription.get());
+        const AudioStreamBasicDescription* const asbd = richestDecodableStreamBasicDescription(formatDescription.get());
         if (!asbd)
             return { };
 
@@ -388,7 +388,7 @@ ALLOW_DEPRECATED_DECLARATIONS_BEGIN
     RetainPtr audioTracks = [asset tracksWithMediaType:AVMediaTypeAudio];
 ALLOW_DEPRECATED_DECLARATIONS_END
     if (!audioTracks || ![audioTracks count]) {
-        RELEASE_LOG_FAULT(WebAudio, "AudioFileReader: No audio tracks found for '%s' type", mimeType.utf8());
+        RELEASE_LOG_FAULT(WebAudio, "AudioFileReader: No audio tracks found for '%s' type", makeUTF8CString(mimeType));
         return nullptr;
     }
 
@@ -738,7 +738,9 @@ std::optional<AudioStreamBasicDescription> AudioFileReader::fileDataFormat() con
     if (!formatDescription)
         return { };
 
-    const AudioStreamBasicDescription* const asbd = PAL::CMAudioFormatDescriptionGetStreamBasicDescription(formatDescription.get());
+    const AudioStreamBasicDescription* const asbd = richestDecodableStreamBasicDescription(formatDescription.get());
+    if (!asbd)
+        return { };
     return *asbd;
 }
 

@@ -26,6 +26,7 @@
 #include "config.h"
 #include "StrongSet.h"
 
+#include "Collector.h"
 #include "JSCJSValueInlines.h"
 #include "SlotVisitor.h"
 #include "VM.h"
@@ -197,7 +198,6 @@ void StrongSet::didBecomeEmpty(StrongBlock* block)
 template<typename Visitor>
 void StrongSet::visitAggregateImpl(Visitor& visitor)
 {
-    ASSERT(m_vm.heap.worldIsStopped());
     forEachSlot([&](HandleSlot slot) {
         JSValue value = *slot;
         if (!value)

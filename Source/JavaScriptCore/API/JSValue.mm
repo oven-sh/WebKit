@@ -829,7 +829,7 @@ public:
 
 private:
     JSGlobalContextRef m_context;
-    UncheckedKeyHashMap<JSValueRef, __unsafe_unretained id> m_objectMap;
+    HashMap<JSValueRef, __unsafe_unretained id> m_objectMap;
     Vector<Task> m_worklist;
     Vector<JSC::Strong<JSC::Unknown>> m_jsValues;
 };
@@ -1076,7 +1076,7 @@ public:
 
 private:
     JSContext *m_context;
-    UncheckedKeyHashMap<__unsafe_unretained id, JSValueRef> m_objectMap;
+    HashMap<__unsafe_unretained id, JSValueRef> m_objectMap;
     Vector<Task> m_worklist;
     Vector<JSC::Strong<JSC::Unknown>> m_jsValues;
 };
@@ -1243,7 +1243,7 @@ struct StructTagHandler {
     SEL typeToValueSEL;
     SEL valueToTypeSEL;
 };
-typedef UncheckedKeyHashMap<String, StructTagHandler> StructHandlers;
+typedef HashMap<String, StructTagHandler> StructHandlers;
 
 static StructHandlers* createStructHandlerMap()
 {
@@ -1308,7 +1308,7 @@ static StructHandlers* createStructHandlerMap()
     });
 
     // Step 3: clean up - remove entries where we found prospective valueWith<Foo>:inContext: conversions, but no matching to<Foo> methods.
-    typedef UncheckedKeyHashSet<String> RemoveSet;
+    typedef HashSet<String> RemoveSet;
     RemoveSet removeSet;
     for (StructHandlers::iterator iter = structHandlers->begin(); iter != structHandlers->end(); ++iter) {
         StructTagHandler& handler = iter->value;

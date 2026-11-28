@@ -101,7 +101,7 @@ void SWContextManager::startedServiceWorker(std::optional<ServiceWorkerJobDataId
 
 ServiceWorkerThreadProxy* SWContextManager::serviceWorkerThreadProxy(ServiceWorkerIdentifier identifier) const
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     Locker locker { m_workerMapLock };
     return m_workerMap.get(identifier);
 }
@@ -271,7 +271,7 @@ bool SWContextManager::stopRunningDebuggerTasksOnServiceWorker(ServiceWorkerIden
 void SWContextManager::serviceWorkerFailedToTerminate(ServiceWorkerIdentifier serviceWorkerIdentifier)
 {
     UNUSED_PARAM(serviceWorkerIdentifier);
-    RELEASE_LOG_ERROR(ServiceWorker, "Failed to terminate service worker with identifier %s, killing the service worker process", serviceWorkerIdentifier.loggingString().utf8());
+    RELEASE_LOG_ERROR(ServiceWorker, "Failed to terminate service worker with identifier %s, killing the service worker process", makeUTF8CString(serviceWorkerIdentifier.loggingString()));
 #if ASAN_ENABLED && PLATFORM(COCOA)
     // Abort with a reason instead of exiting so the crash report names this termination path
     // and captures the backtrace of the worker thread that failed to stop.

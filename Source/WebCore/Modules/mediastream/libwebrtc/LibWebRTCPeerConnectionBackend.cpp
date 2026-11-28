@@ -49,6 +49,7 @@
 #include "RealtimeOutgoingAudioSource.h"
 #include "RealtimeOutgoingVideoSource.h"
 #include "Settings.h"
+#include <wtf/Borrow.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -161,21 +162,21 @@ webrtc::PeerConnectionInterface::RTCConfiguration configurationFromMediaEndpoint
     rtcConfiguration.bundle_policy = bundlePolicyfromConfiguration(configuration);
     rtcConfiguration.rtcp_mux_policy = rtcpMuxPolicyfromConfiguration(configuration);
 
-    for (auto& server : configuration.iceServers) {
+    for (auto& server : borrow(configuration.iceServers)) {
         webrtc::PeerConnectionInterface::IceServer iceServer;
-        iceServer.username = server.username.utf8().toStdString();
-        iceServer.password = server.credential.utf8().toStdString();
-        for (auto& url : server.urls)
-            iceServer.urls.push_back(url.string().utf8().toStdString());
+        iceServer.username = makeUTF8CString(server.username).toStdString();
+        iceServer.password = makeUTF8CString(server.credential).toStdString();
+        for (auto& url : borrow(server.urls))
+            iceServer.urls.push_back(makeUTF8CString(url.string()).toStdString());
         rtcConfiguration.servers.push_back(WTF::move(iceServer));
     }
 
     // FIXME: Activate ice candidate pool size once it no longer bothers test bots.
     // rtcConfiguration.ice_candidate_pool_size = configuration.iceCandidatePoolSize;
 
-    for (auto& pem : configuration.certificates) {
+    for (auto& pem : borrow(configuration.certificates)) {
         rtcConfiguration.certificates.push_back(webrtc::RTCCertificate::FromPEM(webrtc::RTCCertificatePEM {
-            std::string_view { byteCast<char>(pem.privateKey.utf8().span()) }, std::string_view { byteCast<char>(pem.certificate.utf8().span()) }
+            std::string_view { byteCast<char>(makeUTF8CString(pem.privateKey).span()) }, std::string_view { byteCast<char>(makeUTF8CString(pem.certificate).span()) }
         }));
     }
 
@@ -272,7 +273,7 @@ void LibWebRTCPeerConnectionBackend::doAddIceCandidate(RTCIceCandidate& candidat
 {
     webrtc::SdpParseError error;
     int sdpMLineIndex = candidate.sdpMLineIndex() ? candidate.sdpMLineIndex().value() : 0;
-    std::unique_ptr<webrtc::IceCandidate> rtcCandidate(webrtc::CreateIceCandidate(std::string_view { byteCast<char>(candidate.sdpMid().utf8().span()) }, sdpMLineIndex, candidate.candidate().utf8().toStdString(), &error));
+    std::unique_ptr<webrtc::IceCandidate> rtcCandidate(webrtc::CreateIceCandidate(std::string_view { byteCast<char>(makeUTF8CString(candidate.sdpMid()).span()) }, sdpMLineIndex, makeUTF8CString(candidate.candidate()).toStdString(), &error));
 
     if (!rtcCandidate) {
         callback(Exception { ExceptionCode::OperationError, String::fromUTF8(error.description) });

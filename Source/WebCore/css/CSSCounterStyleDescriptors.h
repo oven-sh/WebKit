@@ -140,7 +140,6 @@ struct CSSCounterStyleDescriptors {
     void setSymbols(Vector<Symbol>);
     void setAdditiveSymbols(AdditiveSymbols);
 
-    NODELETE String nameCSSText() const;
     String systemCSSText() const;
     String negativeCSSText() const;
     String prefixCSSText() const;
@@ -152,7 +151,7 @@ struct CSSCounterStyleDescriptors {
     String additiveSymbolsCSSText() const;
 
     Name m_name;
-    System m_system;
+    System m_system { System::Symbolic };
     NegativeSymbols m_negativeSymbols;
     Symbol m_prefix;
     Symbol m_suffix;
@@ -161,9 +160,9 @@ struct CSSCounterStyleDescriptors {
     Name m_fallbackName;
     Vector<Symbol> m_symbols;
     AdditiveSymbols m_additiveSymbols;
-    SpeakAs m_speakAs;
+    SpeakAs m_speakAs { SpeakAs::Auto };
     Name m_extendsName;
-    int m_fixedSystemFirstSymbolValue;
+    int m_fixedSystemFirstSymbolValue { 1 };
     OptionSet<ExplicitlySetDescriptors> m_explicitlySetDescriptors;
     bool m_isExtendedResolved { false };
 };

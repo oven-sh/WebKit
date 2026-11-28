@@ -57,13 +57,13 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(UserGestureIndicator);
 
 NODELETE static UserGestureToken* currentToken(JSC::VM& vm)
 {
-    ASSERT(isMainThread());
+    ASSERT_WITH_SECURITY_IMPLICATION(isMainThread());
     SUPPRESS_MEMORY_UNSAFE_CAST return static_cast<UserGestureToken*>(vm.crossTaskToken());
 }
 
 static void setCurrentToken(JSC::VM& vm, RefPtr<UserGestureToken>&& token)
 {
-    ASSERT(isMainThread());
+    ASSERT_WITH_SECURITY_IMPLICATION(isMainThread());
     vm.setCrossTaskToken(WTF::move(token));
 }
 
@@ -115,7 +115,7 @@ UserGestureToken::~UserGestureToken()
     for (Ref window : m_windowsWithForcedActivation)
         window->revokeForcedActivation(identifier());
 
-    if (RefPtr frame = m_frameWithForcedActivationInOtherProcesses.get())
+    if (RefPtr frame = m_frameWithForcedActivationInOtherProcesses; frame && frame->page())
         frame->loader().client().didRevokeForcedUserActivation(identifier());
 }
 
@@ -160,15 +160,16 @@ void UserGestureToken::didGrantForcedActivationInOtherProcesses(LocalFrame& fram
     m_frameWithForcedActivationInOtherProcesses = frame;
 }
 
-static Seconds maxIntervalForUserGestureForwardingForFetch { 10 };
+static constexpr Seconds defaultMaxIntervalForUserGestureForwardingForFetch { 10_s };
+static Seconds maxIntervalForUserGestureForwardingForFetch { defaultMaxIntervalForUserGestureForwardingForFetch };
 const Seconds& UserGestureToken::maximumIntervalForUserGestureForwardingForFetch()
 {
     return maxIntervalForUserGestureForwardingForFetch;
 }
 
-void UserGestureToken::setMaximumIntervalForUserGestureForwardingForFetchForTesting(Seconds value)
+void UserGestureToken::setMaximumIntervalForUserGestureForwardingForFetchForTesting(std::optional<Seconds> value)
 {
-    maxIntervalForUserGestureForwardingForFetch = WTF::move(value);
+    maxIntervalForUserGestureForwardingForFetch = value.value_or(defaultMaxIntervalForUserGestureForwardingForFetch);
 }
 
 bool UserGestureToken::isValidForDocument(const Document& document) const
@@ -243,7 +244,7 @@ UserGestureIndicator::UserGestureIndicator(IsProcessingUserGesture isProcessingU
 
 UserGestureIndicator::UserGestureIndicator(std::optional<IsProcessingUserGesture> isProcessingUserGesture, Document* document, UserGestureType gestureType, ProcessInteractionStyle processInteractionStyle, std::optional<WTF::UUID> authorizationToken, CanRequestDOMPaste canRequestDOMPaste, MonotonicTime startTime, DOMPasteAccessPolicy domPasteAccessPolicy, GestureScope gestureScope, RemoveTransientActivation removeTransientActivation, ActivationNotification activationNotification)
 {
-    ASSERT(isMainThread());
+    ASSERT_WITH_SECURITY_IMPLICATION(isMainThread());
 
     auto& vm = commonVM();
     m_previousToken = currentToken(vm);
@@ -287,7 +288,7 @@ UserGestureIndicator::UserGestureIndicator(std::optional<IsProcessingUserGesture
 // When a user interaction causes firing of an activation triggering input event in a Document...
 void UserGestureIndicator::notifyActivation(Document& document)
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
 
     // NOTE: Only activate the relevent DOMWindow when the gestureType is an ActivationTriggering one
     RefPtr token = currentToken(commonVM());

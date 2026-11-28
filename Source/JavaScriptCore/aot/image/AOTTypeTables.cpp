@@ -32,7 +32,7 @@ namespace JSC { namespace AOT {
 static_assert(!offsetof(LayoutSetData, members));
 static_assert(!(RuntimeCellTest::offsetOfOperand() % sizeof(uint32_t)) && !(sizeof(RuntimeType) % sizeof(uint32_t)) && !(sizeof(RuntimeCellTest) % sizeof(uint32_t)));
 
-using TypesSeenByTypeTables = UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+using TypesSeenByTypeTables = HashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
 
 static void nameWhatTypeRecordNames(const Typed::Program& program, const Typed::Type& type, NamesOfTables& names)
 {
@@ -104,7 +104,7 @@ struct TypeRecordsBeingEncoded {
     Vector<uint32_t> firstWord;
     Vector<OperandOfShapeTestInTypeRecords> operandsOfShapeTests;
     Vector<LayoutSetTestedByTypeRecords> sets;
-    UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> setOfLayouts;
+    HashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> setOfLayouts;
 };
 
 } // anonymous namespace

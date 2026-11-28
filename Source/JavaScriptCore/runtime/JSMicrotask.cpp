@@ -32,7 +32,6 @@
 #include "AOTModuleMicrotasks.h"
 #include "AOTModuleRecord.h"
 #include "AOTReactionChain.h"
-#include "MicrotaskQueueInlines.h"
 #endif
 #include "AggregateError.h"
 #include "BuiltinNames.h"
@@ -65,6 +64,7 @@
 #include "JSSentinel.h"
 #include "LLIntThunks.h"
 #include "Microtask.h"
+#include "MicrotaskQueueInlines.h"
 #include "ModuleGraphLoadingState.h"
 #include "ModuleLoaderPayload.h"
 #include "ModuleLoadingContext.h"
@@ -97,7 +97,10 @@ NODELETE static ALWAYS_INLINE JSCell* dynamicCastToCell(JSValue value)
 }
 
 template<typename... Args> requires (std::is_convertible_v<Args, JSValue> && ...)
-static JSValue callMicrotask(JSGlobalObject* globalObject, JSValue functionObject, JSValue thisValue, JSCell* context, ASCIILiteral message, MicrotaskCallCache* microtaskCallCache, Args... args)
+static NEVER_INLINE JSValue callMicrotaskGeneric(JSGlobalObject*, JSValue functionObject, JSValue thisValue, JSCell* context, ASCIILiteral message, MicrotaskCallCache*, Args...);
+
+template<typename... Args> requires (std::is_convertible_v<Args, JSValue> && ...)
+static ALWAYS_INLINE JSValue callMicrotask(JSGlobalObject* globalObject, JSValue functionObject, JSValue thisValue, JSCell* context, ASCIILiteral message, MicrotaskCallCache* microtaskCallCache, Args... args)
 {
     NO_TAIL_CALLS();
 
@@ -106,17 +109,26 @@ static JSValue callMicrotask(JSGlobalObject* globalObject, JSValue functionObjec
     static_assert(sizeof...(args) <= MicrotaskCall::maxCallArguments);
 
     if (microtaskCallCache) [[likely]] {
-        if (auto* microtaskCall = microtaskCallCache->find(functionObject)) [[likely]] {
+        auto* microtaskCall = microtaskCallCache->find(functionObject);
+        if (microtaskCall && microtaskCall->canCallWithArgumentCount(1 + sizeof...(args))) [[likely]] {
             if (!vm.isSafeToRecurseSoft()) [[unlikely]]
                 return throwStackOverflowError(globalObject, scope);
-            auto* jsFunction = uncheckedDowncast<JSFunction>(functionObject.asCell());
-            if (auto result = microtaskCall->tryCallWithArguments(vm, jsFunction, thisValue, context, args...)) [[likely]] {
-                scope.release();
-                return result;
-            }
-            RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, scope.exception());
+            scope.release();
+            return microtaskCall->tryCallWithArguments(vm, uncheckedDowncast<JSFunction>(functionObject.asCell()), thisValue, context, args...);
         }
     }
+
+    scope.release();
+    return callMicrotaskGeneric(globalObject, functionObject, thisValue, context, message, microtaskCallCache, args...);
+}
+
+template<typename... Args> requires (std::is_convertible_v<Args, JSValue> && ...)
+static NEVER_INLINE JSValue callMicrotaskGeneric(JSGlobalObject* globalObject, JSValue functionObject, JSValue thisValue, JSCell* context, ASCIILiteral message, MicrotaskCallCache* microtaskCallCache, Args... args)
+{
+    NO_TAIL_CALLS();
+
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
 #if ENABLE(AOT)
     if (vm.hasCompiledCode() && functionObject.isCell()) {
@@ -1832,7 +1844,7 @@ static void dynamicImportLoadSettled(JSGlobalObject* globalObject, VM& vm, JSVal
     //
     // Let evaluationList be GatherAsynchronousTransitiveDependencies(module).
     OrderedHashSet<AbstractModuleRecord*> evaluationList;
-    UncheckedKeyHashSet<AbstractModuleRecord*> seen;
+    HashSet<AbstractModuleRecord*> seen;
     module->gatherAsynchronousTransitiveDependencies(evaluationList, seen);
     if (scope.exception()) [[unlikely]] {
         capabilityPromise->rejectWithCaughtException(vm, scope);
@@ -1966,7 +1978,7 @@ static void runImportModuleNamespace(JSGlobalObject* globalObject, VM& vm, Inter
     return;
 }
 
-static void promiseResolveWithoutHandlerJobSlow(JSGlobalObject* globalObject, VM& vm, JSValue capability, JSValue resolution, JSPromise::Status status)
+static NEVER_INLINE void promiseResolveWithoutHandlerJobSlow(JSGlobalObject* globalObject, VM& vm, JSValue capability, JSValue resolution, JSPromise::Status status)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -2004,6 +2016,10 @@ static void runPromiseResolveWithoutHandlerJob(JSGlobalObject* globalObject, VM&
             RELEASE_ASSERT_NOT_REACHED();
             break;
         case JSPromise::Status::Fulfilled:
+            if (!resolution.isObject()) [[likely]] {
+                promise->fulfillPromise(vm, resolution);
+                break;
+            }
             promise->resolvePromise(promise->realm(), vm, resolution);
             break;
         case JSPromise::Status::Rejected:
@@ -2059,6 +2075,25 @@ static void runWebAssemblyInstantiateStreaming(JSGlobalObject* globalObject, VM&
 
 static void asyncFunctionArrangeAwaitResume(JSGlobalObject* globalObject, VM& vm, JSAsyncFunctionGenerator* generator, JSValue value)
 {
+    if (value.isCell() && value.asCell()->structureID() == globalObject->promiseStructure()->id() && globalObject->promiseSpeciesWatchpointSet().state() == IsWatched) [[likely]] {
+        auto* promise = uncheckedDowncast<JSPromise>(value);
+#if USE(BUN_JSC_ADDITIONS)
+        // As JSPromise::resolveWithInternalMicrotaskForAsyncAwait(): the continuation resumes under the async context active at the await.
+        JSValue asyncContext = AsyncContextSwapScope::current(vm, globalObject);
+#define BUN_ASYNC_CONTEXT , asyncContext
+#else
+#define BUN_ASYNC_CONTEXT
+#endif
+        if (promise->status() == JSPromise::Status::Fulfilled) [[likely]] {
+            globalObject->queueMicrotask(vm, InternalMicrotask::AsyncFunctionResume, static_cast<uint8_t>(JSPromise::Status::Fulfilled), jsUndefined(), promise->settlementValue(), generator BUN_ASYNC_CONTEXT);
+            return;
+        }
+        promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::AsyncFunctionResume, nullptr, generator BUN_ASYNC_CONTEXT);
+        return;
+#undef BUN_ASYNC_CONTEXT
+    }
+    // The body suspended at op_async_iterator_next's fast branch + op_yield, and the producer it
+    // consumes has already enqueued this driver.
     if (value == vm.fastAsyncGeneratorSentinel())
         return;
     JSPromise::resolveWithInternalMicrotaskForAsyncAwait(globalObject, vm, value, InternalMicrotask::AsyncFunctionResume, generator);
@@ -2102,9 +2137,6 @@ static void asyncFunctionGeneratorBodyCall(JSGlobalObject* generatorGlobalObject
         return;
     }
 
-    // The body suspended again at op_async_iterator_next's fast branch + op_yield. The resume
-    // is already arranged by enqueuing this driver on the producer, so skip the normal
-    // await-Promise attachment below.
     scope.release();
     asyncFunctionArrangeAwaitResume(generatorGlobalObject, vm, generator, value);
 }
@@ -2188,6 +2220,21 @@ static void runOpaque(JSGlobalObject*, VM&, InternalMicrotask, uint8_t, JSValue,
 }
 IGNORE_WARNINGS_END
 
+// Bun: asyncContext is the job's argument2, the async context that was active where the job was queued.
+static NEVER_INLINE void promiseResolveThenableJobFastGeneric(JSGlobalObject* globalObject, VM& vm, JSPromise* promise, JSPromise* promiseToResolve, JSValue asyncContext)
+{
+    if (!promiseSpeciesWatchpointIsValid(vm, promise)) [[unlikely]]
+        return promiseResolveThenableJobFastSlow(globalObject, promise, promiseToResolve);
+
+#if USE(BUN_JSC_ADDITIONS)
+    AsyncContextSwapScope asyncContextScope(vm, globalObject, asyncContext);
+#else
+    UNUSED_PARAM(asyncContext);
+#endif
+
+    promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, promiseToResolve, jsUndefined());
+}
+
 static void runPromiseResolveThenableJobFast(JSGlobalObject* globalObject, VM& vm, InternalMicrotask, uint8_t, JSValue argument0, JSValue argument1, JSValue argument2, JSValue, MicrotaskCallCache*)
 {
 #if ENABLE(AOT)
@@ -2205,14 +2252,12 @@ static void runPromiseResolveThenableJobFast(JSGlobalObject* globalObject, VM& v
     auto* promiseToResolve = uncheckedDowncast<JSPromise>(argument1);
 #endif
 
-    if (!promiseSpeciesWatchpointIsValid(vm, promise)) [[unlikely]]
-        return promiseResolveThenableJobFastSlow(globalObject, promise, promiseToResolve);
+    if (promise->structureID() == globalObject->promiseStructure()->id() && globalObject->promiseSpeciesWatchpointSet().state() == IsWatched && promise->status() == JSPromise::Status::Fulfilled) [[likely]] {
+        globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, static_cast<uint8_t>(JSPromise::Status::Fulfilled), promiseToResolve, promise->settlementValue(), jsUndefined());
+        return;
+    }
 
-#if USE(BUN_JSC_ADDITIONS)
-    AsyncContextSwapScope asyncContextScope(vm, globalObject, argument2);
-#endif
-
-    promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, promiseToResolve, jsUndefined());
+    promiseResolveThenableJobFastGeneric(globalObject, vm, promise, promiseToResolve, argument2);
 }
 
 static void runPromiseResolveThenableJobWithInternalMicrotaskFast(JSGlobalObject* globalObject, VM& vm, InternalMicrotask, uint8_t payload, JSValue argument0, JSValue argument1, JSValue argument2, JSValue, MicrotaskCallCache*)
@@ -2377,6 +2422,19 @@ static void runPromiseReactionJob(JSGlobalObject* globalObject, VM& vm, Internal
 
     if (auto* promise = dynamicDowncast<JSPromise>(promiseOrCapability)) {
         scope.release();
+        if (result.isCell() && result.asCell()->structureID() == globalObject->promiseStructure()->id() && result != promise && globalObject->promiseThenWatchpointSet().isStillValid()) [[likely]] {
+#if USE(BUN_JSC_ADDITIONS)
+            // As JSPromise::resolvePromise(): the job takes the async context active now as argument2.
+            globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveThenableJobFast, 0, result, promise, AsyncContextSwapScope::current(vm, globalObject));
+#else
+            globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveThenableJobFast, 0, result, promise, jsUndefined());
+#endif
+            return;
+        }
+        if (!result.isObject()) {
+            promise->fulfillPromise(vm, result);
+            return;
+        }
         promise->resolvePromise(promise->realm(), vm, result);
         return;
     }

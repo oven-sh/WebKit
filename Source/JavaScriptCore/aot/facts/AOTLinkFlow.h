@@ -452,7 +452,7 @@ private:
     }
 
     std::array<std::atomic<Members*>, numberOfParts> m_parts { };
-    UncheckedKeyHashMap<Key, uint32_t> m_numbers;
+    HashMap<Key, uint32_t> m_numbers;
     std::atomic<uint32_t> m_size { 0 };
     std::atomic<bool> m_isLocked { false };
 };
@@ -593,7 +593,7 @@ private:
     }
 
     std::array<std::atomic<Record*>, numberOfParts> m_parts { };
-    UncheckedKeyHashMap<uint32_t, Vector<uint16_t, 1>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_numbers;
+    HashMap<uint32_t, Vector<uint16_t, 1>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_numbers;
     std::atomic<uint32_t> m_size { 0 };
     std::atomic<bool> m_isLocked { false };
 };
@@ -2386,7 +2386,7 @@ private:
     BitVector m_familiesThatHaveEscaped;
     BitVector m_lostFamiliesThatHaveEscaped;
     Vector<LayoutSetID> m_layoutsThatMet;
-    UncheckedKeyHashMap<uint32_t, LayoutSetID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_layoutsThatMetByRepresentative;
+    HashMap<uint32_t, LayoutSetID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_layoutsThatMetByRepresentative;
     BitVector m_isOnWorklist;
     uint64_t m_numberOfObserversTold { 0 };
     struct NodesOfFunction {
@@ -2741,7 +2741,7 @@ private:
     Vector<uint32_t> m_firstNamerOfVariable;
     Vector<FunctionID> m_namersOfVariables;
     BytesSharedByThreads m_modulesWithDirectEval;
-    UncheckedKeyHashMap<uint32_t, Vector<FlowNodeID, 1>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_nodesThatLeaveWithClassObjects;
+    HashMap<uint32_t, Vector<FlowNodeID, 1>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_nodesThatLeaveWithClassObjects;
     BitVector m_classObjectsThatAreOpen;
     BitVector m_layoutsWithNotedBases;
     BitVector& layoutsWithNotedBases();

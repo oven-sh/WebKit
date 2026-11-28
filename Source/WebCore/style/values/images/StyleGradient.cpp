@@ -37,8 +37,7 @@
 #include "StylePrimitiveNumericTypes+Conversions.h"
 #include "StylePrimitiveNumericTypes+Evaluation.h"
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 // MARK: - IsRepeatingGradient
 
@@ -367,9 +366,8 @@ template<typename GradientAdapter, typename StyleGradient> GradientColorStops co
         };
     });
 
-    std::ranges::stable_sort(result, { }, &WebCore::GradientColorStop::offset);
-
-    return GradientColorStops::Sorted { WTF::move(result) };
+    // The deprecated syntax allows stops in any order.
+    return GradientColorStops { WTF::move(result) };
 }
 
 template<typename GradientAdapter, typename StyleGradient> GradientColorStops computeStops(GradientAdapter& gradientAdapter, const StyleGradient& styleGradient, const Style::ComputedStyle& style)
@@ -639,7 +637,7 @@ template<typename GradientAdapter, typename StyleGradient> GradientColorStops co
     if (stops.size() > 1 && (*stops.first().offset < 0 || *stops.last().offset > 1))
         gradientAdapter.normalizeStopsAndEndpointsOutsideRange(stops, styleGradient.parameters.colorInterpolationMethod.method.value);
 
-    return GradientColorStops::Sorted {
+    return GradientColorStops {
         stops.template map<GradientColorStops::StopVector>([](auto& stop) -> WebCore::GradientColorStop {
             return { *stop.offset, stop.color };
         })
@@ -732,20 +730,16 @@ struct DistanceToCorner {
 NODELETE static DistanceToCorner findDistanceToClosestCorner(const FloatPoint& p, const FloatSize& size)
 {
     FloatPoint topLeft;
-    // FIXME: Remove suppression once rdar://189998444 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST float topLeftDistance = FloatSize(p - topLeft).diagonalLength();
+    float topLeftDistance = FloatSize(p - topLeft).diagonalLength();
 
     FloatPoint topRight(size.width(), 0);
-    // FIXME: Remove suppression once rdar://189998444 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST float topRightDistance = FloatSize(p - topRight).diagonalLength();
+    float topRightDistance = FloatSize(p - topRight).diagonalLength();
 
     FloatPoint bottomLeft(0, size.height());
-    // FIXME: Remove suppression once rdar://189998444 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST float bottomLeftDistance = FloatSize(p - bottomLeft).diagonalLength();
+    float bottomLeftDistance = FloatSize(p - bottomLeft).diagonalLength();
 
     FloatPoint bottomRight(size.width(), size.height());
-    // FIXME: Remove suppression once rdar://189998444 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST float bottomRightDistance = FloatSize(p - bottomRight).diagonalLength();
+    float bottomRightDistance = FloatSize(p - bottomRight).diagonalLength();
 
     FloatPoint corner = topLeft;
     float minDistance = topLeftDistance;
@@ -770,20 +764,16 @@ NODELETE static DistanceToCorner findDistanceToClosestCorner(const FloatPoint& p
 NODELETE static DistanceToCorner findDistanceToFarthestCorner(const FloatPoint& p, const FloatSize& size)
 {
     FloatPoint topLeft;
-    // FIXME: Remove suppression once rdar://189998444 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST float topLeftDistance = FloatSize(p - topLeft).diagonalLength();
+    float topLeftDistance = FloatSize(p - topLeft).diagonalLength();
 
     FloatPoint topRight(size.width(), 0);
-    // FIXME: Remove suppression once rdar://189998444 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST float topRightDistance = FloatSize(p - topRight).diagonalLength();
+    float topRightDistance = FloatSize(p - topRight).diagonalLength();
 
     FloatPoint bottomLeft(0, size.height());
-    // FIXME: Remove suppression once rdar://189998444 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST float bottomLeftDistance = FloatSize(p - bottomLeft).diagonalLength();
+    float bottomLeftDistance = FloatSize(p - bottomLeft).diagonalLength();
 
     FloatPoint bottomRight(size.width(), size.height());
-    // FIXME: Remove suppression once rdar://189998444 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST float bottomRightDistance = FloatSize(p - bottomRight).diagonalLength();
+    float bottomRightDistance = FloatSize(p - bottomRight).diagonalLength();
 
     FloatPoint corner = topLeft;
     float maxDistance = topLeftDistance;
@@ -818,7 +808,7 @@ NODELETE static inline float horizontalEllipseRadius(const FloatSize& p, float a
 
 // MARK: - Linear create.
 
-template<CSSValueID Name> static Ref<WebCore::Gradient> createPlatformGradient(const FunctionNotation<Name, LinearGradient>& linear, const FloatSize& size, const Style::ComputedStyle& style)
+template<CSSValueID Name> static Ref<const WebCore::Gradient> createPlatformGradient(const FunctionNotation<Name, LinearGradient>& linear, const FloatSize& size, const Style::ComputedStyle& style)
 {
     ASSERT(!size.isEmpty());
 
@@ -868,7 +858,7 @@ template<CSSValueID Name> static Ref<WebCore::Gradient> createPlatformGradient(c
 
 // MARK: - Prefixed Linear create.
 
-template<CSSValueID Name> static Ref<WebCore::Gradient> createPlatformGradient(const FunctionNotation<Name, PrefixedLinearGradient>& linear, const FloatSize& size, const Style::ComputedStyle& style)
+template<CSSValueID Name> static Ref<const WebCore::Gradient> createPlatformGradient(const FunctionNotation<Name, PrefixedLinearGradient>& linear, const FloatSize& size, const Style::ComputedStyle& style)
 {
     ASSERT(!size.isEmpty());
 
@@ -923,7 +913,7 @@ template<CSSValueID Name> static Ref<WebCore::Gradient> createPlatformGradient(c
 
 // MARK: - Deprecated Linear create.
 
-template<CSSValueID Name> static Ref<WebCore::Gradient> createPlatformGradient(const FunctionNotation<Name, DeprecatedLinearGradient>& linear, const FloatSize& size, const Style::ComputedStyle& style)
+template<CSSValueID Name> static Ref<const WebCore::Gradient> createPlatformGradient(const FunctionNotation<Name, DeprecatedLinearGradient>& linear, const FloatSize& size, const Style::ComputedStyle& style)
 {
     ASSERT(!size.isEmpty());
 
@@ -941,7 +931,7 @@ template<CSSValueID Name> static Ref<WebCore::Gradient> createPlatformGradient(c
 
 // MARK: - Radial create.
 
-template<CSSValueID Name> static Ref<WebCore::Gradient> createPlatformGradient(const FunctionNotation<Name, RadialGradient>& radial, const FloatSize& size, const Style::ComputedStyle& style)
+template<CSSValueID Name> static Ref<const WebCore::Gradient> createPlatformGradient(const FunctionNotation<Name, RadialGradient>& radial, const FloatSize& size, const Style::ComputedStyle& style)
 {
     ASSERT(!size.isEmpty());
 
@@ -1038,7 +1028,7 @@ template<CSSValueID Name> static Ref<WebCore::Gradient> createPlatformGradient(c
 
 // MARK: - Prefixed Radial create.
 
-template<CSSValueID Name> static Ref<WebCore::Gradient> createPlatformGradient(const FunctionNotation<Name, PrefixedRadialGradient>& radial, const FloatSize& size, const Style::ComputedStyle& style)
+template<CSSValueID Name> static Ref<const WebCore::Gradient> createPlatformGradient(const FunctionNotation<Name, PrefixedRadialGradient>& radial, const FloatSize& size, const Style::ComputedStyle& style)
 {
     ASSERT(!size.isEmpty());
 
@@ -1147,7 +1137,7 @@ template<CSSValueID Name> static Ref<WebCore::Gradient> createPlatformGradient(c
 
 // MARK: - Deprecated Radial create.
 
-template<CSSValueID Name> static Ref<WebCore::Gradient> createPlatformGradient(const FunctionNotation<Name, DeprecatedRadialGradient>& radial, const FloatSize& size, const Style::ComputedStyle& style)
+template<CSSValueID Name> static Ref<const WebCore::Gradient> createPlatformGradient(const FunctionNotation<Name, DeprecatedRadialGradient>& radial, const FloatSize& size, const Style::ComputedStyle& style)
 {
     ASSERT(!size.isEmpty());
 
@@ -1169,7 +1159,7 @@ template<CSSValueID Name> static Ref<WebCore::Gradient> createPlatformGradient(c
 
 // MARK: - Conic create.
 
-template<CSSValueID Name> static Ref<WebCore::Gradient> createPlatformGradient(const FunctionNotation<Name, ConicGradient>& conic, const FloatSize& size, const Style::ComputedStyle& style)
+template<CSSValueID Name> static Ref<const WebCore::Gradient> createPlatformGradient(const FunctionNotation<Name, ConicGradient>& conic, const FloatSize& size, const Style::ComputedStyle& style)
 {
     ASSERT(!size.isEmpty());
 
@@ -1191,7 +1181,7 @@ template<CSSValueID Name> static Ref<WebCore::Gradient> createPlatformGradient(c
 
 // MARK: - createPlatformGradient
 
-Ref<WebCore::Gradient> createPlatformGradient(const Gradient& gradient, const FloatSize& size, const Style::ComputedStyle& style)
+Ref<const WebCore::Gradient> createPlatformGradient(const Gradient& gradient, const FloatSize& size, const Style::ComputedStyle& style)
 {
     return WTF::switchOn(gradient, [&](auto& gradient) { return createPlatformGradient(gradient, size, style); });
 }
@@ -1245,5 +1235,4 @@ bool isOpaque(const Gradient& gradient, const Style::ComputedStyle& style)
     return WTF::switchOn(gradient, [&](auto& gradient) { return isOpaque(gradient, style); } );
 }
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

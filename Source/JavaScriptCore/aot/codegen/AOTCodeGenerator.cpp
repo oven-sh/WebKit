@@ -2064,7 +2064,7 @@ void CodeGenerator::findLoopCarriedNumbers()
     if (candidates.isEmpty())
         return;
 
-    UncheckedKeyHashMap<uint32_t, BlockID, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> blocksOfConversions;
+    HashMap<uint32_t, BlockID, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> blocksOfConversions;
     auto forEachBackEdge = [&](const LoopCarriedNumber& carried, const auto& functor) {
         code().forEachIncomingEdgeUnsealed(carried.head, [&](const Edge& edge) {
             if (code().isReached(edge.from) && dominates(carried.head, edge.from))
@@ -2180,7 +2180,7 @@ bool CodeGenerator::isKnownAtEveryEdgeInto(BlockID block, ValueID list)
     return true;
 }
 
-void CodeGenerator::carryListStorageFrom(uint32_t storage, BlockID start, UncheckedKeyHashSet<uint64_t>& joinsOfLists)
+void CodeGenerator::carryListStorageFrom(uint32_t storage, BlockID start, HashSet<uint64_t>& joinsOfLists)
 {
     constexpr unsigned mostBlocks = 10;
     auto leavesListsAlone = [&](ValueID id) {
@@ -2264,7 +2264,7 @@ void CodeGenerator::findCarriedListStorages()
     m_callsOnListStorages.shrink(0);
     if (m_keepsValuesInHeapFrame || !code().hasLoops() || code().hasSuspensions())
         return;
-    UncheckedKeyHashSet<uint64_t> joinsOfLists;
+    HashSet<uint64_t> joinsOfLists;
     for (BlockID call : m_order) {
         const Block& block = code().at(call);
         if (!paysForCodeInLine(call) || block.frequency == BlockFrequency::Rare)
@@ -3902,13 +3902,13 @@ std::span<const ValueID> CodeGenerator::valuesWithBitsAtFirstUses(BlockID id, st
     if (numberOfBits < fewestBitsOfOneBlock)
         return values;
     inOrderOfUses.reserveInitialCapacity(values.size());
-    UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> waiting;
-    UncheckedKeyHashMap<uint32_t, ValueID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> conversionsAhead;
-    UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> converted;
+    HashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> waiting;
+    HashMap<uint32_t, ValueID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> conversionsAhead;
+    HashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> converted;
     if (const Terminator& end = code().at(id).terminator; end.kind == TerminatorKind::Jump && code().at(code().at(end.next()).to).isLoopHead) {
         const Edge& back = code().at(end.next());
         std::span<const ValueID> parameters = code().at(back.to).parameters();
-        UncheckedKeyHashMap<uint32_t, ValueID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> conversionsOfIntegers;
+        HashMap<uint32_t, ValueID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> conversionsOfIntegers;
         for (ValueID value : values) {
             if (code().at(value).opcode == Opcode::IntegerToNumber)
                 conversionsOfIntegers.add(code().at(value).valueOperand().index(), value);
@@ -7545,7 +7545,7 @@ void CodeGenerator::findBoxesLeftToHandlers()
 {
     static constexpr uint8_t usesAreNotCounted = std::numeric_limits<uint8_t>::max();
     m_boxesLeftToHandlers.clearAll();
-    UncheckedKeyHashMap<uint32_t, uint32_t> numberOfReads;
+    HashMap<uint32_t, uint32_t> numberOfReads;
     for (BlockID id : m_order) {
         EdgeID handler = code().at(id).isInLoop ? code().handlerOf(id) : EdgeID();
         if (!handler)

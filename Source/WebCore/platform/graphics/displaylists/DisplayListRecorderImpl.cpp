@@ -40,8 +40,7 @@
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/TextStream.h>
 
-namespace WebCore {
-namespace DisplayList {
+namespace WebCore::DisplayList {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RecorderImpl);
 
@@ -53,7 +52,7 @@ RecorderImpl::RecorderImpl(const GraphicsContextState& state, const FloatRect& i
 
 RecorderImpl::~RecorderImpl()
 {
-    ASSERT(stateStack().size() == 1); // If this fires, it indicates mismatched save/restore.
+    ASSERT(!stackSize()); // If this fires, it indicates mismatched save/restore.
 }
 
 Ref<const DisplayList> RecorderImpl::takeDisplayList()
@@ -75,16 +74,17 @@ void RecorderImpl::save(GraphicsContextState::Purpose purpose)
     m_items.append(Save());
 }
 
-void RecorderImpl::restore(GraphicsContextState::Purpose purpose)
+bool RecorderImpl::restore(GraphicsContextState::Purpose purpose)
 {
-    if (stateStack().size() <= 1) {
-        LOG_ERROR("ERROR void RecorderImpl::restore() stack is empty");
-        return;
+    if (!stackSize()) {
+        LOG_ERROR("ERROR bool RecorderImpl::restore() stack is empty");
+        return false;
     }
 
     if (!updateStateForRestore(purpose))
-        return;
+        return false;
     m_items.append(Restore());
+    return true;
 }
 
 void RecorderImpl::translate(float x, float y)
@@ -119,6 +119,20 @@ void RecorderImpl::concatCTM(const AffineTransform& transform)
     if (!updateStateForConcatCTM(transform))
         return;
     m_items.append(ConcatenateCTM(transform));
+}
+
+void RecorderImpl::saveTransform()
+{
+    updateStateForSaveTransform();
+    m_items.constructAndAppend(WTF::InPlaceType<SaveTransform>);
+}
+
+bool RecorderImpl::restoreTransform()
+{
+    if (!updateStateForRestoreTransform())
+        return false;
+    m_items.constructAndAppend(WTF::InPlaceType<RestoreTransform>);
+    return true;
 }
 
 void RecorderImpl::setLineCap(LineCap lineCap)
@@ -172,10 +186,10 @@ void RecorderImpl::clipOutRoundedRect(const FloatRoundedRect& clipRect)
     m_items.append(ClipOutRoundedRect(clipRect));
 }
 
-void RecorderImpl::clipToImageBuffer(ImageBuffer& imageBuffer, const FloatRect& destinationRect)
+void RecorderImpl::clipToNativeImage(const NativeImage& image, const FloatRect& destinationRect)
 {
-    updateStateForClipToImageBuffer(destinationRect);
-    m_items.append(ClipToImageBuffer(imageBuffer, destinationRect));
+    updateStateForClipToImage(destinationRect);
+    m_items.append(ClipToNativeImage(image, destinationRect));
 }
 
 void RecorderImpl::clipOut(const Path& path)
@@ -199,7 +213,10 @@ void RecorderImpl::clipTransformedPath(const AffineTransform& pathTransform, con
 void RecorderImpl::drawFilteredImageBuffer(ImageBuffer* sourceImage, const FloatRect& sourceImageRect, Filter& filter, FilterResults&)
 {
     appendStateChangeItemIfNecessary();
-    m_items.append(DrawFilteredImageBuffer(sourceImage, sourceImageRect, filter));
+    std::optional<SourceImageBuffer> source;
+    if (sourceImage)
+        source = Ref { *sourceImage };
+    m_items.append(DrawFilteredImageBuffer(WTF::move(source), sourceImageRect, filter));
 }
 
 void RecorderImpl::drawGlyphs(const Font& font, std::span<const GlyphBufferGlyph> glyphs, std::span<const GlyphBufferAdvance> advances, const FloatPoint& localAnchor, FontSmoothingMode smoothingMode)
@@ -301,6 +318,12 @@ void RecorderImpl::drawDotsForDocumentMarker(const FloatRect& rect, DocumentMark
     m_items.append(DrawDotsForDocumentMarker(rect, style));
 }
 
+void RecorderImpl::drawFreeformGradient(FreeformGradient& gradient, const FloatRect& destination)
+{
+    appendStateChangeItemIfNecessary();
+    m_items.append(DrawFreeformGradient(gradient, destination));
+}
+
 void RecorderImpl::drawMeshGradient(MeshGradient& gradient, const FloatRect& destination)
 {
     appendStateChangeItemIfNecessary();
@@ -343,13 +366,13 @@ void RecorderImpl::fillRect(const FloatRect& rect, const Color& color)
     m_items.append(FillRectWithColor(rect, color));
 }
 
-void RecorderImpl::fillRect(const FloatRect& rect, Gradient& gradient)
+void RecorderImpl::fillRect(const FloatRect& rect, const Gradient& gradient)
 {
     appendStateChangeItemIfNecessary();
     m_items.append(FillRectWithGradient(rect, gradient));
 }
 
-void RecorderImpl::fillRect(const FloatRect& rect, Gradient& gradient, const AffineTransform& gradientSpaceTransform, RequiresClipToRect requiresClipToRect)
+void RecorderImpl::fillRect(const FloatRect& rect, const Gradient& gradient, const AffineTransform& gradientSpaceTransform, RequiresClipToRect requiresClipToRect)
 {
     appendStateChangeItemIfNecessary();
     m_items.append(FillRectWithGradientAndSpaceTransform(rect, gradient, gradientSpaceTransform, requiresClipToRect));
@@ -422,22 +445,6 @@ void RecorderImpl::drawControlPart(ControlPart& part, const FloatRoundedRect& bo
     appendStateChangeItemIfNecessary();
     m_items.append(DrawControlPart(part, borderRect, deviceScaleFactor, style));
 }
-
-#if USE(CG)
-
-void RecorderImpl::applyStrokePattern()
-{
-    appendStateChangeItemIfNecessary();
-    m_items.append(ApplyStrokePattern());
-}
-
-void RecorderImpl::applyFillPattern()
-{
-    appendStateChangeItemIfNecessary();
-    m_items.append(ApplyFillPattern());
-}
-
-#endif // USE(CG)
 
 void RecorderImpl::applyDeviceScaleFactor(float scaleFactor)
 {
@@ -513,5 +520,10 @@ void RecorderImpl::drawPlaceholder(Function<void(GraphicsContext&)>&& function)
     m_items.append(DrawPlaceholder(WTF::move(function)));
 }
 
-} // namespace DisplayList
-} // namespace WebCore
+void RecorderImpl::drawPDFPage(Ref<SharedPDFDocument>&& document, unsigned pageIndex, const FloatRect& pageRect, std::optional<SourceNativeImage>&& fallbackImage)
+{
+    appendStateChangeItemIfNecessary();
+    m_items.append(DrawPDFPage(WTF::move(document), pageIndex, pageRect, WTF::move(fallbackImage)));
+}
+
+} // namespace WebCore::DisplayList

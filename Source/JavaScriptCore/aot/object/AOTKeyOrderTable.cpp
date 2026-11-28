@@ -807,7 +807,7 @@ static bool reportsEveryChangeOfKeys(JSObject* prototype)
 void KeyOrderTable::publishEnumerator(const Object& object, JSPropertyNameEnumerator* enumerator)
 {
     bool listsNothing = enumerator == m_state.instance.vm->emptyPropertyNameEnumerator();
-    if (!listsNothing && enumerator->cachedStructureID() != object.structureID())
+    if (!listsNothing && enumerator->cachedStructureIDForNames() != object.structureID())
         return;
     ChainObjects chain;
     for (JSObject* prototype = object.getPrototypeDirect().getObject(); prototype; prototype = prototype->getPrototypeDirect().getObject()) {

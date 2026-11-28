@@ -78,7 +78,7 @@ inline JSPropertyNameEnumerator* propertyNameEnumerator(JSGlobalObject* globalOb
     bool successfullyNormalizedChain = normalizePrototypeChain(globalObject, base, sawPolyProto) != InvalidPrototypeChain;
 
     Structure* structureAfterGettingPropertyNames = base->structure();
-    if (!structureAfterGettingPropertyNames->canAccessPropertiesQuicklyForEnumeration())
+    if (structureAfterGettingPropertyNames != structure)
         numberStructureProperties = 0;
     // Asking any other kind of object whether it has a property may make the property, as a static table does, and whoever walks the names is seen to ask.
     if (structureAfterGettingPropertyNames != structure || base->type() != FinalObjectType || !structure->canCacheOwnPropertyNames())

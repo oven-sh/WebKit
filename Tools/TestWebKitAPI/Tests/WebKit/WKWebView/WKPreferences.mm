@@ -28,6 +28,7 @@
 #import "Helpers/DeprecatedGlobalValues.h"
 #import "Helpers/PlatformUtilities.h"
 #import "Helpers/Test.h"
+#import "Helpers/cocoa/TestNavigationDelegate.h"
 #import "Helpers/cocoa/TestWKWebView.h"
 #import <WebKit/WKFoundation.h>
 #import <WebKit/WKPreferencesPrivate.h>
@@ -309,4 +310,50 @@ TEST(WKPreferences, UInt32TypeMismatchDoesNotCrash)
 
     // Restore original implementation.
     method_setImplementation(method, originalObjectForKeyIMP);
+}
+
+#if ENABLE(FULLSCREEN_API)
+
+TEST(WKPreferences, NonCanonicalBoolValueDoesNotCrashWebProcess)
+{
+    RetainPtr configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
+
+    // Matches clients calling -performSelector:withObject: with an NSNumber on a BOOL setter.
+    wtfObjCMsgSend<void>([configuration preferences], @selector(_setFullScreenEnabled:), static_cast<uint8_t>(0x18));
+
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600) configuration:configuration.get()]);
+    RetainPtr navigationDelegate = adoptNS([TestNavigationDelegate new]);
+    __block bool webProcessTerminated = false;
+    __block bool didFinishNavigation = false;
+    navigationDelegate.get().webContentProcessDidTerminate = ^(WKWebView *, _WKProcessTerminationReason) {
+        webProcessTerminated = true;
+    };
+    navigationDelegate.get().didFinishNavigation = ^(WKWebView *, WKNavigation *) {
+        didFinishNavigation = true;
+    };
+    [webView setNavigationDelegate:navigationDelegate.get()];
+
+    [webView loadHTMLString:@"<body>test</body>" baseURL:nil];
+    TestWebKitAPI::Util::waitFor(^{
+        return webProcessTerminated || didFinishNavigation;
+    });
+
+    EXPECT_FALSE(webProcessTerminated);
+    EXPECT_TRUE(didFinishNavigation);
+}
+
+#endif // ENABLE(FULLSCREEN_API)
+
+TEST(WKPreferences, CopyKeepsSiteIsolationEnabled)
+{
+    bool defaultValue = [adoptNS([[WKPreferences alloc] init]) _siteIsolationEnabled];
+
+    RetainPtr preferences = adoptNS([[WKPreferences alloc] init]);
+    [preferences _setSiteIsolationEnabled:!defaultValue];
+    RetainPtr<WKPreferences> copy = adoptNS([preferences copy]);
+    EXPECT_EQ([copy _siteIsolationEnabled], !defaultValue);
+
+    [preferences _setSiteIsolationEnabled:defaultValue];
+    copy = adoptNS([preferences copy]);
+    EXPECT_EQ([copy _siteIsolationEnabled], defaultValue);
 }

@@ -29,14 +29,12 @@
 #include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 struct GridOrderedNamedLinesMap {
-    HashMap<unsigned, GridLineNames, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> map;
+    HashMap<unsigned, GridLineNames> map;
 
     bool operator==(const GridOrderedNamedLinesMap&) const = default;
 };
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

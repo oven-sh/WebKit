@@ -35,8 +35,7 @@
 #include "RenderElement.h"
 #include "StyleComputedStyle+GettersInlines.h"
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 static std::optional<SourceImage> convertToLuminanceMask(GraphicsContext& context, SourceImage&& image)
 {
@@ -133,12 +132,14 @@ RefPtr<ImageBuffer> Image::createPatternBufferImpl(GraphicsContext& context, con
     return buffer;
 }
 
-ImageDrawResult Image::drawPatternBuffer(GraphicsContext& context, ImageBuffer& buffer, const ImageDrawDescriptor& descriptor, const FloatRect& destination, const FloatRect& tile, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing)
+ImageDrawResult Image::drawPatternBuffer(GraphicsContext& context, ImageBuffer& buffer, const FloatSize& size, const ImageDrawDescriptor& descriptor, const FloatRect& destination, const FloatRect& tile, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing)
 {
     // Factor in the destination context's scale to generate at the best resolution.
     auto contextCTM = context.getCTM(GraphicsContext::DefinitelyIncludeDeviceScale);
-    double xScale = std::abs(contextCTM.xScale());
-    double yScale = std::abs(contextCTM.yScale());
+    // The buffer has fewer pixels than the context's scale asks for if its size was clamped.
+    auto clampingScale = buffer.logicalSize() / FloatSize(context.compatibleImageBufferSize(size));
+    double xScale = std::abs(contextCTM.xScale()) * clampingScale.width();
+    double yScale = std::abs(contextCTM.yScale()) * clampingScale.height();
     auto adjustedPatternCTM = patternTransform;
     adjustedPatternCTM.scale(1.0 / xScale, 1.0 / yScale);
     auto adjustedTile = tile;
@@ -600,5 +601,4 @@ ConcreteObjectSize Image::negotiate(const RenderElement& renderer, const ImageSi
     return context.resolve(naturalDimensions(renderer, context));
 }
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

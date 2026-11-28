@@ -1120,7 +1120,7 @@ void WebGLRenderingContextBase::bindAttribLocation(WebGLProgram& program, GCGLui
         synthesizeGLError(GraphicsContextGL::INVALID_VALUE, "bindAttribLocation"_s, "index out of range"_s);
         return;
     }
-    protect(graphicsContextGL())->bindAttribLocation(program.object(), index, name.utf8());
+    protect(graphicsContextGL())->bindAttribLocation(program.object(), index, makeUTF8CString(name));
 }
 
 bool WebGLRenderingContextBase::validateBufferTarget(ASCIILiteral functionName, GCGLenum target)
@@ -3278,7 +3278,7 @@ void WebGLRenderingContextBase::shaderSource(WebGLShader& shader, const String& 
         return;
     if (!validateWebGLObject("shaderSource"_s, shader))
         return;
-    protect(graphicsContextGL())->shaderSource(shader.object(), string.utf8());
+    protect(graphicsContextGL())->shaderSource(shader.object(), makeUTF8CString(string));
     shader.setSource(string);
 }
 
@@ -4425,18 +4425,18 @@ bool WebGLRenderingContextBase::validateTexImageSourceFormatAndType(TexImageFunc
     else
         addExtensionSupportedFormatsAndTypesWebGL2();
 
-    if (m_supportedTexImageSourceInternalFormats.isValidValue(internalformat) && !m_supportedTexImageSourceInternalFormats.contains(internalformat)) {
+    if (internalformat && !m_supportedTexImageSourceInternalFormats.contains(internalformat)) {
         if (functionType == TexImageFunctionType::TexImage)
             synthesizeGLError(GraphicsContextGL::INVALID_VALUE, functionName, "invalid internalformat"_s);
         else
             synthesizeGLError(GraphicsContextGL::INVALID_ENUM, functionName, "invalid internalformat"_s);
         return false;
     }
-    if (!m_supportedTexImageSourceFormats.isValidValue(format) || !m_supportedTexImageSourceFormats.contains(format)) {
+    if (!m_supportedTexImageSourceFormats.contains(format)) {
         synthesizeGLError(GraphicsContextGL::INVALID_ENUM, functionName, "invalid format"_s);
         return false;
     }
-    if (!m_supportedTexImageSourceTypes.isValidValue(type) || !m_supportedTexImageSourceTypes.contains(type)) {
+    if (!m_supportedTexImageSourceTypes.contains(type)) {
         synthesizeGLError(GraphicsContextGL::INVALID_ENUM, functionName, "invalid type"_s);
         return false;
     }

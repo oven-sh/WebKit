@@ -25,6 +25,10 @@
 
 #pragma once
 
+#if !__has_feature(objc_arc)
+#error This header requires ARC. Include it only from files compiled with -fobjc-arc.
+#endif
+
 #import "BindableResource.h"
 #import "CommandsMixin.h"
 #import "TextureOrTextureView.h"
@@ -128,6 +132,7 @@ public:
     void deferRenderCommandEncoder(MTLRenderPassDescriptor* descriptor) { m_deferredDescriptor = descriptor; }
     id<MTLRenderCommandEncoder> materializeRenderCommandEncoder() const;
     void makeInvalid(NSString* = nil);
+    void makeInvalid(String&& error) final;
     CommandEncoder& parentEncoder() const { return m_parentEncoder; }
 
     bool setCommandEncoder(const BindGroupEntryUsageData::Resource&);
@@ -213,13 +218,13 @@ private:
     Vector<uint32_t> m_fragmentDynamicOffsets;
     Vector<uint32_t> m_priorFragmentDynamicOffsets;
     const Ref<CommandEncoder> m_parentEncoder;
-    HashMap<uint32_t, Vector<uint32_t>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_bindGroupDynamicOffsets;
+    HashMap<uint32_t, Vector<uint32_t>> m_bindGroupDynamicOffsets;
     using EntryUsage = OptionSet<BindGroupEntryUsage>;
-    using EntryMap = HashMap<uint64_t, EntryUsage, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
+    using EntryMap = HashMap<uint64_t, EntryUsage>;
     HashMap<const void*, EntryMap> m_usagesForTexture;
     HashMap<const void*, EntryUsage> m_usagesForBuffer;
-    HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_queryBufferIndicesToClear;
-    HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_queryBufferUtilizedIndices;
+    HashSet<uint64_t> m_queryBufferIndicesToClear;
+    HashSet<uint64_t> m_queryBufferUtilizedIndices;
     id<MTLBuffer> m_visibilityResultBuffer { nil };
     uint32_t m_renderTargetWidth { 0 };
     uint32_t m_renderTargetHeight { 0 };
@@ -239,7 +244,7 @@ private:
     using ExistingBufferKey = std::pair<uint64_t, uint32_t>;
     std::array<ExistingBufferKey, maxBufferSlots> m_existingVertexBuffers;
     std::array<ExistingBufferKey, maxBufferSlots> m_existingFragmentBuffers;
-    HashMap<uint32_t, Ref<const BindGroup>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_bindGroups;
+    HashMap<uint32_t, Ref<const BindGroup>> m_bindGroups;
     std::array<uint32_t, 32> m_maxDynamicOffsetAtIndex;
     NSString* m_lastErrorString { nil };
     MTLRenderPassDescriptor* m_metalDescriptor { nil };

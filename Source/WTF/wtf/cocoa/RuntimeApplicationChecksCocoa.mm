@@ -71,7 +71,7 @@ NODELETE static void disableAdditionalSDKAlignedBehaviors(SDKAlignedBehaviors&)
 }
 #endif
 
-static SDKAlignedBehaviors computeSDKAlignedBehaviors()
+NODELETE SUPPRESS_NODELETE static SDKAlignedBehaviors computeSDKAlignedBehaviors()
 {
     ASSERT(!isInAuxiliaryProcess());
 
@@ -259,6 +259,40 @@ static SDKAlignedBehaviors computeSDKAlignedBehaviors()
     if (linkedBefore(dyld_2025_SU_G_os_versions, DYLD_IOS_VERSION_26_6, DYLD_MACOSX_VERSION_26_6))
         disableBehavior(SDKAlignedBehavior::NetworkProcessInheritsNetworkAccessFromUIProcess);
 
+    if (linkedBefore(dyld_fall_2025_os_versions, DYLD_IOS_VERSION_19_0, DYLD_MACOSX_VERSION_16_0)) {
+        disableBehavior(SDKAlignedBehavior::ConvertsInvalidURLsToNull);
+        disableBehavior(SDKAlignedBehavior::MutationEventsDisabledByDefault);
+        disableBehavior(SDKAlignedBehavior::EnableTrustedTypesByDefault);
+        disableBehavior(SDKAlignedBehavior::BrowsingContextControllerMethodStubRemoved);
+        disableBehavior(SDKAlignedBehavior::AutoLayoutInWKWebView);
+        disableBehavior(SDKAlignedBehavior::DidFailProvisionalNavigationWithErrorForFileURLNavigation);
+    }
+
+    if (linkedBefore(dyld_2025_SU_C_os_versions, DYLD_IOS_VERSION_26_2, DYLD_MACOSX_VERSION_26_2)) {
+        disableBehavior(SDKAlignedBehavior::ExecutionTimingChangeOfModuleScripts);
+        disableBehavior(SDKAlignedBehavior::JavaScriptEvaluationResultWithoutSerializedScriptValue);
+    }
+
+    if (linkedBefore(dyld_2025_SU_E_os_versions, DYLD_IOS_VERSION_26_4, DYLD_MACOSX_VERSION_26_4)) {
+        disableBehavior(SDKAlignedBehavior::GetBoundingClientRectZoomed);
+        disableBehavior(SDKAlignedBehavior::NoFontFaceSetConstructor);
+    }
+
+    if (linkedBefore(dyld_fall_2026_os_versions, DYLD_IOS_VERSION_27_0, DYLD_MACOSX_VERSION_27_0)) {
+        disableBehavior(SDKAlignedBehavior::AdjustColorExtensionsForHorizontalBannerViewOverlays);
+        disableBehavior(SDKAlignedBehavior::CrashWhenPreconnectingFromBackgroundThread);
+        disableBehavior(SDKAlignedBehavior::CrashWhenMutatingProcessAssertionsFromBackgroundThread);
+        disableBehavior(SDKAlignedBehavior::NoHTMLEnhancedSelectParsingQuirk);
+        disableBehavior(SDKAlignedBehavior::SuppressKeypressForModifierShortcuts);
+        disableBehavior(SDKAlignedBehavior::ScrollColorExtensionGrowsDuringRubberBanding);
+        disableBehavior(SDKAlignedBehavior::ManagedRefreshControlAppearance);
+        disableBehavior(SDKAlignedBehavior::ExposePartitionFromWKHTTPCookieStoreAPI);
+        disableBehavior(SDKAlignedBehavior::NoMediaLayerTeardownOnPageVisibilityChangeQuirk);
+    }
+
+    if (linkedBefore(dyld_2026_SU_B_os_versions, DYLD_IOS_VERSION_27_2, DYLD_MACOSX_VERSION_27_2))
+        disableBehavior(SDKAlignedBehavior::ForbidCookieUseFromFileURLs);
+
     disableAdditionalSDKAlignedBehaviors(behaviors);
 
     return behaviors;
@@ -348,7 +382,7 @@ String applicationBundleIdentifier()
     // The override only gets set in WebKitTestRunner. If unset, we use the bundle identifier set
     // in WebKit2's WebProcess and NetworkProcess. If that is also unset, we use the main bundle identifier.
     auto identifier = bundleIdentifierOverride();
-    ASSERT(identifier.isNull() || RunLoop::isMain());
+    RELEASE_ASSERT(identifier.isNull() || RunLoop::isMain());
     if (identifier.isNull())
         identifier = bundleIdentifier();
     ASSERT_WITH_MESSAGE(!isInAuxiliaryProcess() || !!identifier, "applicationBundleIsEqualTo() and applicationBundleStartsWith() must not be called before setApplicationBundleIdentifier() in auxiliary processes");
@@ -357,20 +391,20 @@ String applicationBundleIdentifier()
 
 void setApplicationBundleIdentifier(const String& identifier)
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
     bundleIdentifier() = identifier;
 }
 
 void setApplicationBundleIdentifierOverride(const String& identifier)
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
     ASSERT_WITH_MESSAGE(!applicationBundleIdentifierOverrideWasQueried, "applicationBundleIsEqualTo() and applicationBundleStartsWith() must not be called before setApplicationBundleIdentifierOverride()");
     bundleIdentifierOverride() = identifier;
 }
 
 void clearApplicationBundleIdentifierTestingOverride()
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
     bundleIdentifierOverride() = String();
 #if !ASSERT_MSG_DISABLED
     applicationBundleIdentifierOverrideWasQueried = false;

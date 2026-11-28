@@ -56,6 +56,7 @@
 #import "WebPageMessages.h"
 #import "WebPageProxyInternals.h"
 #import "WebPageProxyMessages.h"
+#import "WebPasteboardProxy.h"
 #import "WebPreferencesKeys.h"
 #import "WebProcessProxy.h"
 #import <WebCore/AXObjectCache.h>
@@ -88,10 +89,6 @@
 #import <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
 #import <wtf/cocoa/SpanCocoa.h>
 #import <wtf/text/cf/StringConcatenateCF.h>
-
-#if HAVE(APPKIT_GESTURES_SUPPORT)
-#import <WebKitAdditions/AppKitUtilities.h>
-#endif
 
 #define MESSAGE_CHECK(assertion, connection) MESSAGE_CHECK_BASE(assertion, connection)
 #define MESSAGE_CHECK_COMPLETION(assertion, connection, completion) MESSAGE_CHECK_COMPLETION_BASE(assertion, connection, completion)
@@ -349,7 +346,9 @@ void WebPageProxy::setSmartInsertDeleteEnabled(bool isSmartInsertDeleteEnabled)
 
     TextChecker::setSmartInsertDeleteEnabled(isSmartInsertDeleteEnabled);
     m_isSmartInsertDeleteEnabled = isSmartInsertDeleteEnabled;
-    protect(legacyMainFrameProcess())->send(Messages::WebPage::SetSmartInsertDeleteEnabled(isSmartInsertDeleteEnabled), webPageIDInMainFrameProcess());
+    forEachWebContentProcess([&](auto& process, auto pageID) {
+        process.send(Messages::WebPage::SetSmartInsertDeleteEnabled(isSmartInsertDeleteEnabled), pageID);
+    });
 }
 
 void WebPageProxy::didPerformDictionaryLookup(const DictionaryPopupInfo& dictionaryPopupInfo)
@@ -428,17 +427,12 @@ bool WebPageProxy::shouldDelayWindowOrderingForEvent(Ref<WebKit::WebMouseEvent>&
     if (legacyMainFrameProcess().state() != WebProcessProxy::State::Running)
         return false;
 
-    std::optional<FrameIdentifier> frameID;
     const Seconds messageTimeout(3);
-    while (true) {
-        auto sendResult = processContainingFrame(frameID)->sendSync(Messages::WebPage::ShouldDelayWindowOrderingEvent(frameID, event), webPageIDInProcessForFrame(frameID), messageTimeout);
+    return askFramesUnderMouseEvent(event, Messages::WebPage::ShouldDelayWindowOrderingEvent::name(), [&](WebProcessProxy& process, std::optional<FrameIdentifier> frameID) -> std::optional<Variant<bool, RemoteUserInputEventData>> {
+        auto sendResult = process.sendSync(Messages::WebPage::ShouldDelayWindowOrderingEvent(frameID, event), webPageIDInProcessForFrame(frameID), messageTimeout);
         auto [result] = sendResult.takeReplyOr(false);
-        auto* remoteUserInputEventData = std::get_if<RemoteUserInputEventData>(&result);
-        if (!remoteUserInputEventData)
-            return std::get<bool>(result);
-        event->setPosition(remoteUserInputEventData->transformedPoint);
-        frameID = remoteUserInputEventData->targetFrameID;
-    }
+        return WTF::move(result);
+    });
 }
 
 bool WebPageProxy::acceptsFirstMouse(int eventNumber, Ref<WebKit::WebMouseEvent>&& event)
@@ -449,27 +443,55 @@ bool WebPageProxy::acceptsFirstMouse(int eventNumber, Ref<WebKit::WebMouseEvent>
     if (shouldAvoidSynchronouslyWaitingToPreventDeadlock())
         return false;
 
-    std::optional<FrameIdentifier> frameID;
-    while (true) {
-        Ref process = processContainingFrame(frameID);
-        if (!process->hasConnection())
-            return false;
+    return askFramesUnderMouseEvent(event, Messages::WebPageProxy::HandleAcceptsFirstMouse::name(), [&](WebProcessProxy& process, std::optional<FrameIdentifier> frameID) -> std::optional<Variant<bool, RemoteUserInputEventData>> {
+        if (!process.hasConnection())
+            return std::nullopt;
 
         auto pageID = webPageIDInProcessForFrame(frameID);
         internals().acceptsFirstMouseRemoteUserInputEventData = std::nullopt;
-        process->send(Messages::WebPage::RequestAcceptsFirstMouse(frameID, eventNumber, event), pageID, IPC::SendOption::DispatchMessageEvenWhenWaitingForUnboundedSyncReply);
-        bool receivedReply = protect(process->connection())->waitForAndDispatchImmediately<Messages::WebPageProxy::HandleAcceptsFirstMouse>(pageID, 250_ms, IPC::WaitForOption::InterruptWaitingIfSyncMessageArrives) == IPC::Error::NoError;
-
-        if (!receivedReply) {
+        process.send(Messages::WebPage::RequestAcceptsFirstMouse(frameID, eventNumber, event), pageID, IPC::SendOption::DispatchMessageEvenWhenWaitingForUnboundedSyncReply);
+        if (protect(process.connection())->waitForAndDispatchImmediately<Messages::WebPageProxy::HandleAcceptsFirstMouse>(pageID, 250_ms, IPC::WaitForOption::InterruptWaitingIfSyncMessageArrives) != IPC::Error::NoError) {
             WEBPAGEPROXY_RELEASE_LOG_ERROR(MouseHandling, "acceptsFirstMouse: associated WebContent failed to process RequestAcceptsFirstMouse within 250 ms");
-            return false;
+            return std::nullopt;
         }
 
-        auto remoteUserInputEventData = std::exchange(internals().acceptsFirstMouseRemoteUserInputEventData, std::nullopt);
+        if (auto remoteUserInputEventData = std::exchange(internals().acceptsFirstMouseRemoteUserInputEventData, std::nullopt))
+            return Variant<bool, RemoteUserInputEventData> { WTF::move(*remoteUserInputEventData) };
+        return Variant<bool, RemoteUserInputEventData> { m_acceptsFirstMouse };
+    });
+}
+
+// Asks the main frame's process, then each cross-site frame a reply hands the event to, until one of them answers.
+// `ask` returns std::nullopt if a process doesn't answer at all.
+bool WebPageProxy::askFramesUnderMouseEvent(WebMouseEvent& event, IPC::MessageName messageName, NOESCAPE const Function<std::optional<Variant<bool, RemoteUserInputEventData>>(WebProcessProxy&, std::optional<FrameIdentifier>)>& ask)
+{
+    std::optional<FrameIdentifier> frameID;
+    while (true) {
+        Ref process = processContainingFrame(frameID);
+        auto reply = ask(process, frameID);
+        if (!reply)
+            return false;
+
+        auto* remoteUserInputEventData = std::get_if<RemoteUserInputEventData>(&*reply);
         if (!remoteUserInputEventData)
-            return m_acceptsFirstMouse;
-        event->setPosition(remoteUserInputEventData->transformedPoint);
-        frameID = remoteUserInputEventData->targetFrameID;
+            return std::get<bool>(*reply);
+
+        // These replies aren't dispatched as messages, so give the message checks a scope to report to.
+        Ref connection = process->connection();
+        RefPtr<WebFrameProxy> targetFrame;
+        bool replyIsInvalid = false;
+        {
+            IPC::Connection::MessageDispatchScope dispatchScope { connection };
+            targetFrame = frameForRemoteUserInputEventRedispatch(connection.ptr(), frameID, remoteUserInputEventData->targetFrameID);
+            replyIsInvalid = dispatchScope.didReceiveInvalidMessage();
+        }
+        if (replyIsInvalid)
+            connection->dispatchDidReceiveInvalidMessage(messageName, { });
+        if (!targetFrame)
+            return false;
+
+        event.setPosition(remoteUserInputEventData->transformedPoint);
+        frameID = targetFrame->frameID();
     }
 }
 
@@ -657,7 +679,7 @@ static RetainPtr<NSString> pathToPDFOnDisk(const String& suggestedFilename)
     if ([fileManager fileExistsAtPath:path.get()]) {
         auto [fileHandle, temporaryFilePath] = FileSystem::createTemporaryFileInDirectory(pdfDirectoryPath.get(), makeString('-', suggestedFilename));
         if (!fileHandle) {
-            SAFE_WTFLOGALWAYS("Cannot create PDF file in the temporary directory (%s).", suggestedFilename.utf8());
+            SAFE_WTFLOGALWAYS("Cannot create PDF file in the temporary directory (%s).", makeUTF8CString(suggestedFilename));
             return nil;
         }
 
@@ -706,7 +728,7 @@ void WebPageProxy::savePDFToTemporaryFolderAndOpenWithNativeApplication(const St
     RetainPtr nsData = toNSDataNoCopy(data, FreeWhenDone::No);
 
     if (![[NSFileManager defaultManager] createFileAtPath:nsPath.get() contents:nsData.get() attributes:fileAttributes.get()]) {
-        SAFE_WTFLOGALWAYS("Cannot create PDF file in the temporary directory (%s).", sanitizedFilename.utf8());
+        SAFE_WTFLOGALWAYS("Cannot create PDF file in the temporary directory (%s).", makeUTF8CString(sanitizedFilename));
         return;
     }
     auto originatingURLString = frameInfo.request.url().string();
@@ -801,10 +823,10 @@ void WebPageProxy::showPDFContextMenu(const WebKit::PDFContextMenu& contextMenu,
         completionHandler(std::nullopt);
     };
 
-    if (contextMenu.inputSource == WebEventInputSource::Automation) {
+    if (contextMenu.inputSource == WebEventInputSource::Touch) {
 #if HAVE(APPKIT_GESTURES_SUPPORT)
         NSPoint locationInScreenCoordinates = [window convertPointToScreen:locationInWindowCoordinates];
-        RetainPtr screenRelativeContext = [_NSViewMenuContext menuContextWithLocation:locationInScreenCoordinates source:ContextMenuRequestSourceForAutomation];
+        RetainPtr screenRelativeContext = [_NSViewMenuContext menuContextWithLocation:locationInScreenCoordinates source:_NSViewMenuRequestSourceTouch];
         [NSMenu _popUpContextMenu:nsMenu.get() withContext:screenRelativeContext.get() forView:view.get() completionBlock:makeBlockPtr(WTF::move(handleSelectedMenuItem)).get()];
 #else
         RELEASE_ASSERT_NOT_REACHED();
@@ -868,6 +890,14 @@ void WebPageProxy::startWindowDrag()
         pageClient->startWindowDrag();
 }
 
+#if ENABLE(DOCUMENT_PIP)
+void WebPageProxy::startDocumentPictureInPictureWindowDrag(IPC::Connection& connection)
+{
+    MESSAGE_CHECK_BASE(isDocumentPictureInPicture(), connection);
+    startWindowDrag();
+}
+#endif
+
 NSWindow *WebPageProxy::platformWindow()
 {
     RefPtr pageClient = m_pageClient.get();
@@ -916,6 +946,25 @@ void WebPageProxy::platformDidSelectItemFromActiveContextMenu(const WebContextMe
 }
 
 #endif
+
+void WebPageProxy::executeUserInitiatedCopyCommand()
+{
+    if (!hasRunningProcess())
+        return;
+
+    RefPtr focusedFrame = focusedOrMainFrame();
+    auto frameID = focusedFrame ? std::optional(focusedFrame->frameID()) : std::nullopt;
+    executeEditCommand("copy"_s, { }, grantUserInitiatedCopy(frameID));
+}
+
+CompletionHandler<void()> WebPageProxy::grantUserInitiatedCopy(std::optional<FrameIdentifier> frameID)
+{
+    Ref process = processContainingFrame(frameID);
+    auto grantID = WebPasteboardProxy::singleton().grantUserInitiatedCopy(process, identifier());
+    return [process = WTF::move(process), grantID] {
+        WebPasteboardProxy::singleton().revokeUserInitiatedCopy(process, grantID);
+    };
+}
 
 std::optional<IPC::AsyncReplyID> WebPageProxy::willPerformPasteCommand(DOMPasteAccessCategory pasteAccessCategory, CompletionHandler<void()>&& completionHandler, std::optional<FrameIdentifier> frameID)
 {
@@ -1281,7 +1330,9 @@ void WebPageProxy::interruptSyntheticMomentumScrolling()
         .ioHIDEventTimestamp = timestamp,
         .rawPlatformDelta = std::nullopt,
         .momentumEndType = WebWheelEvent::MomentumEndType::Interrupted,
-        .inputSource = WebEventInputSource::Automation,
+        // This is tagged as coming from a touch even when a trackpad swipe ends it, which also keeps
+        // WebCore from taking the event's empty position as the mouse location.
+        .inputSource = WebEventInputSource::Touch,
     });
     handleNativeWheelEvent(NativeWebWheelEvent::create(cancelEvent));
 }

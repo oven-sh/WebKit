@@ -11,6 +11,7 @@ set(WebGPU_PRIVATE_FRAMEWORK_HEADERS
     ${WebGPU_CPP_API_HEADERS}
     CxxBridgingPublic.h
     WebGPU.h
+    WebGPUCAPIHandles.h
 )
 
 set(WebGPU_PRIVATE_INCLUDE_DIRECTORIES
@@ -104,6 +105,11 @@ WEBKIT_COPY_FILES(WebGPU_CopyPrivateHeaders
     FILES ${WebGPU_PRIVATE_FRAMEWORK_HEADERS}
     FLATTENED
 )
+# WebGPU_Private.modulemap's umbrella is PrivateHeaders.
+WEBKIT_ADD_UMBRELLA_INVALIDATION_HEADER(WebGPU_CopyPrivateHeaders
+    DESTINATION ${WebGPU_PRIVATE_HEADERS_DIR}
+    FILES ${WebGPU_PRIVATE_FRAMEWORK_HEADERS}
+)
 
 # Stage the module maps into the bundle so the Swift clang importer finds WebGPU
 # and WebGPU_Private via -F. WEBKIT_COPY_FILES cannot rename, so these need the
@@ -162,6 +168,8 @@ if (SWIFT_REQUIRED)
 
     webkit_target_add_swift_options(WebGPU
         -I${CMAKE_CURRENT_SOURCE_DIR}/Internal
+        # WTF's Swift module, which shadows the wtf Clang module.
+        "-I$<TARGET_PROPERTY:WTF,BINARY_DIR>"
         "-library-level spi"
     )
 
@@ -170,6 +178,10 @@ if (SWIFT_REQUIRED)
     WEBKIT_SETUP_SWIFT_AND_GENERATE_SWIFT_CPP_INTEROP_HEADER(WebGPU WebGPU
         "${WebGPU_HEADERS_DIR}"
         "WebGPUSwift-Generated.h")
+    if (WEBKIT_PLATFORM_MAC)
+        # Reuse the SDK modules SwiftPrewarmMac builds instead of building them at the same time.
+        WEBKIT_ORDER_SWIFT_COMPILE_AFTER(WebGPU SwiftPrewarmMac)
+    endif ()
 
     WEBKIT_DEFINE_SUBTARGET(WebGPU_SwiftInterop WebGPU ${WebGPU_SWIFT_INTEROP_SOURCES})
     target_precompile_headers(WebGPU_SwiftInterop REUSE_FROM WebGPU)

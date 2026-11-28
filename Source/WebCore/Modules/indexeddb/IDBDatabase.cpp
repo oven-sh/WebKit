@@ -44,6 +44,7 @@
 #include "ScriptExecutionContext.h"
 #include <JavaScriptCore/HeapInlines.h>
 #include <ranges>
+#include <wtf/Borrow.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/TextStream.h>
 
@@ -78,7 +79,7 @@ IDBDatabase::IDBDatabase(ScriptExecutionContext& context, IDBClient::IDBConnecti
 
 IDBDatabase::~IDBDatabase()
 {
-    ASSERT(canCurrentThreadAccessThreadLocalData(originThread()));
+    RELEASE_ASSERT(canCurrentThreadAccessThreadLocalData(originThread()));
 
     if (!m_closedInServer)
         m_connectionProxy->databaseConnectionClosed(*this);
@@ -101,7 +102,7 @@ bool IDBDatabase::virtualHasPendingActivity() const
 
 const String IDBDatabase::name() const
 {
-    ASSERT(canCurrentThreadAccessThreadLocalData(originThread()));
+    RELEASE_ASSERT(canCurrentThreadAccessThreadLocalData(originThread()));
     return m_info.name();
 }
 
@@ -113,7 +114,7 @@ uint64_t IDBDatabase::version() const
 
 Ref<DOMStringList> IDBDatabase::objectStoreNames() const
 {
-    ASSERT(canCurrentThreadAccessThreadLocalData(originThread()));
+    RELEASE_ASSERT(canCurrentThreadAccessThreadLocalData(originThread()));
 
     auto objectStoreNames = DOMStringList::create(m_info.objectStoreNames());
     objectStoreNames->sort();
@@ -122,7 +123,7 @@ Ref<DOMStringList> IDBDatabase::objectStoreNames() const
 
 void IDBDatabase::renameObjectStore(IDBObjectStore& objectStore, const String& newName)
 {
-    ASSERT(canCurrentThreadAccessThreadLocalData(originThread()));
+    RELEASE_ASSERT(canCurrentThreadAccessThreadLocalData(originThread()));
     ASSERT(m_versionChangeTransaction);
     ASSERT(m_info.hasObjectStore(objectStore.info().name()));
 
@@ -133,7 +134,7 @@ void IDBDatabase::renameObjectStore(IDBObjectStore& objectStore, const String& n
 
 void IDBDatabase::renameIndex(IDBIndex& index, const String& newName)
 {
-    ASSERT(canCurrentThreadAccessThreadLocalData(originThread()));
+    RELEASE_ASSERT(canCurrentThreadAccessThreadLocalData(originThread()));
     ASSERT(m_versionChangeTransaction);
     ASSERT(m_info.hasObjectStore(index.objectStore().info().name()));
     ASSERT(m_info.infoForExistingObjectStore(index.objectStore().info().name())->hasIndex(index.info().name()));
@@ -152,7 +153,7 @@ ExceptionOr<Ref<IDBObjectStore>> IDBDatabase::createObjectStore(const String& na
 {
     LOG_WITH_STREAM(IndexedDB, stream << "IDBDatabase::createObjectStore - ("_s << m_info.name() << " "_s << name << ")"_s);
 
-    ASSERT(canCurrentThreadAccessThreadLocalData(originThread()));
+    RELEASE_ASSERT(canCurrentThreadAccessThreadLocalData(originThread()));
     ASSERT(!m_versionChangeTransaction || m_versionChangeTransaction->isVersionChange());
 
     RefPtr versionChangeTransaction = m_versionChangeTransaction;
@@ -183,7 +184,7 @@ ExceptionOr<Ref<IDBTransaction>> IDBDatabase::transaction(StringOrVectorOfString
 {
     LOG(IndexedDB, "IDBDatabase::transaction");
 
-    ASSERT(canCurrentThreadAccessThreadLocalData(originThread()));
+    RELEASE_ASSERT(canCurrentThreadAccessThreadLocalData(originThread()));
 
     if (m_versionChangeTransaction && !m_versionChangeTransaction->isFinishedOrFinishing())
         return Exception { ExceptionCode::InvalidStateError, "Failed to execute 'transaction' on 'IDBDatabase': A version change transaction is running."_s };
@@ -199,7 +200,7 @@ ExceptionOr<Ref<IDBTransaction>> IDBDatabase::transaction(StringOrVectorOfString
     } else
         objectStores = { std::get<String>(WTF::move(storeNames)) };
 
-    for (auto& objectStoreName : objectStores) {
+    for (auto& objectStoreName : borrow(objectStores)) {
         if (m_info.hasObjectStore(objectStoreName))
             continue;
         return Exception { ExceptionCode::NotFoundError, "Failed to execute 'transaction' on 'IDBDatabase': One of the specified object stores was not found."_s };
@@ -227,7 +228,7 @@ ExceptionOr<void> IDBDatabase::deleteObjectStore(const String& objectStoreName)
 {
     LOG(IndexedDB, "IDBDatabase::deleteObjectStore");
 
-    ASSERT(canCurrentThreadAccessThreadLocalData(originThread()));
+    RELEASE_ASSERT(canCurrentThreadAccessThreadLocalData(originThread()));
 
     RefPtr versionChangeTransaction = m_versionChangeTransaction;
     if (!versionChangeTransaction)
@@ -270,17 +271,17 @@ void IDBDatabase::connectionToServerLost(const IDBError& error)
 {
     LOG(IndexedDB, "IDBDatabase::connectionToServerLost - %" PRIu64, m_databaseConnectionIdentifier.toUInt64());
 
-    ASSERT(canCurrentThreadAccessThreadLocalData(originThread()));
+    RELEASE_ASSERT(canCurrentThreadAccessThreadLocalData(originThread()));
 
     m_closePending = true;
     m_closedInServer = true;
 
     auto activeTransactions = copyToVector(m_activeTransactions.values());
-    for (auto& transaction : activeTransactions)
+    for (auto& transaction : borrow(activeTransactions))
         transaction->connectionClosedFromServer(error);
     
     auto committingTransactions = copyToVector(m_committingTransactions.values());
-    for (auto& transaction : committingTransactions)
+    for (auto& transaction : borrow(committingTransactions))
         transaction->connectionClosedFromServer(error);
 
     auto errorEvent = Event::create(m_eventNames.errorEvent, Event::CanBubble::Yes, Event::IsCancelable::No);
@@ -319,7 +320,7 @@ void IDBDatabase::stop()
 {
     LOG(IndexedDB, "IDBDatabase::stop - %" PRIu64, m_databaseConnectionIdentifier.toUInt64());
 
-    ASSERT(canCurrentThreadAccessThreadLocalData(originThread()));
+    RELEASE_ASSERT(canCurrentThreadAccessThreadLocalData(originThread()));
 
     removeAllEventListeners();
 
@@ -351,7 +352,7 @@ Ref<IDBTransaction> IDBDatabase::startVersionChangeTransaction(const IDBTransact
 {
     LOG_WITH_STREAM(IndexedDB, stream << "IDBDatabase::startVersionChangeTransaction "_s << info.identifier().loggingString());
 
-    ASSERT(canCurrentThreadAccessThreadLocalData(originThread()));
+    RELEASE_ASSERT(canCurrentThreadAccessThreadLocalData(originThread()));
     ASSERT(!m_versionChangeTransaction);
     ASSERT(info.mode() == IDBTransactionMode::Versionchange);
     ASSERT(!m_closePending);
@@ -369,7 +370,7 @@ void IDBDatabase::didStartTransaction(IDBTransaction& transaction)
 {
     LOG_WITH_STREAM(IndexedDB, stream << "IDBDatabase::didStartTransaction "_s << transaction.info().identifier().loggingString());
     ASSERT(!m_versionChangeTransaction);
-    ASSERT(canCurrentThreadAccessThreadLocalData(originThread()));
+    RELEASE_ASSERT(canCurrentThreadAccessThreadLocalData(originThread()));
 
     // It is possible for the client to have aborted or committed a transaction
     // before the server replies back that it has started.
@@ -383,7 +384,7 @@ void IDBDatabase::willCommitTransaction(IDBTransaction& transaction)
 {
     LOG_WITH_STREAM(IndexedDB, stream << "IDBDatabase::willCommitTransaction "_s << transaction.info().identifier().loggingString());
 
-    ASSERT(canCurrentThreadAccessThreadLocalData(originThread()));
+    RELEASE_ASSERT(canCurrentThreadAccessThreadLocalData(originThread()));
 
     RefPtr refTransaction = m_activeTransactions.take(transaction.info().identifier());
     m_committingTransactions.set(transaction.info().identifier(), refTransaction.releaseNonNull());
@@ -393,7 +394,7 @@ void IDBDatabase::didCommitTransaction(IDBTransaction& transaction)
 {
     LOG_WITH_STREAM(IndexedDB, stream << "IDBDatabase::didCommitTransaction "_s << transaction.info().identifier().loggingString());
 
-    ASSERT(canCurrentThreadAccessThreadLocalData(originThread()));
+    RELEASE_ASSERT(canCurrentThreadAccessThreadLocalData(originThread()));
 
     if (m_versionChangeTransaction == &transaction)
         m_info.setVersion(transaction.info().newVersion());
@@ -405,7 +406,7 @@ void IDBDatabase::willAbortTransaction(IDBTransaction& transaction)
 {
     LOG_WITH_STREAM(IndexedDB, stream << "IDBDatabase::willAbortTransaction "_s << transaction.info().identifier().loggingString());
 
-    ASSERT(canCurrentThreadAccessThreadLocalData(originThread()));
+    RELEASE_ASSERT(canCurrentThreadAccessThreadLocalData(originThread()));
 
     RefPtr refTransaction = m_activeTransactions.take(transaction.info().identifier());
     if (!refTransaction)
@@ -424,7 +425,7 @@ void IDBDatabase::didAbortTransaction(IDBTransaction& transaction)
 {
     LOG_WITH_STREAM(IndexedDB, stream << "IDBDatabase::didAbortTransaction "_s << transaction.info().identifier().loggingString());
 
-    ASSERT(canCurrentThreadAccessThreadLocalData(originThread()));
+    RELEASE_ASSERT(canCurrentThreadAccessThreadLocalData(originThread()));
 
     if (transaction.isVersionChange()) {
         ASSERT(transaction.originalDatabaseInfo());
@@ -440,7 +441,7 @@ void IDBDatabase::didCommitOrAbortTransaction(IDBTransaction& transaction)
 {
     LOG_WITH_STREAM(IndexedDB, stream << "IDBDatabase::didCommitOrAbortTransaction "_s << transaction.info().identifier().loggingString());
 
-    ASSERT(canCurrentThreadAccessThreadLocalData(originThread()));
+    RELEASE_ASSERT(canCurrentThreadAccessThreadLocalData(originThread()));
 
     if (m_versionChangeTransaction == &transaction)
         m_versionChangeTransaction = nullptr;
@@ -470,7 +471,7 @@ void IDBDatabase::fireVersionChangeEvent(const IDBResourceIdentifier& requestIde
     uint64_t currentVersion = m_info.version();
     LOG(IndexedDB, "IDBDatabase::fireVersionChangeEvent - current version %" PRIu64 ", requested version %" PRIu64 ", connection %" PRIu64 " (%p)", currentVersion, requestedVersion, m_databaseConnectionIdentifier.toUInt64(), this);
 
-    ASSERT(canCurrentThreadAccessThreadLocalData(originThread()));
+    RELEASE_ASSERT(canCurrentThreadAccessThreadLocalData(originThread()));
 
     if (!scriptExecutionContext() || m_closePending) {
         connectionProxy().didFireVersionChangeEvent(m_databaseConnectionIdentifier, requestIdentifier);
@@ -484,7 +485,7 @@ void IDBDatabase::fireVersionChangeEvent(const IDBResourceIdentifier& requestIde
 void IDBDatabase::dispatchEvent(Event& event)
 {
     LOG(IndexedDB, "IDBDatabase::dispatchEvent (%" PRIu64 ") (%p)", m_databaseConnectionIdentifier.toUInt64(), this);
-    ASSERT(canCurrentThreadAccessThreadLocalData(originThread()));
+    RELEASE_ASSERT(canCurrentThreadAccessThreadLocalData(originThread()));
 
     Ref protectedThis { *this };
 
@@ -498,7 +499,7 @@ void IDBDatabase::dispatchEvent(Event& event)
 
 void IDBDatabase::didCreateIndexInfo(const IDBIndexInfo& info)
 {
-    ASSERT(canCurrentThreadAccessThreadLocalData(originThread()));
+    RELEASE_ASSERT(canCurrentThreadAccessThreadLocalData(originThread()));
 
     auto* objectStore = m_info.infoForExistingObjectStore(info.objectStoreIdentifier());
     ASSERT(objectStore);
@@ -507,7 +508,7 @@ void IDBDatabase::didCreateIndexInfo(const IDBIndexInfo& info)
 
 void IDBDatabase::didDeleteIndexInfo(const IDBIndexInfo& info)
 {
-    ASSERT(canCurrentThreadAccessThreadLocalData(originThread()));
+    RELEASE_ASSERT(canCurrentThreadAccessThreadLocalData(originThread()));
 
     auto* objectStore = m_info.infoForExistingObjectStore(info.objectStoreIdentifier());
     ASSERT(objectStore);

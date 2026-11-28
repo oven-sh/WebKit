@@ -1082,7 +1082,7 @@ JSValue Modules::readLinkedMock(ModuleNamespace* word, const Identifier& key)
 
 BitVector Modules::modulesOnImportCycle(ModuleID module) const
 {
-    UncheckedKeyHashMap<ModuleID, Vector<ModuleID, 2>> importers;
+    HashMap<ModuleID, Vector<ModuleID, 2>> importers;
     BitVector seen(m_table.size());
     Vector<ModuleID, 16> work { module };
     seen.quickSet(module.index());
@@ -1886,7 +1886,7 @@ bool Modules::hasOutdatedLinkForName(ModuleID module, const Identifier& name, En
         Identifier name;
         Environment* instance;
     };
-    UncheckedKeyHashSet<std::pair<uint32_t, UniquedStringImpl*>> seen;
+    HashSet<std::pair<uint32_t, UniquedStringImpl*>> seen;
     Vector<Step, 8> work { { module, name, instance } };
     while (!work.isEmpty()) {
         Step step = work.takeLast();
@@ -1964,7 +1964,7 @@ auto Modules::followStars(ModuleID module, const Identifier& name, Environment* 
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     std::optional<StarResolution> resolution;
     Vector<Environment*, 8> passed;
-    UncheckedKeyHashSet<Environment*> seenInstances;
+    HashSet<Environment*> seenInstances;
     bool isInStarCycle = false;
     while (true) {
         if (auto known = answersByLinks().starResolutions.find({ instance, name.impl() }); known != answersByLinks().starResolutions.end()) {

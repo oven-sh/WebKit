@@ -249,7 +249,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> generateInvokeThunk(const Signature& signa
         return { };
 
     linkBuffer.setIsThunk();
-    auto code = FINALIZE_CODE_IF(Options::dumpDisassembly() || Options::dumpFFIDisassembly(), linkBuffer, JITThunkPtrTag, "FFI invoke"_s, "FFI invoke %s", signature.toString().utf8().legacyCStringPointer());
+    auto code = FINALIZE_CODE_IF(Options::dumpDisassembly() || Options::dumpFFIDisassembly(), linkBuffer, JITThunkPtrTag, "FFI invoke"_s, "FFI invoke %s", makeUTF8CString(signature.toString()).legacyCStringPointer());
     dataLogLnIf(Options::verboseFFI(), "[FFI] generated invoke thunk for ", signature.toString());
     return code;
 }

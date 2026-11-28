@@ -39,14 +39,14 @@
 #include "Settings.h"
 #include <wtf/TZoneMallocInlines.h>
 
-namespace WebCore {
-namespace Layout {
+namespace WebCore::Layout {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(LayoutState);
 
 LayoutState::LayoutState(const Document& document, const ElementBox& rootContainer, Type type, FormattingContextLayoutFunction&& formattingContextLayoutFunction, FormattingContextLogicalWidthFunction&& formattingContextLogicalWidthFunction , FormattingContextLogicalHeightFunction&& formattingContextLogicalHeightFunction, FormattingContextLayoutForBlockInInlineFunction&& formattingContextLayoutForBlockInInlineFunction)
     : m_type(type)
     , m_isTextShapingAcrossInlineBoxesEnabled(document.settings().textShapingAcrossInlineBoxes())
+    , m_isAlignmentBaselineOnInlineBoxesEnabled(document.settings().cssAlignmentBaselineOnInlineBoxesEnabled())
     , m_rootContainer(rootContainer)
     , m_securityOrigin(document.securityOrigin())
     , m_formattingContextLayoutFunction(WTF::move(formattingContextLayoutFunction))
@@ -130,5 +130,3 @@ void LayoutState::layoutWithFormattingContextForBlockInInline(const Layout::Elem
 }
 
 }
-}
-

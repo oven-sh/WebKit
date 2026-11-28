@@ -79,6 +79,7 @@ enum class BlockStepAlign : uint8_t;
 enum class BlockStepInsert : uint8_t;
 enum class BlockStepRound : uint8_t;
 enum class BorderCollapse : bool;
+enum class BorderRadiusPercentageBasis : bool;
 enum class BorderStyle : uint8_t;
 enum class BoxAlignment : uint8_t;
 enum class BoxDecorationBreak : bool;
@@ -239,6 +240,7 @@ struct BorderImageSlice;
 struct BorderImageSource;
 struct BorderImageWidth;
 struct BorderRadius;
+struct BorderShape;
 struct BoxShadow;
 struct CaretColor;
 struct Clip;
@@ -266,7 +268,6 @@ struct FitTolerance;
 struct FlexBasis;
 struct FlexWrap;
 struct FontFamilies;
-struct FontFamiliesView;
 struct FontFeatureSettings;
 struct FontPalette;
 struct FontSizeAdjust;
@@ -323,6 +324,7 @@ struct ObjectViewBox;
 struct OutlineOffset;
 struct OverflowClipMargin;
 struct PaddingEdge;
+struct PageName;
 struct PageSize;
 struct Perspective;
 struct PortalTransform;
@@ -393,7 +395,6 @@ struct ViewTransitionName;
 struct WebkitBoxReflect;
 struct WebkitInitialLetter;
 struct WebkitLineBoxContain;
-struct WebkitLineClamp;
 struct WebkitLineGrid;
 struct WebkitLocale;
 struct WebkitMarqueeIncrement;
@@ -463,7 +464,7 @@ using WebkitBoxOrdinalGroup = Integer<CSS::Positive>;
 using PseudoElementStyles = HashMap<PseudoElementIdentifier, std::unique_ptr<ComputedStyle>>;
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(ComputedStyleBase);
-class ComputedStyleBase : public CanMakeCheckedPtr<ComputedStyleBase, WTF::DefaultedOperatorEqual::No, WTF::CheckedPtrDeleteCheckException::Yes> {
+class ComputedStyleBase : public CanMakeCheckedPtr<ComputedStyleBase> {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(ComputedStyleBase, ComputedStyleBase);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(ComputedStyleBase);
 public:
@@ -471,6 +472,9 @@ public:
     enum CreateDefaultStyleTag { CreateDefaultStyle };
 
     WEBCORE_EXPORT ~ComputedStyleBase();
+
+    ComputedStyleBase(const ComputedStyleBase&) = delete;
+    ComputedStyleBase& operator=(const ComputedStyleBase&) = delete;
 
 #if ASSERT_ENABLED || ENABLE(SECURITY_ASSERTIONS)
     bool deletionHasBegun() const { return m_deletionHasBegun; }
@@ -683,7 +687,7 @@ public:
 
     WEBCORE_EXPORT const Font& primaryFont() const LIFETIME_BOUND;
     WEBCORE_EXPORT const FontMetrics& metricsOfPrimaryFont() const LIFETIME_BOUND;
-    NODELETE std::pair<FontOrientation, NonCJKGlyphOrientation> fontAndGlyphOrientation();
+    NODELETE std::pair<FontOrientation, NonCJKGlyphOrientation> fontAndGlyphOrientation() const;
     NODELETE float usedFontSize() const;
     inline WebkitLocale usedLocale() const;
 
@@ -823,6 +827,7 @@ public:
         PREFERRED_TYPE(bool) unsigned disallowsFastPathInheritance : 1;
         PREFERRED_TYPE(bool) unsigned hasZeroEffectiveBorderWidths : 1; // Maintained by the border setters.
         PREFERRED_TYPE(bool) unsigned hasZeroPadding : 1; // Maintained by the padding setters.
+        PREFERRED_TYPE(BorderRadiusPercentageBasis) unsigned borderRadiusPercentageBasis : 1;
 
         // Non-property related state bits. These do not get copied by copyNonInheritedFrom().
         PREFERRED_TYPE(bool) unsigned firstChildState : 1;
@@ -896,12 +901,12 @@ protected:
     friend class DifferenceFunctions;
 
     ComputedStyleBase(ComputedStyleBase&&);
-    ComputedStyleBase& operator=(ComputedStyleBase&&);
 
     ComputedStyleBase(CreateDefaultStyleTag);
     ComputedStyleBase(const ComputedStyleBase&, CloneTag);
 
-    ComputedStyleBase(ComputedStyleBase&, ComputedStyleBase&&);
+    void swapData(ComputedStyleBase&);
+    void cloneDataFrom(const ComputedStyleBase&);
 
     const NonInheritedFlags& nonInheritedFlags() const LIFETIME_BOUND { return m_nonInheritedFlags; }
     const NonInheritedData& nonInheritedData() const LIFETIME_BOUND { return m_nonInheritedData; }

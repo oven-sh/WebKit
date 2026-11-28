@@ -51,8 +51,7 @@
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <wtf/PointerComparison.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 PaintImage::PaintImage(CustomIdent&& name, Ref<CSSVariableData>&& arguments)
     : GeneratedImage { Type::PaintImage }
@@ -112,7 +111,7 @@ ImageDrawResult PaintImage::drawAsPattern(GraphicsContext& context, const Render
     if (!buffer)
         return ImageDrawResult::DidNothing;
 
-    return drawPatternBuffer(context, *buffer, descriptor, destination, tile, patternTransform, phase, spacing);
+    return drawPatternBuffer(context, *buffer, size, descriptor, destination, tile, patternTransform, phase, spacing);
 }
 
 Vector<WTF::String> PaintImage::paintArguments() const
@@ -246,5 +245,4 @@ bool PaintImage::canDrawAtSize(const RenderElement& renderer, const FloatSize& s
     return !size.isEmpty() && canDraw(renderer);
 }
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

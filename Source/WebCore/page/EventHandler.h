@@ -197,6 +197,7 @@ public:
     WEBCORE_EXPORT ScrollableArea* focusedScrollableArea() const;
 
     WEBCORE_EXPORT void setCapturingMouseEventsElement(RefPtr<Element>&&);
+    Element* capturingMouseEventsElement() const { return m_capturingMouseEventsElement.get(); }
     void pointerCaptureElementDidChange(Element*);
 
 #if ENABLE(DRAG_SUPPORT)
@@ -553,6 +554,10 @@ private:
 
     bool dragHysteresisExceeded(const FloatPoint&) const;
     bool dragHysteresisExceeded(const IntPoint&) const;
+
+#if ENABLE(DOCUMENT_PIP)
+    bool canMouseDownStartDocumentPictureInPictureWindowDrag(const MouseEventWithHitTestResults&) const;
+#endif
 #endif
     
     bool mouseMovementExceedsThreshold(const FloatPoint&, int pointsThreshold) const;
@@ -706,6 +711,9 @@ private:
     bool m_mouseDownWasSingleClickInSelection { false };
     bool m_hasScheduledCursorUpdate { false };
     bool m_mouseDownMayStartAutoscroll { false };
+#if ENABLE(DRAG_SUPPORT) && ENABLE(DOCUMENT_PIP)
+    bool m_mouseDownMayStartDocumentPictureInPictureWindowDrag { false };
+#endif
     bool m_mouseDownWasInSubframe { false };
     bool m_didStartDrag { false };
     bool m_isHandlingWheelEvent { false };
@@ -724,6 +732,7 @@ private:
     RefPtr<Element> m_lastElementUnderMouse;
     WeakPtr<Element, WeakPtrImplWithEventTargetData> m_mouseMoveTargetOverride;
     Vector<WeakPtr<Element, WeakPtrImplWithEventTargetData>, 31> m_ancestorsOfLastElementUnderMouse;
+    WeakPtr<Element, WeakPtrImplWithEventTargetData> m_connectedAncestorOfRemovedLastElementUnderMouse;
     RefPtr<LocalFrame> m_lastMouseMoveEventSubframe;
     bool m_lastMouseMoveWasPassedToRemoteSubframe { false };
 #if PLATFORM(MAC)
@@ -829,10 +838,11 @@ private:
     unsigned m_firstTouchID { InvalidTouchIdentifier };
     unsigned touchIdentifierForMouseEvents { 0 };
     unsigned m_touchIdentifierForPrimaryTouch { 0 };
+    unsigned m_touchIdentifierForPrimaryStylusTouch { 0 };
 
     TouchArray m_touches;
     RefPtr<Frame> m_touchEventTargetSubframe;
-    HashMap<PointerID, std::pair<DoublePoint, DoublePoint>, WTF::IntHash<PointerID>, WTF::UnsignedWithZeroKeyHashTraits<PointerID>> m_touchLastGlobalPositionAndDeltaMap;
+    HashMap<PointerID, std::pair<DoublePoint, DoublePoint>> m_touchLastGlobalPositionAndDeltaMap;
 #endif
 
 #if PLATFORM(COCOA)

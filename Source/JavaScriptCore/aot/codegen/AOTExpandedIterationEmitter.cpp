@@ -114,16 +114,16 @@ void GuardEmitter::generateIsEnumeratorCurrent(const ValueContext& value)
     CellPointer enumerator = in<CellPointer>(value->enumeratorOperand());
     ForInEmitter::EnumeratorFields fields = forIn.loadFields(enumerator);
     Integer nameIndex = forIn.nameIndexOf(fields, integerOf(value->positionOperand()));
-    Condition isInStructurePart = forIn.isInStructurePart(enumerator, nameIndex);
+    Condition isLoadable = logicalAnd(forIn.isInStructurePart(enumerator, nameIndex), forIn.canLoadValues(enumerator));
     if (value->currentNamesOperand()) {
         defineTestByBranching(value, [&](BranchTargets targets) {
-            branch(logicalAnd(isInStructurePart, below(nameIndex, integerOf(value->currentNamesOperand()))), targets);
+            branch(logicalAnd(isLoadable, below(nameIndex, integerOf(value->currentNamesOperand()))), targets);
         });
         return;
     }
     defineTestByBranching(value, [&](BranchTargets targets) {
         LBasicBlock isName = newBlock();
-        branch(isInStructurePart, { normalEdge(isName), targets.notTaken });
+        branch(isLoadable, { normalEdge(isName), targets.notTaken });
         m_out.appendTo(isName);
         CellPointer object = cellOrElse(value, value->objectOperand(), targets.notTaken);
         branch(forIn.hasCachedKeys(enumerator, fields, object), targets);

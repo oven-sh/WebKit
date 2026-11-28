@@ -130,7 +130,7 @@ private:
     // Contains the same contents as m_visited, so no write barriers needed. Typed
     // as AbstractModuleRecord* so the hot containsVisited() check can run before
     // dynamicDowncast on the per-edge fast path.
-    UncheckedKeyHashSet<const AbstractModuleRecord*> m_visitedSet;
+    HashSet<const AbstractModuleRecord*> m_visitedSet;
     Vector<AbstractModuleRecord*, 8> m_innerLoadQueue;
 #if ENABLE(AOT)
     WriteBarrier<ModuleGraphLoadingState> m_rootState;

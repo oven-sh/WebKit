@@ -58,7 +58,7 @@ public:
     Ref<NativeImage> nativeImage(CGImageRef glyphImage)
     {
         auto identifier = CGImageGetIdentifier(glyphImage);
-        if (!isMainThread() || !decltype(m_images)::isValidKey(identifier))
+        if (!isMainThread() || !identifier)
             return NativeImage::create(glyphImage).releaseNonNull();
 
         // Use CGImageCreateCopy (which wraps the same underlying data) to avoid keeping the CoreText CGImage alive, but register the
@@ -131,7 +131,7 @@ static CGColorSpaceRef getColorSpace(CGContextDelegateRef delegate, CGRenderingS
     return recorder.colorSpace();
 }
 
-UniqueRef<GraphicsContext> DrawGlyphsRecorder::createInternalContext()
+UniqueRef<GraphicsContextCG> DrawGlyphsRecorder::createInternalContext()
 {
     auto contextDelegate = adoptCF(CGContextDelegateCreate(this));
     CGContextDelegateSetCallback(contextDelegate.get(), deBeginLayer, reinterpret_cast<CGContextDelegateCallback>(&beginLayer));
@@ -168,15 +168,9 @@ void DrawGlyphsRecorder::populateInternalState(const GraphicsContextState& conte
 void DrawGlyphsRecorder::populateInternalContext(const GraphicsContextState& contextState)
 {
     m_internalContext->setCTM(m_originalState.ctm);
-
     m_internalContext->setFillBrush(m_originalState.fillBrush);
-    m_internalContext->applyFillPattern();
-
     m_internalContext->setStrokeBrush(m_originalState.strokeBrush);
-    m_internalContext->applyStrokePattern();
-
     m_internalContext->setShadowsIgnoreTransforms(m_originalState.ignoreTransforms);
-
     if (m_originalState.dropShadow)
         m_internalContext->setDropShadow(*m_originalState.dropShadow);
     else
@@ -373,7 +367,8 @@ void DrawGlyphsRecorder::recordDrawGlyphs(CGRenderingStateRef, CGGStateRef gstat
     // If you set these two equal to each other, and solve for X, you get
     // CTM * currentTextMatrix = CTM * X * m_originalTextMatrix
     // currentTextMatrix * inverse(m_originalTextMatrix) = X
-    AffineTransform currentTextMatrix = CGContextGetTextMatrix(protect(m_internalContext->platformContext()).get());
+    // This is called in the middle of a draw, so the pending state must not be applied here.
+    AffineTransform currentTextMatrix = CGContextGetTextMatrix(m_internalContext->contextForState().get());
     AffineTransform ctmFixup;
     if (auto invertedOriginalTextMatrix = m_originalTextMatrix.inverse())
         ctmFixup = currentTextMatrix * invertedOriginalTextMatrix.value();
@@ -389,7 +384,9 @@ void DrawGlyphsRecorder::recordDrawGlyphs(CGRenderingStateRef, CGGStateRef gstat
     updateShadow(CGGStateGetStyle(gstate));
 
     auto fontSize = CGGStateGetFontSize(gstate);
-    Ref font = m_deriveFontFromContext == DeriveFontFromContext::No ? *m_originalFont : Font::create(FontPlatformData(adoptCF(CTFontCreateWithGraphicsFont(usedFont.get(), fontSize, nullptr, nullptr)), fontSize));
+    // FontCascade::drawGlyphs() has already drawn the synthetic bold as a separate, offset set of glyphs.
+    // Replaying these glyphs with a synthetic bold font would draw the synthetic bold again.
+    Ref font = m_deriveFontFromContext == DeriveFontFromContext::No ? Ref { *m_originalFont }->nonSyntheticBoldFont() : Font::create(FontPlatformData(adoptCF(CTFontCreateWithGraphicsFont(usedFont.get(), fontSize, nullptr, nullptr)), fontSize));
 
     // The above does the work of ensuring the right CTM (which is the combination of CG's CTM and
     // CG's text matrix) is set for the replayer, but in order to provide the right values to
@@ -496,7 +493,7 @@ void DrawGlyphsRecorder::drawOTSVGRun(const Font& font, std::span<const GlyphBuf
 
         // Create a local ImageBuffer because decoding the SVG fonts has to happen in WebProcess.
         if (auto imageBuffer = m_owner.createAlignedImageBuffer(bounds, m_owner.colorSpace(), RenderingMethod::Local)) {
-            FontCascade::drawGlyphs(imageBuffer->context(), font, glyphs.subspan(i, 1), advances.subspan(i, 1), FloatPoint(), smoothingMode);
+            imageBuffer->context().drawGlyphs(font, glyphs.subspan(i, 1), advances.subspan(i, 1), FloatPoint(), smoothingMode);
 
             FloatRect destinationRect = enclosingIntRect(bounds);
             destinationRect.moveBy(penPosition);
@@ -510,7 +507,7 @@ void DrawGlyphsRecorder::drawOTSVGRun(const Font& font, std::span<const GlyphBuf
 void DrawGlyphsRecorder::drawNonOTSVGRun(const Font& font, std::span<const GlyphBufferGlyph> glyphs, std::span<const GlyphBufferAdvance> advances, const FloatPoint& startPoint, FontSmoothingMode smoothingMode)
 {
     prepareInternalContext(font, smoothingMode);
-    FontCascade::drawGlyphs(m_internalContext, font, glyphs, advances, startPoint, smoothingMode);
+    m_internalContext->drawGlyphs(font, glyphs, advances, startPoint, smoothingMode);
     concludeInternalContext();
 }
 
@@ -522,7 +519,7 @@ void DrawGlyphsRecorder::drawBySplittingIntoOTSVGAndNonOTSVGRuns(const Font& fon
         return;
     }
 
-    ASSERT(otsvgGlyphs->size() >= glyphs.size());
+    RELEASE_ASSERT(otsvgGlyphs->size() >= glyphs.size());
 
     // We can't just partition the glyphs into OT-SVG glyphs and non-OT-SVG glyphs because glyphs are allowed to draw outside of their layout boxes.
     // This means that glyphs can overlap, which means we have to get the z-order correct. We can't have an earlier run be drawn on top of a later run.

@@ -45,7 +45,7 @@ private:
         ValueID from;
         ValueID to;
     };
-    template<typename T> using MapByIndex = UncheckedKeyHashMap<uint32_t, T, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+    template<typename T> using MapByIndex = HashMap<uint32_t, T, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
     class Liveness;
 
     uint32_t classOf(uint32_t);

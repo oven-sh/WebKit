@@ -43,8 +43,8 @@ public:
     bool isEmpty() const { return !propertyCount(); }
     PropertyReference propertyAt(unsigned index) const;
 
-    Iterator<ImmutableStyleProperties> begin() const LIFETIME_BOUND { return { *this }; }
-    static constexpr std::nullptr_t end() { return nullptr; }
+    Iterator<ImmutableStyleProperties> begin() const LIFETIME_BOUND { return { *this, 0 }; }
+    Iterator<ImmutableStyleProperties> end() const LIFETIME_BOUND { return { *this, propertyCount() }; }
     unsigned size() const { return propertyCount(); }
 
     NODELETE int findPropertyIndex(CSSPropertyID) const;
@@ -68,12 +68,11 @@ inline void ImmutableStyleProperties::deref() const
         delete this;
 }
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 inline std::span<PackedPtr<const CSSValue>> ImmutableStyleProperties::valueSpan() const
 {
-    return unsafeMakeSpan(std::bit_cast<PackedPtr<const CSSValue>*>(std::bit_cast<const uint8_t*>(metadataSpan().data()) + (m_arraySize * sizeof(StylePropertyMetadata))), propertyCount());
+    // The values are stored right after the metadata.
+    return unsafeMakeSpan(std::bit_cast<PackedPtr<const CSSValue>*>(std::to_address(metadataSpan().end())), propertyCount());
 }
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 inline std::span<const StylePropertyMetadata> ImmutableStyleProperties::metadataSpan() const
 {

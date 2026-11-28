@@ -32,8 +32,7 @@
 #include <type_traits>
 #include <wtf/EnumTraits.h>
 
-namespace WebCore {
-namespace CSS {
+namespace WebCore::CSS {
 
 // `PrimitiveData` is a bespoke implementation of `Variant<Numeric, Keywords...>`
 // optimized for memory use by allowing numeric types with multiple unit representations
@@ -454,7 +453,7 @@ template<Numeric N, SpecificKeyword... Ks> struct PrimitiveData {
 
     Calc asCalc() const
     {
-        ASSERT(isCalc());
+        ASSERT_WITH_SECURITY_IMPLICATION(isCalc());
         return Calc { payload.unevaluatedCalc() };
     }
 
@@ -493,5 +492,4 @@ template<Numeric N, SpecificKeyword... Ks> struct PrimitiveData {
     Index index;
 };
 
-} // namespace CSS
-} // namespace WebCore
+} // namespace WebCore::CSS

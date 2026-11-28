@@ -41,13 +41,13 @@
 #include "NodeDocument.h"
 #include "PlatformRenderTheme.h"
 #include "Quirks.h"
-#include "RenderSearchField.h"
-#include "RenderTextControl.h"
+#include "RenderTextControlSingleLine.h"
 #include "RenderTheme.h"
 #include "RenderView.h"
 #include "ResolvedStyle.h"
 #include "ScriptController.h"
 #include "ScriptDisallowedScope.h"
+#include "SearchInputType.h"
 #include "ShadowRoot.h"
 #include "StyleAdjuster.h"
 #include "StyleComputedStyle+SettersInlines.h"
@@ -82,7 +82,7 @@ Ref<TextControlInnerContainer> TextControlInnerContainer::create(Document& docum
     return adoptRef(*new TextControlInnerContainer(document));
 }
     
-RenderPtr<RenderElement> TextControlInnerContainer::createElementRenderer(Style::ComputedStyle&& style, const RenderTreePosition&)
+RenderPtr<RenderElement> TextControlInnerContainer::createElementRenderer(UniqueRef<Style::ComputedStyle>&& style, const RenderTreePosition&)
 {
     return createRenderer<RenderTextControlInnerContainer>(*this, WTF::move(style));
 }
@@ -196,7 +196,7 @@ void TextControlInnerTextElement::defaultEventHandler(Event& event)
         HTMLDivElement::defaultEventHandler(event);
 }
 
-RenderPtr<RenderElement> TextControlInnerTextElement::createElementRenderer(Style::ComputedStyle&& style, const RenderTreePosition&)
+RenderPtr<RenderElement> TextControlInnerTextElement::createElementRenderer(UniqueRef<Style::ComputedStyle>&& style, const RenderTreePosition&)
 {
     return createRenderer<RenderTextControlInnerBlock>(*this, WTF::move(style));
 }
@@ -214,7 +214,7 @@ std::optional<Style::UnadjustedStyle> TextControlInnerTextElement::resolveCustom
     if (shadowHostStyle)
         RenderTheme::singleton().adjustTextControlInnerTextStyle(style, *shadowHostStyle, shadowHost.ptr());
 
-    return Style::UnadjustedStyle { makeUnique<Style::ComputedStyle>(WTF::move(style)) };
+    return Style::UnadjustedStyle { style.moveToUniquePtr() };
 }
 
 // MARK: TextControlPlaceholderElement
@@ -312,11 +312,11 @@ void SearchFieldResultsButtonElement::defaultEventHandler(Event& event)
 #if !PLATFORM(IOS_FAMILY)
             protect(document())->updateStyleIfNeeded();
 
-            if (CheckedPtr searchFieldRenderer = dynamicDowncast<RenderSearchField>(input->renderer())) {
-                if (searchFieldRenderer->popupIsVisible())
-                    searchFieldRenderer->hidePopup();
+            if (RefPtr searchInputType = dynamicDowncast<SearchInputType>(*input->inputType())) {
+                if (searchInputType->popupIsVisible())
+                    searchInputType->hidePopup();
                 else if (input->maxResults() > 0)
-                    searchFieldRenderer->showPopup();
+                    searchInputType->showPopup();
             }
 #endif
             event.setDefaultHandled();

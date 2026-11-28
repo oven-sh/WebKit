@@ -34,8 +34,7 @@
 #include <wtf/Markable.h>
 #include <wtf/Vector.h>
 
-namespace WebCore {
-namespace Layout {
+namespace WebCore::Layout {
 
 class InlineContentAligner;
 class InlineFormattingContext;
@@ -54,7 +53,6 @@ struct LineRun {
         SoftLineBreak,
         WordBreakOpportunity,
         AtomicInlineBox,
-        ListMarker,
         InlineBoxStart,
         InlineBoxEnd,
         LineSpanningInlineBoxStart,
@@ -66,7 +64,6 @@ struct LineRun {
     bool isNonBreakingSpace() const { return m_type == Type::NonBreakingSpace; }
     bool isWordSeparator() const { return m_type == Type::WordSeparator; }
     bool isAtomicInlineBox() const { return m_type == Type::AtomicInlineBox; }
-    bool isListMarker() const { return m_type == Type::ListMarker; }
     NODELETE bool isListMarkerOrItsContent() const;
     bool isLineBreak() const { return isHardLineBreak() || isSoftLineBreak(); }
     bool isSoftLineBreak() const  { return m_type == Type::SoftLineBreak; }
@@ -79,7 +76,7 @@ struct LineRun {
     bool isOutOfFlow() const { return m_type == Type::OutOfFlow; }
     bool isBlock() const { return m_type == Type::Block; }
 
-    bool isContentful() const { return (isText() && textContent().length) || isAtomicInlineBox() || isLineBreak() || isListMarker() || isBlock(); }
+    bool isContentful() const { return (isText() && textContent().length) || isAtomicInlineBox() || isLineBreak() || isBlock(); }
     static bool isContentfulOrHasDecoration(const LineRun&, const InlineFormattingContext&);
 
     const Box& layoutBox() const { return *m_layoutBox; }
@@ -167,8 +164,8 @@ private:
     // 8-byte aligned:
     TrailingWhitespace m_trailingWhitespace { };
     Markable<size_t> m_lastNonWhitespaceContentStart { };
-    const Box* m_layoutBox { nullptr };
-    const Style::ComputedStyle& m_style;
+    const CheckedPtr<const Box> m_layoutBox;
+    const CheckedRef<const Style::ComputedStyle> m_style;
     Text m_textContent;
     // 4-byte aligned:
     InlineLayoutUnit m_logicalLeft { 0 };
@@ -205,8 +202,7 @@ inline void LineRun::setNeedsHyphen(InlineLayoutUnit hyphenLogicalWidth)
 
 inline TextDirection LineRun::inlineDirection() const
 {
-    return m_style.writingMode().bidiDirection();
+    return m_style->writingMode().bidiDirection();
 }
 
-}
 }

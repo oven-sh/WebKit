@@ -40,13 +40,14 @@
 #import "WebProcessPool.h"
 #import "WebProcessProxy.h"
 #import <BrowserEngineKit/BrowserEngineKit.h>
+#import <wtf/Borrow.h>
 #import <wtf/CrossThreadCopier.h>
 #import <wtf/NativePromise.h>
 #import <wtf/NeverDestroyed.h>
 #import <wtf/TZoneMallocInlines.h>
 
-#define GRANTER_RELEASE_LOG(envID, fmt, ...) RELEASE_LOG(ProcessCapabilities, "%{public}s[envID=%{public}s] " fmt, __FUNCTION__, envID.utf8(), ##__VA_ARGS__)
-#define GRANTER_RELEASE_LOG_ERROR(envID, fmt, ...) RELEASE_LOG_ERROR(ProcessCapabilities, "%{public}s[envID=%{public}s] " fmt, __FUNCTION__, envID.utf8(), ##__VA_ARGS__)
+#define GRANTER_RELEASE_LOG(envID, fmt, ...) RELEASE_LOG(ProcessCapabilities, "%{public}s[envID=%{public}s] " fmt, __FUNCTION__, makeUTF8CString(envID), ##__VA_ARGS__)
+#define GRANTER_RELEASE_LOG_ERROR(envID, fmt, ...) RELEASE_LOG_ERROR(ProcessCapabilities, "%{public}s[envID=%{public}s] " fmt, __FUNCTION__, makeUTF8CString(envID), ##__VA_ARGS__)
 
 namespace WebKit {
 
@@ -99,7 +100,7 @@ static Ref<ExtensionCapabilityGrantsPromise> grantCapabilityInternal(const Exten
 
 #if USE(EXTENSIONKIT)
     return invokeAsync(protect(granterQueue()), [capability = capability.platformCapability(), capabilityGrants = crossThreadCopy(WTF::move(capabilityGrants))] mutable {
-        for (auto& capabilityGrant : capabilityGrants)
+        for (auto& capabilityGrant : borrow(capabilityGrants))
             capabilityGrant.grant.setPlatformGrant(grantCapability(capability, capabilityGrant.extensionProcess));
         return ExtensionCapabilityGrantsPromise::createAndResolve(WTF::move(capabilityGrants));
     });
@@ -211,7 +212,7 @@ void ExtensionCapabilityGranter::grant(const ExtensionCapability& capability, We
 
         Vector<ExtensionCapabilityGrant> grantsToInvalidate;
 
-        for (auto& capabilityGrant : *result) {
+        for (auto& capabilityGrant : borrow(*result)) {
             if (finalizeGrant(environmentIdentifier, capabilityGrant.auxiliaryProcess.get(), WTF::move(capabilityGrant.grant)))
                 GRANTER_RELEASE_LOG(environmentIdentifier, "granted for auxiliary process %d", capabilityGrant.auxiliaryProcess->processID());
             else {
@@ -332,7 +333,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 void ExtensionCapabilityGranter::invalidateGrants(Vector<ExtensionCapabilityGrant>&& grants)
 {
     protect(granterQueue())->dispatch([grants = crossThreadCopy(WTF::move(grants))]() mutable {
-        for (auto& grant : grants)
+        for (auto& grant : borrow(grants))
             grant.setPlatformGrant({ });
     });
 }

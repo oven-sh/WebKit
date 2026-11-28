@@ -59,7 +59,8 @@ JSPropertyNameEnumerator* JSPropertyNameEnumerator::tryCreate(VM& vm, Structure*
 JSPropertyNameEnumerator::JSPropertyNameEnumerator(VM& vm, Structure* structure, uint32_t indexedLength, uint32_t numberStructureProperties, WriteBarrier<JSString>* propertyNamesBuffer, unsigned propertyNamesSize, uint32_t cachedOrderWord, uint32_t cachedOrderWordMask, uint32_t numberOwnProperties)
     : JSCell(vm, vm.propertyNameEnumeratorStructure.get())
     , m_propertyNames(propertyNamesBuffer, WriteBarrierEarlyInit)
-    , m_cachedStructureID(structure, WriteBarrierEarlyInit)
+    , m_cachedStructureIDForNames(structure, WriteBarrierEarlyInit)
+    , m_cachedStructureIDForNamesAndOffsets(structure && structure->canAccessPropertiesQuicklyForEnumeration() ? structure : nullptr, WriteBarrierEarlyInit)
     , m_indexedLength(indexedLength)
     , m_endStructurePropertyIndex(numberStructureProperties)
     , m_endGenericPropertyIndex(propertyNamesSize)
@@ -99,7 +100,8 @@ void JSPropertyNameEnumerator::visitChildrenImpl(JSCell* cell, Visitor& visitor)
         visitor.markAuxiliary(propertyNames);
         visitor.append(propertyNames, propertyNames + thisObject->sizeOfPropertyNames());
     }
-    visitor.append(thisObject->m_cachedStructureID);
+    visitor.append(thisObject->m_cachedStructureIDForNames);
+    visitor.append(thisObject->m_cachedStructureIDForNamesAndOffsets);
 }
 
 DEFINE_VISIT_CHILDREN(JSPropertyNameEnumerator);
@@ -140,6 +142,10 @@ void getEnumerablePropertyNames(JSGlobalObject* globalObject, JSObject* base, Pr
         RETURN_IF_EXCEPTION(scope, void());
         // |propertyNames| contains all indexed properties, so disable enumeration based on getEnumerableLength().
         indexedLength = 0;
+
+        // Bun: a static table makes a property when it is asked for, so a walk over such an object still asks (as propertyNameEnumerator() says).
+        if (structure->canCacheOwnPropertyNames() && !structure->typeInfo().overridesGetOwnPropertySlot() && !structure->hasNonReifiedStaticProperties())
+            structurePropertyCount = propertyNames.size();
     }
     if (ownPropertyCount)
         *ownPropertyCount = propertyNames.size();
@@ -218,7 +224,7 @@ JSString* JSPropertyNameEnumerator::computeNext(JSGlobalObject* globalObject, JS
         }
         scope.assertNoException();
 
-        // OwnStructureMode lets the caller take the index for a property offset, which only an ordinary object has.
+        // In OwnStructureMode the caller takes a name as present on the StructureID alone, and the names of a compiled object also depend on its order word.
         if ((index >= endStructurePropertyIndex() && index < sizeOfPropertyNames()) || !describesOrdinaryObject())
             mode = GenericMode;
         return name;

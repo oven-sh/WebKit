@@ -105,6 +105,9 @@ enum class NavigationPolicyDecision : uint8_t;
 enum class ShouldTreatAsContinuingLoad : uint8_t;
 enum class IsMainResource : bool { No, Yes };
 enum class ShouldUpdateAppInitiatedValue : bool { No, Yes };
+enum class ClearWindowProperties : bool { No, Yes };
+enum class ClearScriptObjects : bool { No, Yes };
+enum class ClearFrameView : bool { No, Yes };
 
 struct WindowFeatures;
 
@@ -181,8 +184,8 @@ public:
     void stop();
     void stopLoading(UnloadEventPolicy);
     WEBCORE_EXPORT void closeURL();
-    // FIXME: clear() is trying to do too many things. We should break it down into smaller functions (ideally with fewer raw Boolean parameters).
-    void clear(RefPtr<Document>&& newDocument, bool clearWindowProperties = true, bool clearScriptObjects = true, bool clearFrameView = true, NOESCAPE const Function<void()>& handleDOMWindowCreation = nullptr);
+    // FIXME: detachCurrentDocument() is trying to do too many things. We should break it down into smaller functions.
+    void detachCurrentDocument(RefPtr<Document>&& newDocument, ClearWindowProperties = ClearWindowProperties::Yes, ClearScriptObjects = ClearScriptObjects::Yes, ClearFrameView = ClearFrameView::Yes, NOESCAPE const Function<void()>& handleDOMWindowCreation = nullptr);
 
     NODELETE bool isLoading() const;
     NODELETE WEBCORE_EXPORT bool frameHasLoaded() const;
@@ -205,6 +208,7 @@ public:
 
     bool shouldReportResourceTimingToParentFrame() const { return m_shouldReportResourceTimingToParentFrame; };
     void setShouldReportResourceTimingToParentFrame(bool value) { m_shouldReportResourceTimingToParentFrame = value; }
+    RefPtr<Frame> parentFrameForResourceTiming() const;
     
 #if PLATFORM(IOS_FAMILY)
     RetainPtr<CFDictionaryRef> connectionProperties(ResourceLoader*);
@@ -342,6 +346,8 @@ public:
     NavigationUpgradeToHTTPSBehavior navigationUpgradeToHTTPSBehavior() const { return m_navigationUpgradeToHTTPSBehavior; }
     void setNavigationUpgradeToHTTPSBehavior(NavigationUpgradeToHTTPSBehavior behavior) { m_navigationUpgradeToHTTPSBehavior = behavior; }
 
+    WEBCORE_EXPORT void setRedirectedRequestForContinuingHistoryLoad(std::optional<ResourceRequest>&&);
+
     bool shouldSkipHTTPSUpgradeForSameSiteNavigation() const { return m_shouldSkipHTTPSUpgradeForSameSiteNavigation; }
 
     WEBCORE_EXPORT void completePageTransitionIfNeeded();
@@ -476,7 +482,7 @@ private:
     bool shouldCheckNavigationPolicyAfterDispatchingEvents(DocumentLoader&);
     void load(DocumentLoader&, const SecurityOrigin* requesterOrigin); // Calls loadWithDocumentLoader
 
-    void loadWithNavigationAction(ResourceRequest&&, NavigationAction&&, FrameLoadType, RefPtr<const FormSubmission>&&, AllowNavigationToInvalidURL, ShouldTreatAsContinuingLoad, ShouldRestoreFromBackForwardCache = ShouldRestoreFromBackForwardCache::Unspecified, std::optional<NavigationIdentifier> navigationIDForCacheOnlyLoadRetry = std::nullopt, CompletionHandler<void()>&& = [] { }); // Calls loadWithDocumentLoader
+    void loadWithNavigationAction(ResourceRequest&&, NavigationAction&&, FrameLoadType, RefPtr<const FormSubmission>&&, AllowNavigationToInvalidURL, ShouldTreatAsContinuingLoad, ShouldRestoreFromBackForwardCache = ShouldRestoreFromBackForwardCache::Unspecified, std::optional<NavigationIdentifier> navigationIDForCacheOnlyLoadRetry = std::nullopt, CompletionHandler<void()>&& = [] { }, ResourceRequest&& originalRequest = { }); // Calls loadWithDocumentLoader
 
     void loadPostRequest(FrameLoadRequest&&, const String& referrer, FrameLoadType, Event*, RefPtr<const FormSubmission>&&, CompletionHandler<void()>&&);
     void loadURL(FrameLoadRequest&&, const String& referrer, FrameLoadType, Event*, RefPtr<const FormSubmission>&&, std::optional<PrivateClickMeasurement>&&, CompletionHandler<void()>&&);
@@ -565,7 +571,7 @@ private:
 
     PageDismissalType m_pageDismissalEventBeingDispatched { PageDismissalType::None };
     bool m_isComplete { false };
-    bool m_needsClear { false };
+    bool m_needsToDetachDocument { false };
 
     URL m_submittedFormURL;
 
@@ -602,6 +608,7 @@ private:
 
     bool m_inStopForBackForwardCache { false };
     NavigationUpgradeToHTTPSBehavior m_navigationUpgradeToHTTPSBehavior { NavigationUpgradeToHTTPSBehavior::BasedOnPolicy };
+    std::unique_ptr<ResourceRequest> m_redirectedRequestForContinuingHistoryLoad;
     bool m_shouldSkipHTTPSUpgradeForSameSiteNavigation { false };
     bool m_shouldRestoreScrollPositionAndViewState { false };
 

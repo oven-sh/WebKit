@@ -556,7 +556,7 @@ static void wpeIMContextWaylandV1FocusIn(WPEInputMethodContext* context)
         return;
 
     global->current = context;
-    if (global->textInput == nullptr)
+    if (!global->textInput || !seat)
         return;
 
     WPEInputHints hints = wpe_input_method_context_get_input_hints(context);
@@ -577,7 +577,7 @@ static void wpeIMContextWaylandV1FocusOut(WPEInputMethodContext *context)
     if (global == nullptr)
         return;
 
-    if (global->focused)
+    if (global->focused && seat)
         zwp_text_input_v1_deactivate(global->textInput, seat->seat());
 
     global->current = nullptr;
@@ -622,13 +622,11 @@ static void wpeIMContextWaylandV1Reset(WPEInputMethodContext *context)
 {
     auto* self = WPE_IM_CONTEXT_WAYLAND_V1(context);
     auto* global = textInputV1GetGlobalByContext(self);
-    if (global->current == nullptr)
+    if (!global)
         return;
 
-    if (global->current == context) {
-        zwp_text_input_v1_reset(global->textInput);
-        textInputV1UpdateState(self);
-    }
+    zwp_text_input_v1_reset(global->textInput);
+    textInputV1UpdateState(self);
 }
 
 static void wpe_im_context_wayland_v1_class_init(WPEIMContextWaylandV1Class* klass)

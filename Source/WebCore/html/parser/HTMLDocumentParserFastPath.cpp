@@ -221,7 +221,8 @@ enum class HTMLFastPathResult : uint8_t {
     FailedOnAttribute,
     FailedMaxDepth,
     FailedBigText,
-    FailedCssPseudoDirEnabledAndDirAttributeDirty
+    FailedCssPseudoDirEnabledAndDirAttributeDirty,
+    FailedCustomElementRegistryAttribute
 };
 
 template<typename CharacterType> NODELETE static inline bool isQuoteCharacter(CharacterType character)
@@ -629,12 +630,10 @@ private:
             auto* it = SIMD::find(span, vectorMatch, scalarMatch);
             return span.subspan(it - span.data());
         } else {
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
             auto vectorMatch = [&](auto input) ALWAYS_INLINE_LAMBDA {
                 constexpr simde_uint8x16_t zeros = SIMD::splat8(0);
                 return SIMD::findFirstNonZeroIndex(SIMD::bitAnd(vectorEquals8Bit(input.val[0]), SIMD::equal(input.val[1], zeros)));
             };
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
             auto* it = SIMD::findInterleaved(span, vectorMatch, scalarMatch);
             return span.subspan(it - span.data());
         }
@@ -915,17 +914,10 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
             if (parsingFailed())
                 return;
 
-            if (!result.text.empty()) {
-                if (!parent.isConnected())
-                    parent.parserAppendChildIntoIsolatedTree(Text::create(m_document, result.tryUseWhitespaceCache()));
-                else
-                    parent.parserAppendChild(Text::create(m_document, result.tryUseWhitespaceCache()));
-            } else if (!result.escapedText.isEmpty()) {
-                if (!parent.isConnected())
-                    parent.parserAppendChildIntoIsolatedTree(Text::create(m_document, WTF::move(result.escapedText)));
-                else
-                    parent.parserAppendChild(Text::create(m_document, WTF::move(result.escapedText)));
-            }
+            if (!result.text.empty())
+                parent.parserAppendChildIntoIsolatedTree(Text::create(m_document, result.tryUseWhitespaceCache()));
+            else if (!result.escapedText.isEmpty())
+                parent.parserAppendChildIntoIsolatedTree(Text::create(m_document, WTF::move(result.escapedText)));
 
             if (m_parsingBuffer.atEnd())
                 return;
@@ -969,6 +961,8 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
                 }
                 return didFail(HTMLFastPathResult::FailedParsingAttributes);
             }
+            if (attributeName == HTMLNames::customelementregistryAttr) [[unlikely]]
+                return didFail(HTMLFastPathResult::FailedCustomElementRegistryAttribute);
             skipWhile<isASCIIWhitespace>(m_parsingBuffer);
             AtomString attributeValue;
             if (skipExactly(m_parsingBuffer, '=')) {
@@ -1077,10 +1071,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
         parseAttributes(element);
         if (parsingFailed())
             return WTF::move(element);
-        if (!parent.isConnected())
-            parent.parserAppendChildIntoIsolatedTree(element);
-        else
-            parent.parserAppendChild(element);
+        parent.parserAppendChildIntoIsolatedTree(element);
         element->beginParsingChildren();
         parseChildren<Tag>(element);
         if (parsingFailed() || m_parsingBuffer.atEnd()) [[unlikely]]
@@ -1109,10 +1100,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
         parseAttributes(element);
         if (parsingFailed())
             return WTF::move(element);
-        if (!parent.isConnected())
-            parent.parserAppendChildIntoIsolatedTree(element);
-        else
-            parent.parserAppendChild(element);
+        parent.parserAppendChildIntoIsolatedTree(element);
         element->beginParsingChildren();
         element->finishParsingChildren();
         return WTF::move(element);
@@ -1149,6 +1137,7 @@ static bool tryFastParsingHTMLFragmentImpl(std::span<const CharacterType> source
 
 bool tryFastParsingHTMLFragment(StringView source, Document& document, ContainerNode& destinationParent, Element& contextElement, OptionSet<ParserContentPolicy> policy)
 {
+    ASSERT(!destinationParent.isConnected());
     if (!canUseFastPath(contextElement, policy))
         return false;
 

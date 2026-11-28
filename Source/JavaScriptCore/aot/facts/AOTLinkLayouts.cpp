@@ -4334,7 +4334,7 @@ private:
     BitVector m_lostFamiliesCopiedInto;
     BitVector m_layoutsExtendedAlone;
     BitVector m_layoutsWithComputedAccessors;
-    UncheckedKeyHashMap<uint32_t, LayoutID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_layoutsAboveLayouts;
+    HashMap<uint32_t, LayoutID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_layoutsAboveLayouts;
     void noteComputedAccessorsOn(const LinkType&);
     void lookAtDefinersOfAccessors(FunctionID, const ThinSummary&);
     bool standsBelowComputedAccessors(LayoutID) const;
@@ -4537,8 +4537,8 @@ private:
     }
     Vector<uint32_t> m_classesThatMakersLayInFields;
     void noteTypedArraysStoredUnderNames();
-    UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_typedArraysStoredUnderNames;
-    UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_typedArraysStoredInVariables;
+    HashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_typedArraysStoredUnderNames;
+    HashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_typedArraysStoredInVariables;
     LayoutID knownClassFilledAt(FunctionID, const ThinSummary&, uint32_t node);
     struct ReturnedClass {
         uint32_t made { 0 };

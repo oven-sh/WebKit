@@ -58,7 +58,7 @@ WebSocketTask::WebSocketTask(NetworkSocketChannel& channel, WebPageProxyIdentifi
         m_topOrigin = clientOrigin.topOrigin;
 
     auto localhostAlias = WebCore::CurlStream::LocalhostAlias::Disable;
-    if (networkSession() && networkSession()->networkProcess().localhostAliasesForTesting().contains<StringViewHashTranslator>(m_request.url().host()))
+    if (networkSession() && protect(NetworkProcess::singleton())->localhostAliasesForTesting().contains<StringViewHashTranslator>(m_request.url().host()))
         localhostAlias = WebCore::CurlStream::LocalhostAlias::Enable;
 
     m_streamID = m_scheduler.createStream(request.url(), *this, WebCore::CurlStream::ServerTrustEvaluation::Enable, localhostAlias);
@@ -137,7 +137,7 @@ void WebSocketTask::didOpen(WebCore::CurlStreamID)
 
     UTF8CString cookieHeader;
     if (!cookieHeaderField.isEmpty())
-        cookieHeader = makeString("Cookie: "_s, cookieHeaderField, "\r\n"_s).utf8();
+        cookieHeader = makeUTF8CString(makeString("Cookie: "_s, cookieHeaderField, "\r\n"_s));
 
     auto originalMessage = m_handshake->clientHandshakeMessage();
     auto handshakeMessageLength = originalMessage.length() + cookieHeader.length();
@@ -274,7 +274,7 @@ void WebSocketTask::tryServerTrustEvaluation(WebCore::AuthenticationChallenge&& 
     networkSession()->didReceiveChallenge(*this, WTF::move(challenge), [this, errorReason = WTF::move(errorReason)](WebKit::AuthenticationChallengeDisposition disposition, const WebCore::Credential& credential) mutable {
         if (disposition == AuthenticationChallengeDisposition::UseCredential && !credential.isEmpty()) {
             auto localhostAlias = WebCore::CurlStream::LocalhostAlias::Disable;
-            if (networkSession() && networkSession()->networkProcess().localhostAliasesForTesting().contains<StringViewHashTranslator>(m_request.url().host()))
+            if (networkSession() && protect(NetworkProcess::singleton())->localhostAliasesForTesting().contains<StringViewHashTranslator>(m_request.url().host()))
                 localhostAlias = WebCore::CurlStream::LocalhostAlias::Enable;
 
             m_streamID = m_scheduler.createStream(m_request.url(), *this, WebCore::CurlStream::ServerTrustEvaluation::Disable, localhostAlias);
@@ -430,7 +430,7 @@ void WebSocketTask::sendClosingHandshakeIfNeeded(int32_t code, const String& rea
         unsigned char lowByte = static_cast<unsigned short>(code);
         buf.append(static_cast<char>(highByte));
         buf.append(static_cast<char>(lowByte));
-        buf.append(reason.utf8().span());
+        buf.append(makeUTF8CString(reason).span());
     }
 
     if (!sendFrame(WebCore::WebSocketFrame::OpCodeClose, buf.span()))

@@ -49,7 +49,9 @@ static bool stepArrayIteratorForStraightCode(JSGlobalObject* globalObject, JSArr
         return false;
     }
 
-    iterator->setIndex(index + 1);
+    // Reading the length may have run a next() of this iterator that finished it. It stays finished.
+    if (iterator->index() != JSArrayIterator::doneIndex)
+        iterator->setIndex(index + 1);
     IterationKind kind = iterator->kind();
     if (kind == IterationKind::Keys) {
         value = jsNumber(index);

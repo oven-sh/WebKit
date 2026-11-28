@@ -29,8 +29,7 @@
 #include <WebCore/CSSVariableData.h>
 #include <wtf/Ref.h>
 
-namespace WebCore {
-namespace CSS {
+namespace WebCore::CSS {
 
 // <declaration-value> = <any value>
 // https://drafts.csswg.org/css-syntax/#typedef-declaration-value
@@ -59,9 +58,12 @@ template<> struct CSSValueChildrenVisitor<DeclarationValue> {
     }
 };
 
+// MARK: - Hashing
+
+void add(Hasher&, const DeclarationValue&);
+
 // MARK: - Logging
 
 WTF::TextStream& operator<<(WTF::TextStream&, const DeclarationValue&);
 
-} // namespace CSS
-} // namespace WebCore
+} // namespace WebCore::CSS

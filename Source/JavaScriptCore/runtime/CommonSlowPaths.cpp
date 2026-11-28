@@ -1351,7 +1351,7 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_enumerator_in_by_val)
     CHECK_EXCEPTION();
     JSPropertyNameEnumerator* enumerator = uncheckedDowncast<JSPropertyNameEnumerator>(GET(bytecode.m_enumerator).jsValue());
     if (auto* base = baseValue.getObject()) {
-        if (mode == JSPropertyNameEnumerator::OwnStructureMode && base->structureID() == enumerator->cachedStructureID())
+        if (mode == JSPropertyNameEnumerator::OwnStructureMode && base->structureID() == enumerator->cachedStructureIDForNames())
             RETURN(jsBoolean(true));
 
         if (mode == JSPropertyNameEnumerator::IndexedMode)
@@ -1390,7 +1390,7 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_enumerator_has_own_property)
 
     JSPropertyNameEnumerator* enumerator = uncheckedDowncast<JSPropertyNameEnumerator>(GET(bytecode.m_enumerator).jsValue());
     if (auto* base = baseValue.getObject()) {
-        if (mode == JSPropertyNameEnumerator::OwnStructureMode && base->structureID() == enumerator->cachedStructureID())
+        if (mode == JSPropertyNameEnumerator::OwnStructureMode && base->structureID() == enumerator->cachedStructureIDForNames())
             RETURN(jsBoolean(true));
 
         if (mode == JSPropertyNameEnumerator::IndexedMode)

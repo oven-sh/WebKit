@@ -65,8 +65,8 @@ private:
     BitVector m_isFiledAsAbsent;
     ChainDependentOwnerID m_chainDependentOwner;
     BitVector m_isStoredThrough;
-    UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, NumberHashTraits> m_identifiersStoredThrough;
-    UncheckedKeyHashMap<uint32_t, std::unique_ptr<PropertyValueWatchpoint>, IntHash<uint32_t>, NumberHashTraits> m_watches;
+    HashSet<uint32_t, IntHash<uint32_t>, NumberHashTraits> m_identifiersStoredThrough;
+    HashMap<uint32_t, std::unique_ptr<PropertyValueWatchpoint>, IntHash<uint32_t>, NumberHashTraits> m_watches;
     RememberedSlotSet m_writtenSinceCollection;
 };
 

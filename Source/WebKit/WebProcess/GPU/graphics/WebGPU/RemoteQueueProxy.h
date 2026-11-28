@@ -38,14 +38,12 @@
 
 namespace WebKit::WebGPU {
 
-class ConvertToBackingContext;
-
 class RemoteQueueProxy final : public ::WebGPU::Queue {
     WTF_MAKE_TZONE_ALLOCATED(RemoteQueueProxy);
 public:
-    static Ref<RemoteQueueProxy> create(RemoteAdapterProxy& parent, ConvertToBackingContext& convertToBackingContext, WebGPUIdentifier identifier)
+    static Ref<RemoteQueueProxy> create(RemoteAdapterProxy& parent, WebGPUQueueIdentifier identifier)
     {
-        return adoptRef(*new RemoteQueueProxy(parent, convertToBackingContext, identifier));
+        return adoptRef(*new RemoteQueueProxy(parent, identifier));
     }
 
     virtual ~RemoteQueueProxy();
@@ -56,9 +54,14 @@ public:
 
     RemoteAdapterProxy& parent() const { return m_parent; }
     RemoteGPUProxy& root() { return m_parent->root(); }
+    WebGPUQueueIdentifier backing() const { return m_backing; }
+
+    RefPtr<::WebGPU::Device> device() const final { return m_device.get(); }
+    // Set by the device that owns the queue, once.
+    void setDevice(::WebGPU::Device& device) { m_device = device; }
 
     void submit(Vector<Ref<::WebGPU::CommandBuffer>>&&) final;
-    void onSubmittedWorkDone(CompletionHandler<void()>&&) final;
+    void onSubmittedWorkDone(CompletionHandler<void(bool)>&&) final;
     void writeBuffer(::WebGPU::Buffer&, uint64_t bufferOffset, std::span<const uint8_t> data) final;
     void writeTexture(const ::WebGPU::TexelCopyTextureInfo& destination, std::span<const uint8_t> data, const ::WebGPU::TexelCopyBufferLayout&, const ::WebGPU::Extent3D& writeSize) final;
 #if PLATFORM(COCOA)
@@ -68,16 +71,12 @@ public:
     bool isValid() const final;
 
 private:
-    friend class DowncastConvertToBackingContext;
-
-    RemoteQueueProxy(RemoteAdapterProxy&, ConvertToBackingContext&, WebGPUIdentifier);
+    RemoteQueueProxy(RemoteAdapterProxy&, WebGPUQueueIdentifier);
 
     RemoteQueueProxy(const RemoteQueueProxy&) = delete;
     RemoteQueueProxy(RemoteQueueProxy&&) = delete;
     RemoteQueueProxy& operator=(const RemoteQueueProxy&) = delete;
     RemoteQueueProxy& operator=(RemoteQueueProxy&&) = delete;
-
-    WebGPUIdentifier backing() const { return m_backing; }
 
     template<typename T>
     [[nodiscard]] IPC::Error send(T&& message)
@@ -102,9 +101,9 @@ private:
         const ::WebGPU::Extent3D& copySize);
 #endif
 
-    WebGPUIdentifier m_backing;
-    const Ref<ConvertToBackingContext> m_convertToBackingContext;
+    WebGPUQueueIdentifier m_backing;
     const Ref<RemoteAdapterProxy> m_parent;
+    ThreadSafeWeakPtr<::WebGPU::Device> m_device;
 #if ENABLE(VIDEO)
     const RefPtr<RemoteVideoFrameObjectHeapProxy> m_videoFrameObjectHeapProxy;
 #endif

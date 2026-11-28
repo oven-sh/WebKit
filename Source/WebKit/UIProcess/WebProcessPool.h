@@ -42,6 +42,7 @@
 #include <WebCore/ProcessIdentifier.h>
 #include <pal/SessionID.h>
 #include <wtf/ApproximateTime.h>
+#include <wtf/Borrow.h>
 #include <wtf/CheckedRef.h>
 #include <wtf/Forward.h>
 #include <wtf/Function.h>
@@ -105,7 +106,6 @@ class Site;
 enum class ActivityStateForCPUSampling : uint8_t;
 enum class EventMakesGamepadsVisible : bool;
 enum class GamepadHapticEffectType : uint8_t;
-enum class ProcessSwapDisposition : uint8_t;
 struct GamepadEffectParameters;
 struct MockMediaDevice;
 struct ScreenProperties;
@@ -335,7 +335,14 @@ public:
 
     void reportWebContentCPUTime(Seconds cpuTime, WebCore::ActivityStateForCPUSampling);
 
-    Ref<WebProcessProxy> processForSite(WebsiteDataStore&, WebProcessProxy::IsolatedProcessType, const std::optional<WebCore::Site>&, const std::optional<WebCore::Site>& mainFrameSite, WebProcessProxy::LockdownMode, EnhancedSecurity, const API::PageConfiguration&, WebCore::ProcessSwapDisposition, ProcessCrossOriginIsolation, const std::optional<WebCore::SecurityOriginData>& coopOrigin = std::nullopt, WebProcessProxy* reusableProvisionalProcess = nullptr, const std::optional<WebCore::SecurityOriginData>& cachedCOOPProcessOrigin = std::nullopt); // Will return an existing one if limit is met or due to caching.
+    // A process for a browsing context group switch due to Cross-Origin-Opener-Policy is keyed by the origin of the
+    // navigation. processForSite() reuses one from the COOP process cache for that origin, and never one found by site,
+    // in the process cache or with a suspended page: such a process can host other origins of the site, and even be the
+    // one the navigation is leaving. The process is cached for its origin afterwards, and never without one.
+    struct ProcessForCOOPSwitch {
+        std::optional<WebCore::SecurityOriginData> origin;
+    };
+    Ref<WebProcessProxy> processForSite(WebsiteDataStore&, WebProcessProxy::IsolatedProcessType, const std::optional<WebCore::Site>&, const std::optional<WebCore::Site>& mainFrameSite, WebProcessProxy::LockdownMode, EnhancedSecurity, const API::PageConfiguration&, ProcessCrossOriginIsolation, const std::optional<ProcessForCOOPSwitch>& = std::nullopt, WebProcessProxy* reusableProvisionalProcess = nullptr, const std::optional<WebCore::SecurityOriginData>& cachedCOOPProcessOrigin = std::nullopt); // Will return an existing one if limit is met or due to caching.
 
     void prewarmProcess(WebsiteDataStore* = nullptr);
 
@@ -1118,7 +1125,7 @@ private:
 template<typename T>
 void WebProcessPool::sendToAllProcesses(const T& message)
 {
-    for (auto& process : m_processes) {
+    for (auto& process : borrow(m_processes)) {
         if (process->canSendMessage())
             process->send(T(message), 0);
     }

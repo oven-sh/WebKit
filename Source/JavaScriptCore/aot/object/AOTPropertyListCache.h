@@ -61,7 +61,8 @@ class PropertyListCache {
 public:
     explicit PropertyListCache(State&);
 
-    static constexpr unsigned numberOfEntries = 256;
+    static constexpr unsigned numberOfEntriesLog2 = 8;
+    static constexpr unsigned numberOfEntries = 1u << numberOfEntriesLog2;
     static constexpr unsigned numberOfOwnKeyLists = 64;
 
     CachedPropertyList* find(StructureID extraPropertiesStructureID, uint32_t shapeWord, uint32_t orderAndCount)
@@ -73,16 +74,18 @@ public:
     }
     CachedPropertyList& add(CachedPropertyList&&);
     bool isSecondWalk(StructureID extraPropertiesStructureID, uint32_t shapeWord, uint32_t orderAndCount);
+
+    // Both take the number of the Structure, not its StructureID: the cells of Structure are a power of two apart, and neither a sum nor
+    // WTF::intHash() tells IDs apart that differ by a multiple of it as well as they tell apart numbers that follow each other.
+    static constexpr unsigned numberOfWalksRemembered = 8 * numberOfEntries;
+    static unsigned placeOf(StructureID extraPropertiesStructureID, uint32_t shapeWord, uint32_t orderAndCount) { return (((extraPropertiesStructureID.bits() >> structureIDPlaceShift) * 0x9e3779b1u >> (32 - numberOfEntriesLog2)) + shapeWord + orderAndCount * 31) % numberOfEntries; }
+    static unsigned placeOfWalk(StructureID extraPropertiesStructureID, uint32_t shapeWord, uint32_t orderAndCount);
     KeptOwnKeys& ownKeysFor(StructureID, uint32_t orderWord, bool listsSymbols);
     void clear();
 
 private:
     using Entries = std::array<CachedPropertyList, numberOfEntries>;
     using OwnKeyLists = std::array<KeptOwnKeys, numberOfOwnKeyLists>;
-
-    static unsigned placeOf(StructureID extraPropertiesStructureID, uint32_t shapeWord, uint32_t orderAndCount) { return ((extraPropertiesStructureID.bits() >> 4) + shapeWord + orderAndCount * 31) % numberOfEntries; }
-
-    static constexpr unsigned numberOfWalksRemembered = 8 * numberOfEntries;
 
     WTF::BitSet<numberOfWalksRemembered> m_walksWithoutList;
     unsigned m_numberOfWalksWithoutList { 0 };

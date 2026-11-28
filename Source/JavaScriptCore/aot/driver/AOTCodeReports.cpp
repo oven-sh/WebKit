@@ -39,7 +39,7 @@ struct CodeReportFormTotal {
     uint64_t schemaMismatchCount { 0 };
 };
 
-using CodeReportFormTotals = UncheckedKeyHashMap<uint64_t, CodeReportFormTotal, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
+using CodeReportFormTotals = HashMap<uint64_t, CodeReportFormTotal, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
 
 struct CodeReportForm {
     explicit CodeReportForm(uint64_t key)

@@ -38,6 +38,7 @@
 
 #import <WebGPU/WebGPU.h>
 #import <wtf/BlockPtr.h>
+#import <wtf/Borrow.h>
 #import <wtf/DataLog.h>
 #import <wtf/StringPrintStream.h>
 #import <wtf/TZoneMallocInlines.h>
@@ -228,7 +229,7 @@ static Ref<ShaderModule> handleShaderSuccessOrFailure(WebGPU::Metal::Device &obj
     auto& failedCheck = std::get<WGSL::FailedCheck>(checkResult);
     StringPrintStream message;
     message.print(String::number(failedCheck.errors.size()), " error", failedCheck.errors.size() != 1 ? "s" : "", " generated while compiling the shader:"_s);
-    for (const auto& error : failedCheck.errors)
+    for (const auto& error : borrow(failedCheck.errors))
         message.print("\n"_s, error);
 
     object.generateAValidationError(message.toString());
@@ -814,7 +815,7 @@ struct Messages {
 
 static void appendMessages(Vector<WebGPU::CompilationMessage>& result, const Messages& messages)
 {
-    for (const auto& compilationMessage : messages.messages) {
+    for (const auto& compilationMessage : borrow(messages.messages)) {
         result.append({
             .message = compilationMessage.message(),
             .type = messages.type,
@@ -1178,52 +1179,3 @@ const String& ShaderModule::defaultComputeEntryPoint() const
 }
 
 } // namespace WebGPU::Metal
-
-#pragma mark WGPU Stubs
-
-NODELETE void wgpuShaderModuleAddRef(WGPUShaderModule shaderModule)
-{
-    WebGPU::Metal::fromAPI(shaderModule).ref();
-}
-
-void wgpuShaderModuleRelease(WGPUShaderModule shaderModule)
-{
-    @autoreleasepool {
-        WebGPU::Metal::fromAPI(shaderModule).deref();
-    }
-}
-
-static void getCompilationInfo(WGPUShaderModule shaderModule, CompletionHandler<void(WGPUCompilationInfoRequestStatus, const WGPUCompilationInfo&)>&& callback)
-{
-    Ref protectedShaderModule = WebGPU::Metal::fromAPI(shaderModule);
-    // WGPUCompilationInfoRequestStatus has no error value: the messages of a shader module that
-    // did not compile are reported with WGPUCompilationInfoRequestStatus_Success.
-    protectedShaderModule->compilationInfo([callback = WTF::move(callback)](WebGPU::CompilationInfo&& compilationInfo) mutable {
-        Vector<UTF8CString> messageStorage;
-        auto messages = WebGPU::Metal::toAPI(compilationInfo, messageStorage);
-        callback(WGPUCompilationInfoRequestStatus_Success, WGPUCompilationInfo {
-            .nextInChain = nullptr,
-            .messageCount = messages.size(),
-            .messages = messages.span().data(),
-        });
-    });
-}
-
-WGPUFuture wgpuShaderModuleGetCompilationInfo(WGPUShaderModule shaderModule, WGPUCompilationInfoCallbackInfo callbackInfo)
-{
-    @autoreleasepool {
-        WebGPU::Metal::CAPIFuture future { WebGPU::Metal::fromAPI(shaderModule).device().instance() };
-        getCompilationInfo(shaderModule, [callbackInfo, future](WGPUCompilationInfoRequestStatus status, const WGPUCompilationInfo& compilationInfo) {
-            callbackInfo.callback(status, &compilationInfo, callbackInfo.userdata1, callbackInfo.userdata2);
-            future.complete();
-        });
-        return future.future();
-    }
-}
-
-void wgpuShaderModuleSetLabel(WGPUShaderModule shaderModule, WGPUStringView label)
-{
-    @autoreleasepool {
-        protect(WebGPU::Metal::fromAPI(shaderModule))->setLabel(WebGPU::Metal::fromAPI(label));
-    }
-}

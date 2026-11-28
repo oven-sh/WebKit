@@ -55,7 +55,7 @@ RemoteScrollingTreeIOS::~RemoteScrollingTreeIOS() = default;
 
 void RemoteScrollingTreeIOS::scrollingTreeNodeDidScroll(ScrollingTreeScrollingNode& node, ScrollingLayerPositionAction scrollingLayerPositionAction)
 {
-    ASSERT(isMainRunLoop());
+    RELEASE_ASSERT(isMainRunLoop());
 
 #if ENABLE(THREADED_ANIMATIONS)
     updateProgressBasedTimelinesForNode(node);

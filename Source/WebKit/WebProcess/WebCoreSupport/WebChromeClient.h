@@ -103,6 +103,10 @@ private:
     void reportProcessCPUTime(Seconds, WebCore::ActivityStateForCPUSampling) final;
 
     bool isPopup() const final;
+#if ENABLE(DOCUMENT_PIP)
+    bool supportsDocumentPictureInPicture() const final;
+    void startDocumentPictureInPictureWindowDrag() final;
+#endif
     
     void setResizable(bool) final;
     
@@ -193,7 +197,7 @@ private:
 #endif
 
 #if PLATFORM(IOS_FAMILY)
-    void didReceiveMobileDocType(bool) final;
+    void updateViewportDefaultConfiguration(bool hasMobileDoctype) final;
     void setNeedsScrollNotifications(WebCore::LocalFrame&, bool) final;
     void notifyRevealedSelectionByScrollingFrame(WebCore::LocalFrame&) final;
     bool isStopping() final;
@@ -368,6 +372,8 @@ private:
 
 #if ENABLE(FULLSCREEN_API)
     bool supportsFullScreenForElement(const WebCore::Element&, bool withKeyboard) final;
+    void beginRequestFullscreen() final;
+    void endRequestFullscreen() final;
     void enterFullScreenForElement(WebCore::Element&, WebCore::HTMLMediaElementEnums::VideoFullscreenMode, CompletionHandler<void(WebCore::ExceptionOr<void>)>&&, CompletionHandler<bool(bool)>&&) final;
 #if ENABLE(QUICKLOOK_FULLSCREEN)
     void updateImageSource(WebCore::Element&) final;
@@ -427,7 +433,7 @@ private:
 
 #if ENABLE(MODEL_ELEMENT_IMMERSIVE)
     void allowImmersiveElement(CompletionHandler<void(bool)>&&) const final;
-    void presentImmersiveElement(const WebCore::LayerHostingContextIdentifier, CompletionHandler<void(bool)>&&) const final;
+    void presentImmersiveElement(WebCore::ImmersiveElement&, CompletionHandler<void(bool)>&&) const final;
     void dismissImmersiveElement(CompletionHandler<void()>&&) const final;
     bool supportsImmersiveElement() const final;
 #endif
@@ -476,6 +482,7 @@ private:
 #endif
 
     bool shouldDispatchFakeMouseMoveEvents() const final;
+    void dispatchFakeMouseMoveEventInRemoteFrame(WebCore::FrameIdentifier, const WebCore::DoublePoint&, const WebCore::DoublePoint&) final;
 
     void handleAutoFillButtonClick(WebCore::HTMLInputElement&) final;
 

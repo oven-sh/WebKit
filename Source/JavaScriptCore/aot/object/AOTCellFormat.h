@@ -49,6 +49,9 @@ static constexpr bool mayBeUpperHalfOfSlimClosureWord(uint32_t wordAtShapeOffset
 
 JS_EXPORT_PRIVATE void validateShapeWord(const JSCell*);
 
+// A table that takes a place from a StructureID drops this many bits of it. The cells of Structure are 128 bytes apart, so the bits below are the same in every StructureID.
+static constexpr unsigned structureIDPlaceShift = 7;
+
 static constexpr uint32_t offsetOfOrderWord = 8;
 static constexpr uint32_t offsetOfFirstField = 16;
 

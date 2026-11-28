@@ -31,9 +31,7 @@
 
 #if ENABLE(CONTENT_EXTENSIONS)
 
-namespace WebCore {
-
-namespace ContentExtensions {
+namespace WebCore::ContentExtensions {
 
 Vector<uint64_t> DFANode::actions(const DFA& dfa) const
 {
@@ -109,7 +107,7 @@ uint32_t DFANode::bestFallbackTarget(const DFA& dfa) const
 {
     ASSERT(canUseFallbackTransition(dfa));
 
-    HashMap<uint32_t, unsigned, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> histogram;
+    HashMap<uint32_t, unsigned> histogram;
 
     IterableConstRange iterableTransitions = transitions(dfa);
     auto iterator = iterableTransitions.begin();
@@ -139,8 +137,6 @@ uint32_t DFANode::bestFallbackTarget(const DFA& dfa) const
     return bestTarget;
 }
 
-} // namespace ContentExtensions
-
-} // namespace WebCore
+} // namespace WebCore::ContentExtensions
 
 #endif // ENABLE(CONTENT_EXTENSIONS)

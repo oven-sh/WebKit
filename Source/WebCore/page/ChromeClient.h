@@ -107,6 +107,7 @@ class DataListSuggestionsClient;
 class DateTimeChooser;
 class DateTimeChooserClient;
 class DisplayRefreshMonitorFactory;
+class DoublePoint;
 class Element;
 class FileChooser;
 class FileIconLoader;
@@ -158,6 +159,10 @@ struct MobileDocumentRequest;
 #if ENABLE(WEBGL)
 class GraphicsContextGL;
 struct GraphicsContextGLAttributes;
+#endif
+
+#if ENABLE(MODEL_ELEMENT_IMMERSIVE)
+class ImmersiveElement;
 #endif
 
 struct AppHighlight;
@@ -261,6 +266,13 @@ public:
     virtual void runModal() = 0;
 
     virtual bool isPopup() const = 0;
+
+    // https://wicg.github.io/document-picture-in-picture/#pip-support
+#if ENABLE(DOCUMENT_PIP)
+    virtual bool supportsDocumentPictureInPicture() const { return false; }
+    // Moves a document picture-in-picture window along with the current mouse drag.
+    virtual void startDocumentPictureInPictureWindowDrag() { }
+#endif
 
     virtual void setResizable(bool) = 0;
 
@@ -372,10 +384,7 @@ public:
 
 #if ENABLE(MODEL_ELEMENT_IMMERSIVE)
     virtual void allowImmersiveElement(CompletionHandler<void(bool)>&& completion) const { completion(false); }
-    virtual void presentImmersiveElement(const LayerHostingContextIdentifier, CompletionHandler<void(bool)>&& completion) const { completion(false); }
-#if ENABLE(IMAGE_ELEMENT_IMMERSIVE)
-    virtual void presentImmersiveImageElement(HTMLImageElement&, CompletionHandler<void(bool)>&& completion) const { completion(false); }
-#endif
+    virtual void presentImmersiveElement(ImmersiveElement&, CompletionHandler<void(bool)>&& completion) const { completion(false); }
     virtual void dismissImmersiveElement(CompletionHandler<void()>&& completion) const { completion(); }
     virtual bool supportsImmersiveElement() const { return false; }
 #endif
@@ -395,7 +404,7 @@ public:
     virtual Seconds eventThrottlingDelay() { return 0_s; };
 
 #if PLATFORM(IOS_FAMILY)
-    virtual void didReceiveMobileDocType(bool) = 0;
+    virtual void updateViewportDefaultConfiguration(bool hasMobileDoctype) = 0;
     virtual void setNeedsScrollNotifications(LocalFrame&, bool) = 0;
     virtual void notifyRevealedSelectionByScrollingFrame(LocalFrame&) = 0;
 
@@ -592,6 +601,8 @@ public:
 
 #if ENABLE(FULLSCREEN_API)
     virtual bool supportsFullScreenForElement(const Element&, bool) { return false; }
+    virtual void beginRequestFullscreen() { }
+    virtual void endRequestFullscreen() { }
     virtual void enterFullScreenForElement(Element&, HTMLMediaElementEnums::VideoFullscreenMode, CompletionHandler<void(ExceptionOr<void>)>&& willEnterFullscreen, CompletionHandler<bool(bool)>&& didEnterFullscreen);
 #if ENABLE(QUICKLOOK_FULLSCREEN)
     virtual void updateImageSource(Element&) { }
@@ -673,9 +684,7 @@ public:
 
     virtual void frameViewLayoutOrVisualViewportChanged(const LocalFrameView&) { }
 
-#if ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
     virtual void isAnyAnimationAllowedToPlayDidChange(bool /* anyAnimationCanPlay */) { };
-#endif
     virtual void resolveAccessibilityHitTestForTesting(WebCore::FrameIdentifier, const IntPoint&, CompletionHandler<void(String)>&& callback) { callback(""_s); };
 #if PLATFORM(MAC)
     WEBCORE_EXPORT virtual void performAccessibilitySearchInRemoteFrame(FrameIdentifier, const AccessibilitySearchCriteriaIPC&, CompletionHandler<void(Vector<AccessibilityRemoteToken>&&)>&&);
@@ -709,6 +718,7 @@ public:
     virtual URL allowedQueryParametersForAdvancedPrivacyProtections(const URL& url) const { return url; }
 
     virtual bool shouldDispatchFakeMouseMoveEvents() const { return true; }
+    virtual void dispatchFakeMouseMoveEventInRemoteFrame(FrameIdentifier, const DoublePoint&, const DoublePoint&) { }
 
     virtual void handleAutoFillButtonClick(HTMLInputElement&) { }
 

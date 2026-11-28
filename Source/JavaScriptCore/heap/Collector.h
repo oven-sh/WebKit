@@ -132,10 +132,18 @@ public:
 #if ASSERT_ENABLED
     // For asserts that accept more than one role, which thread-safety analysis cannot express.
     bool currentThreadIsConductor() const;
+    // Asserts that the current thread is the conductor or one of its marking helpers.
+    void assertIsConductorOrHelper() const;
+    // Asserts that every member heap's world is stopped and that the current thread is a marker, meaning the
+    // conductor or one of its marking helpers: the only threads that run against a stopped heap.
+    void assertIsMarkerWithWorldStopped() const WTF_ASSERTS_ACQUIRED_SHARED_CAPABILITY(markerWithWorldStoppedRole);
+#else
+    ALWAYS_INLINE void assertIsMarkerWithWorldStopped() const WTF_ASSERTS_ACQUIRED_SHARED_CAPABILITY(markerWithWorldStoppedRole) { }
 #endif
 
 private:
     class CollectorThread;
+    class ParallelMarkingClient;
     friend class Heap;
     friend class MarkStackMergingConstraint;
     friend class SlotVisitor;
@@ -235,6 +243,7 @@ private:
     void beginCollectionInEachHeap(GCConductor, CollectionScope, MonotonicTime startTime) WTF_REQUIRES_CAPABILITY(conductorWithWorldStoppedRole);
     void setUpVisitors(CollectionScope) WTF_REQUIRES_CAPABILITY(conductorWithWorldStoppedRole);
     static bool startsHelpersLazily() { return Options::runsCompiledImage(); }
+    // Nothing else may give m_helperClient its task, or its demand on the shared pool: the guards and hasStartedHelpers() are here for both.
     void startHelpers();
     void endCollectionInEachHeap(GCConductor) WTF_REQUIRES_CAPABILITY(conductorWithWorldStoppedRole);
 
@@ -259,6 +268,8 @@ private:
 
     void beginSignpost(CollectionScope, GCConductor) WTF_REQUIRES_CAPABILITY(conductorWithWorldStoppedRole);
     void endSignpost() WTF_REQUIRES_CAPABILITY(conductorWithWorldStoppedRole);
+
+    void runParallelMarkingHelper();
 
     // The heaps this Collector's collections cover.
     Vector<Heap*, 1> m_heaps;
@@ -294,7 +305,9 @@ private:
     Vector<std::unique_ptr<SlotVisitor>> m_parallelSlotVisitors;
     // GC marking threads claim these at the start of marking, and return them at the end.
     Vector<SlotVisitor*> m_availableParallelSlotVisitors WTF_GUARDED_BY_LOCK(m_parallelSlotVisitorLock);
-    ParallelHelperClient m_helperClient;
+    using HelperClient = Variant<ParallelHelperClient, std::unique_ptr<ParallelMarkingClient>>;
+    static HelperClient createHelperClient(Collector&);
+    HelperClient m_helperClient;
 
     std::unique_ptr<MarkingConstraintSet> m_constraintSet;
 

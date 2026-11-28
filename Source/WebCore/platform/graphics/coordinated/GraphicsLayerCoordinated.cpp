@@ -44,11 +44,11 @@
 #include "GraphicsLayerKeyframeValueList.h"
 #include "MediaPlayer.h"
 #include "NativeImage.h"
+#include "TiledBacking.h"
 #include <wtf/Locker.h>
+#include <wtf/MemoryPressureHandler.h>
 
 namespace WebCore {
-
-static constexpr uint32_t s_maxDamageRectanglesForHighResolutionDamage = 32;
 
 bool GraphicsLayer::supportsLayerType(Type type)
 {
@@ -136,7 +136,7 @@ void GraphicsLayerCoordinated::setNeedsDisplayInRect(const FloatRect& initialRec
     addRepaintRect(rect);
 
     if (!m_dirtyRegion)
-        m_dirtyRegion = Damage(m_size, Damage::Mode::Rectangles, s_maxDamageRectanglesForHighResolutionDamage);
+        m_dirtyRegion = Damage(m_size, Damage::Mode::Rectangles, Damage::MaxRectanglesForHighResolution);
 
     if (m_dirtyRegion->add(rect))
         noteLayerPropertyChanged(Change::DirtyRegion, ScheduleFlush::Yes);
@@ -392,7 +392,7 @@ void GraphicsLayerCoordinated::setContentsNeedsDisplayInRect(const FloatRect& re
 #if ENABLE(DAMAGE_TRACKING)
     if (!rect.isEmpty() && m_contentsVisible && !m_size.isEmpty()) {
         if (!m_contentsDirtyRegion)
-            m_contentsDirtyRegion = Damage(m_size, Damage::Mode::Rectangles, s_maxDamageRectanglesForHighResolutionDamage);
+            m_contentsDirtyRegion = Damage(m_size, Damage::Mode::Rectangles, Damage::MaxRectanglesForHighResolution);
 
         m_contentsDirtyRegion->add(rect);
     }
@@ -762,6 +762,18 @@ Vector<GraphicsLayer::AcceleratedAnimationForTesting> GraphicsLayerCoordinated::
     return animations;
 }
 
+#if !USE(TEXTURE_MAPPER)
+void GraphicsLayerCoordinated::setTileCoverage(TileCoverage tileCoverage)
+{
+    if (m_tileCoverage && *m_tileCoverage == tileCoverage)
+        return;
+
+    GraphicsLayer::setTileCoverage(tileCoverage);
+    m_tileCoverage = tileCoverage;
+    noteLayerPropertyChanged(Change::TileCoverage, ScheduleFlush::Yes);
+}
+#endif
+
 void GraphicsLayerCoordinated::setShowDebugBorder(bool showDebugBorder)
 {
     if (m_showDebugBorder == showDebugBorder)
@@ -790,7 +802,7 @@ static void dumpInnerLayer(TextStream& textStream, const String& label, Coordina
     textStream << indent << "(" << label << " ";
     if (options & LayerTreeAsTextOptions::Debug)
         textStream << " " << static_cast<void*>(layer);
-    textStream << layer->boundsOrigin().x() << ", " << layer->boundsOrigin().y() << " " << layer->size().width() << " x " << layer->size().height();
+    textStream << layer->effectiveBoundsOriginForScrolling().x() << ", " << layer->effectiveBoundsOriginForScrolling().y() << " " << layer->size().width() << " x " << layer->size().height();
     if (!layer->contentsVisible())
         textStream << " hidden";
     textStream << ")\n";
@@ -852,6 +864,7 @@ void GraphicsLayerCoordinated::flushCompositingState(const FloatRect& visibleRec
 {
     CommitState commitState;
     commitState.visibleRect = visibleRect;
+    commitState.coverageRect = visibleRect;
     if (m_visibleRect != visibleRect) {
         m_visibleRect = visibleRect;
         commitState.ancestorHadChanges = true;
@@ -933,17 +946,19 @@ void GraphicsLayerCoordinated::computePixelAlignmentIfNeeded(float pageScaleFact
 
 void GraphicsLayerCoordinated::updateGeometry(float pageScaleFactor, const FloatPoint& positionRelativeToBase)
 {
+    assertIsMainThread();
     assertIsHeld(m_platformLayer->lock());
+
     FloatPoint adjustedPosition;
     FloatPoint adjustedBoundsOrigin;
     FloatPoint3D adjustedAnchorPoint;
     FloatSize adjustedSize;
     computePixelAlignmentIfNeeded(pageScaleFactor, positionRelativeToBase, adjustedPosition, adjustedBoundsOrigin, adjustedAnchorPoint, adjustedSize);
 
-    m_platformLayer->setPosition(WTF::move(adjustedPosition));
-    m_platformLayer->setBoundsOrigin(WTF::move(adjustedBoundsOrigin));
-    m_platformLayer->setAnchorPoint(WTF::move(adjustedAnchorPoint));
-    m_platformLayer->setSize(WTF::move(adjustedSize));
+    m_platformLayer->setPosition(adjustedPosition);
+    m_platformLayer->setBoundsOrigin(adjustedBoundsOrigin);
+    m_platformLayer->setAnchorPoint(adjustedAnchorPoint);
+    m_platformLayer->setSize(adjustedSize);
 }
 
 void GraphicsLayerCoordinated::computeLayerTransformIfNeeded(bool affectedByTransformAnimation)
@@ -993,6 +1008,38 @@ void GraphicsLayerCoordinated::computeLayerTransformIfNeeded(bool affectedByTran
     m_platformLayer->didUpdateLayerTransform();
 }
 
+#if !USE(TEXTURE_MAPPER)
+FloatRect GraphicsLayerCoordinated::computeCoverageRect(const FloatRect& rootVisibleRect, const FloatRect& inheritedCoverageRect, TileCoverage tileCoverage) const
+{
+    if (tileCoverage == TiledBacking::CoverageForVisibleArea || MemoryPressureHandler::singleton().isUnderMemoryPressure())
+        return inheritedCoverageRect;
+
+    FloatRect bounds { { }, m_size };
+    FloatRect visibleRect = m_layerTransform.cachedInverse->clampedBoundsOfProjectedQuad(FloatQuad(rootVisibleRect));
+    clampToSizeIfRectIsInfinite(visibleRect, m_size);
+    if (!visibleRect.intersects(bounds))
+        return inheritedCoverageRect;
+
+    FloatRect coverageRect = visibleRect;
+    if (tileCoverage & TiledBacking::CoverageForHorizontalScrolling)
+        coverageRect.inflateX(visibleRect.width() / 2);
+    if (tileCoverage & TiledBacking::CoverageForVerticalScrolling)
+        coverageRect.inflateY(visibleRect.height() / 2);
+
+    if (coverageRect.x() < bounds.x())
+        coverageRect.setX(bounds.x());
+    else if (coverageRect.maxX() > bounds.maxX())
+        coverageRect.setX(bounds.maxX() - coverageRect.width());
+    if (coverageRect.y() < bounds.y())
+        coverageRect.setY(bounds.y());
+    else if (coverageRect.maxY() > bounds.maxY())
+        coverageRect.setY(bounds.maxY() - coverageRect.height());
+    coverageRect.intersect(bounds);
+
+    return unionRect(inheritedCoverageRect, m_layerTransform.current.combined().mapRect(coverageRect));
+}
+#endif
+
 void GraphicsLayerCoordinated::clampToSizeIfRectIsInfinite(FloatRect& rect, const FloatSize& contentsSize)
 {
     if (rect.width() >= LayoutUnit::nearlyMax() || rect.width() <= LayoutUnit::nearlyMin()) {
@@ -1006,30 +1053,46 @@ void GraphicsLayerCoordinated::clampToSizeIfRectIsInfinite(FloatRect& rect, cons
     }
 }
 
-void GraphicsLayerCoordinated::updateVisibleRect(const FloatRect& rect)
+void GraphicsLayerCoordinated::updateVisibleAndCoverageRects(const FloatRect& visibleRect, const FloatRect& coverageRect)
 {
+    assertIsMainThread();
+#if USE(TEXTURE_MAPPER)
     assertIsHeld(m_platformLayer->lock());
-    m_platformLayer->setVisibleRect(rect);
+#endif
+    m_platformLayer->setVisibleRect(visibleRect);
 
     // Non-invertible layers are not visible.
     if (!m_layerTransform.cachedInverse) {
+#if USE(TEXTURE_MAPPER)
         m_platformLayer->setTransformedVisibleRect({ });
+#else
+        m_platformLayer->setTransformedVisibleAndCoverageRects({ }, { });
+#endif
         return;
     }
 
     // Return a projection of the rect (surface coordinates) onto the layer's plane (layer coordinates).
     // The resulting quad might be squewed and the result is the bounding box of this quad,
-    // so it might spread further than the real visible area (and then even more amplified by the cover rect multiplier).
+    // so it might spread further than the real visible area.
     ASSERT(m_layerTransform.cachedInverse == m_layerTransform.current.combined().inverse());
-    auto transformedRect = [&](const TransformationMatrix& matrix) -> IntRect {
-        FloatRect result = matrix.clampedBoundsOfProjectedQuad(FloatQuad(rect));
-        clampToSizeIfRectIsInfinite(result, m_size);
-        return enclosingIntRect(result);
+    auto projectRect = [&](const FloatRect& rect) -> IntRect {
+        auto transformedRect = [&](const TransformationMatrix& matrix) -> IntRect {
+            FloatRect result = matrix.clampedBoundsOfProjectedQuad(FloatQuad(rect));
+            clampToSizeIfRectIsInfinite(result, m_size);
+            return enclosingIntRect(result);
+        };
+        auto result = transformedRect(*m_layerTransform.cachedInverse);
+        if (m_layerTransform.cachedFutureInverse && m_layerTransform.cachedInverse != m_layerTransform.cachedFutureInverse)
+            result.unite(transformedRect(*m_layerTransform.cachedFutureInverse));
+        return result;
     };
-    auto visibleRect = transformedRect(*m_layerTransform.cachedInverse);
-    if (m_layerTransform.cachedFutureInverse && m_layerTransform.cachedInverse != m_layerTransform.cachedFutureInverse)
-        visibleRect.unite(transformedRect(*m_layerTransform.cachedFutureInverse));
-    m_platformLayer->setTransformedVisibleRect(WTF::move(visibleRect));
+
+#if USE(TEXTURE_MAPPER)
+    m_platformLayer->setTransformedVisibleRect(projectRect(visibleRect));
+    UNUSED_PARAM(coverageRect);
+#else
+    m_platformLayer->setTransformedVisibleAndCoverageRects(projectRect(visibleRect), projectRect(coverageRect));
+#endif
 }
 
 #if USE(TEXTURE_MAPPER)
@@ -1091,9 +1154,10 @@ void GraphicsLayerCoordinated::updateBackdropFiltersRect()
 
 void GraphicsLayerCoordinated::updateAnimations()
 {
+    assertIsMainThread();
+#if USE(TEXTURE_MAPPER)
     assertIsHeld(m_platformLayer->lock());
 
-#if USE(TEXTURE_MAPPER)
     m_animations.setTranslate(client().transformMatrixForProperty(AnimatedProperty::Translate));
     m_animations.setRotate(client().transformMatrixForProperty(AnimatedProperty::Rotate));
     m_animations.setScale(client().transformMatrixForProperty(AnimatedProperty::Scale));
@@ -1112,7 +1176,10 @@ void GraphicsLayerCoordinated::updateAnimations()
 
 void GraphicsLayerCoordinated::updateIndicators()
 {
+    assertIsMainThread();
+#if USE(TEXTURE_MAPPER)
     assertIsHeld(m_platformLayer->lock());
+#endif
 
     Color borderColor;
     float borderWidth = 0;
@@ -1125,7 +1192,20 @@ void GraphicsLayerCoordinated::updateIndicators()
 
 void GraphicsLayerCoordinated::commitLayerChanges(CommitState& commitState, float pageScaleFactor, const FloatPoint& positionRelativeToBase, bool affectedByTransformAnimation)
 {
+    assertIsMainThread();
+
+#if USE(TEXTURE_MAPPER)
     Locker locker { m_platformLayer->lock() };
+    const bool containsChangesRequiringLock = true;
+#else
+    const bool containsChangesRequiringLock = m_pendingChanges.containsAny({
+        Change::Geometry, Change::Transform, Change::MasksToBounds, Change::Mask, Change::EventRegion,
+#if ENABLE(SCROLLING_THREAD)
+        Change::ScrollingNode,
+#endif
+        Change::Children
+    });
+#endif
 
     if (m_pendingChanges.contains(Change::ContentsBuffer)) {
         if (!m_contentsBufferProxy) {
@@ -1147,11 +1227,37 @@ void GraphicsLayerCoordinated::commitLayerChanges(CommitState& commitState, floa
         }
     }
 
-    if (m_pendingChanges.containsAny(Change::Geometry))
-        updateGeometry(pageScaleFactor, positionRelativeToBase);
+    if (containsChangesRequiringLock) {
+#if !USE(TEXTURE_MAPPER)
+        Locker locker { m_platformLayer->lock() };
+#endif
 
-    if (m_pendingChanges.contains(Change::Transform))
-        m_platformLayer->setTransform(transform());
+        if (m_pendingChanges.containsAny(Change::Geometry))
+            updateGeometry(pageScaleFactor, positionRelativeToBase);
+
+        if (m_pendingChanges.contains(Change::Transform))
+            m_platformLayer->setTransform(transform());
+
+        if (m_pendingChanges.contains(Change::MasksToBounds))
+            m_platformLayer->setMasksToBounds(m_masksToBounds);
+
+#if ENABLE(SCROLLING_THREAD)
+        if (m_pendingChanges.contains(Change::ScrollingNode))
+            m_platformLayer->setScrollingNodeID(m_scrollingNodeID);
+#endif
+
+        if (m_pendingChanges.contains(Change::Mask))
+            m_platformLayer->setMask(m_maskLayer ? &downcast<GraphicsLayerCoordinated>(m_maskLayer)->coordinatedPlatformLayer() : nullptr);
+
+        if (m_pendingChanges.contains(Change::EventRegion))
+            m_platformLayer->setEventRegion(m_eventRegion);
+
+        if (m_pendingChanges.contains(Change::Children)) {
+            m_platformLayer->setChildren(m_children.map<Vector<Ref<CoordinatedPlatformLayer>>>([](const auto& child) {
+                return Ref { downcast<GraphicsLayerCoordinated>(child).coordinatedPlatformLayer() };
+            }));
+        }
+    }
 
     if (m_pendingChanges.contains(Change::ChildrenTransform))
         m_platformLayer->setChildrenTransform(childrenTransform());
@@ -1159,16 +1265,13 @@ void GraphicsLayerCoordinated::commitLayerChanges(CommitState& commitState, floa
     if (m_pendingChanges.contains(Change::Preserves3D))
         m_platformLayer->setPreserves3D(m_preserves3D);
 
-    if (m_pendingChanges.contains(Change::MasksToBounds))
-        m_platformLayer->setMasksToBounds(m_masksToBounds);
 
     computeLayerTransformIfNeeded(affectedByTransformAnimation);
-    updateVisibleRect(commitState.visibleRect);
-
-#if ENABLE(SCROLLING_THREAD)
-    if (m_pendingChanges.contains(Change::ScrollingNode))
-        m_platformLayer->setScrollingNodeID(m_scrollingNodeID);
+#if !USE(TEXTURE_MAPPER)
+    if (m_tileCoverage && m_layerTransform.cachedInverse)
+        commitState.coverageRect = computeCoverageRect(commitState.visibleRect, commitState.coverageRect, *m_tileCoverage);
 #endif
+    updateVisibleAndCoverageRects(commitState.visibleRect, commitState.coverageRect);
 
     if (m_pendingChanges.contains(Change::DrawsContent))
         m_platformLayer->setDrawsContent(m_drawsContent);
@@ -1234,9 +1337,6 @@ void GraphicsLayerCoordinated::commitLayerChanges(CommitState& commitState, floa
     if (m_pendingChanges.contains(Change::Filters))
         m_platformLayer->setFilters(m_filters);
 
-    if (m_pendingChanges.contains(Change::Mask))
-        m_platformLayer->setMask(m_maskLayer ? &downcast<GraphicsLayerCoordinated>(m_maskLayer)->coordinatedPlatformLayer() : nullptr);
-
     if (m_pendingChanges.contains(Change::Replica))
         m_platformLayer->setReplica(m_replicaLayer ? &downcast<GraphicsLayerCoordinated>(m_replicaLayer)->coordinatedPlatformLayer() : nullptr);
 
@@ -1263,20 +1363,11 @@ void GraphicsLayerCoordinated::commitLayerChanges(CommitState& commitState, floa
     if (m_pendingChanges.contains(Change::Animations))
         updateAnimations();
 
-    if (m_pendingChanges.contains(Change::EventRegion))
-        m_platformLayer->setEventRegion(m_eventRegion);
-
     if (m_pendingChanges.contains(Change::Shape))
         m_platformLayer->setClipPath(m_shapeLayerPath, m_shapeLayerWindRule);
 
     if (m_pendingChanges.contains(Change::DebugIndicators))
         updateIndicators();
-
-    if (m_pendingChanges.contains(Change::Children)) {
-        m_platformLayer->setChildren(m_children.map<Vector<Ref<CoordinatedPlatformLayer>>>([](const auto& child) {
-            return Ref { downcast<GraphicsLayerCoordinated>(child).coordinatedPlatformLayer() };
-        }));
-    }
 
     m_platformLayer->updateContents(affectedByTransformAnimation);
 

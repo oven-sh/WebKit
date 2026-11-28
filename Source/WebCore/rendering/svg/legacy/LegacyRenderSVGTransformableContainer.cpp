@@ -34,7 +34,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(LegacyRenderSVGTransformableContainer);
 
-LegacyRenderSVGTransformableContainer::LegacyRenderSVGTransformableContainer(SVGGraphicsElement& element, Style::ComputedStyle&& style)
+LegacyRenderSVGTransformableContainer::LegacyRenderSVGTransformableContainer(SVGGraphicsElement& element, UniqueRef<Style::ComputedStyle>&& style)
     : LegacyRenderSVGContainer(Type::LegacySVGTransformableContainer, element, WTF::move(style))
 {
     ASSERT(isLegacyRenderSVGTransformableContainer());
@@ -69,7 +69,7 @@ bool LegacyRenderSVGTransformableContainer::calculateLocalTransform()
         m_needsTransformUpdate = true;
     }
 
-    m_didTransformToRootUpdate = m_needsTransformUpdate || SVGRenderSupport::transformToRootChanged(parent());
+    m_didTransformToRootUpdate = m_needsTransformUpdate || SVGRenderSupport::transformToRootChanged(protect(parent()));
     if (!m_needsTransformUpdate)
         return false;
 

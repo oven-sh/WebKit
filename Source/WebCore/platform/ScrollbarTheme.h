@@ -28,6 +28,7 @@
 #include <WebCore/GraphicsContext.h>
 #include <WebCore/IntRect.h>
 #include <WebCore/ScrollTypes.h>
+#include <wtf/OptionSet.h>
 #include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
@@ -50,15 +51,17 @@ public:
 
     virtual void updateEnabledState(Scrollbar&) { }
 
-    virtual bool paint(Scrollbar&, GraphicsContext&, const IntRect& /*damageRect*/) { return false; }
+    virtual bool paint(Scrollbar&, GraphicsContext&, const IntRect& /*damageRect*/, OptionSet<ScrollbarPaintBehavior>) { return false; }
     virtual ScrollbarPart hitTest(Scrollbar&, const IntPoint&, ScrollbarHitTestTolerance = ScrollbarHitTestTolerance::None) { return NoPart; }
     
-    virtual int scrollbarThickness(ScrollbarWidth = ScrollbarWidth::Auto, OverlayScrollbarSizeRelevancy = OverlayScrollbarSizeRelevancy::IncludeOverlayScrollbarSize) { return 0; }
+    virtual int scrollbarThickness(ScrollbarStyle, ScrollbarWidth = ScrollbarWidth::Auto, OverlayScrollbarSizeRelevancy = OverlayScrollbarSizeRelevancy::IncludeOverlayScrollbarSize) { return 0; }
 
     virtual ScrollbarButtonsPlacement buttonsPlacement() const { return ScrollbarButtonsSingle; }
 
     virtual bool supportsControlTints() const { return false; }
+    // The system setting, which pages can override: see ScrollableArea::scrollbarStyle().
     virtual bool usesOverlayScrollbars() const { return false; }
+    ScrollbarStyle scrollbarStyle() const { return usesOverlayScrollbars() ? ScrollbarStyle::Overlay : ScrollbarStyle::AlwaysVisible; }
     virtual void usesOverlayScrollbarsChanged() { }
     virtual void updateScrollbarOverlayStyle(Scrollbar&) { }
 

@@ -182,6 +182,13 @@ class FormDataReference;
 class SharedBufferReference;
 }
 
+namespace Inspector {
+enum class NetworkInterceptOwner : uint8_t;
+enum class NetworkInterceptionPhase : uint8_t;
+struct NetworkInterception;
+struct NetworkInterceptionResolution;
+}
+
 namespace WebCore {
 
 class AXIsolatedTree;
@@ -216,6 +223,9 @@ class HandleUserInputEventResult;
 class HistoryItem;
 class IgnoreSelectionChangeForScope;
 class ImageBuffer;
+#if ENABLE(MODEL_ELEMENT_IMMERSIVE)
+class ImmersiveElement;
+#endif
 class IntPoint;
 class IntRect;
 class KeyboardEvent;
@@ -298,6 +308,7 @@ enum ScrollLogicalDirection : uint8_t;
 enum class ScrollPinningBehavior : uint8_t;
 enum class ScrollbarMode : uint8_t;
 enum class ScrollbarOverlayStyle : uint8_t;
+enum class ScrollbarStyle : uint8_t;
 enum class ShouldTreatAsContinuingLoad : uint8_t;
 enum class StorageAccessScope : bool;
 enum class SyntheticClickResult : uint8_t;
@@ -323,6 +334,7 @@ struct AriaNotifyData;
 struct AttributedString;
 struct BackForwardFrameItemIdentifierType;
 struct BackForwardItemIdentifierType;
+struct BlockPresentationIntent;
 struct CharacterRange;
 struct CompositionHighlight;
 struct CompositionUnderline;
@@ -492,6 +504,7 @@ class WebFrame;
 class WebFullScreenManager;
 class WebGestureEvent;
 class WebImage;
+class NetworkInterceptionSink;
 class WebInspectorBackend;
 class WebInspectorBackendClient;
 class WebInspectorUI;
@@ -892,6 +905,10 @@ public:
     void updateTextIndicator(RefPtr<WebCore::TextIndicator>&&);
 
     WebFrame& mainWebFrame() const { return m_mainFrame; }
+
+    // Receives the page's network interception configuration from the UI process
+    // authority. Created on first use, since most pages are never inspected.
+    NetworkInterceptionSink& networkInterceptionSink();
     const URL& mainFrameOpenerURL() const { return m_mainFrameOpenerURL; }
 
     NODELETE WebCore::Frame* mainFrame() const;
@@ -953,7 +970,6 @@ public:
     double pageZoomFactor() const;
     void didSetPageZoomFactor(double);
     void windowScreenDidChange(WebCore::PlatformDisplayID, std::optional<unsigned> nominalFramesPerSecond);
-    String dumpHistoryForTesting(const String& directory);
 
     void accessibilitySettingsDidChange();
 #if PLATFORM(COCOA)
@@ -997,6 +1013,7 @@ public:
     NODELETE void listenForLayoutMilestones(OptionSet<WebCore::LayoutMilestone>);
 
     void setSuppressScrollbarAnimations(bool);
+    void setScrollbarStyleOverride(std::optional<WebCore::ScrollbarStyle>);
 
     void setHasActiveAnimatedScrolls(bool);
 
@@ -1110,7 +1127,6 @@ public:
 #endif
 
     RefPtr<WebImage> scaledSnapshotWithOptions(const WebCore::IntRect&, double additionalScaleFactor, SnapshotOptions);
-    RefPtr<WebImage> cssPageBoxesSnapshotForTesting(const WebCore::IntSize& defaultPageBoxSize, const WebCore::IntBoxExtent& defaultPageMargin);
 
     NODELETE static const WebEvent* currentEvent();
 
@@ -1190,12 +1206,14 @@ public:
     Awaitable<std::optional<WebCore::FrameIdentifier>> commitPotentialTap(std::optional<WebCore::FrameIdentifier>, OptionSet<WebKit::WebEventModifier>, TransactionID lastLayerTreeTransactionId, WebCore::PointerID, CompletesDoubleClick);
     void cancelPotentialTap();
     void cancelPotentialTapInFrame(WebFrame&);
-    void commitPotentialTapFailed();
+    void clearPotentialTap();
+    void commitPotentialTapFailed(WebCore::LocalFrame* localRootFrame);
     void didHandleTapAsHover(WebCore::Node& nodeRespondingToClick);
 #if HAVE(APPKIT_GESTURES_SUPPORT)
     bool isHoverActivatedByClick(const WebCore::Node& hitNode, const WebCore::IntPoint& locationInRootView) const;
 #endif
     void sendTapHighlightForNodeIfNecessary(WebKit::TapIdentifier, WebCore::Node*, WebCore::FloatPoint);
+    static std::optional<WebCore::RemoteUserInputEventData> remoteUserInputEventDataForTapTarget(WebCore::LocalFrame* localRootFrame, WebCore::Node* tapTarget, const WebCore::FloatPoint& tapLocationInRootView);
     void handleSyntheticClick(std::optional<WebCore::FrameIdentifier>, WebCore::Node& nodeRespondingToClick, const WebCore::FloatPoint& location, OptionSet<WebKit::WebEventModifier>, WebCore::PointerID = WebCore::mousePointerID);
     void completeSyntheticClick(std::optional<WebCore::FrameIdentifier>, WebCore::Node& nodeRespondingToClick, const WebCore::FloatPoint& location, OptionSet<WebKit::WebEventModifier>, WebCore::SyntheticClickType, WebCore::PointerID = WebCore::mousePointerID, int clickCount = 1);
     Awaitable<std::optional<WebCore::RemoteUserInputEventData>> handleDoubleTapForDoubleClickAtPoint(std::optional<WebCore::FrameIdentifier>, WebCore::IntPoint, OptionSet<WebKit::WebEventModifier>, TransactionID lastLayerTreeTransactionId, WebEventInputSource, WebMouseEventSyntheticClickType);
@@ -1218,7 +1236,7 @@ public:
     WebCore::FloatSize overrideScreenSize() const;
     WebCore::FloatSize overrideAvailableScreenSize() const;
     WebCore::IntDegrees deviceOrientation() const { return m_deviceOrientation; }
-    void didReceiveMobileDocType(bool);
+    void updateViewportDefaultConfiguration(bool hasMobileDoctype);
 
     bool screenIsBeingCaptured() const { return m_screenIsBeingCaptured; }
     void setScreenIsBeingCaptured(bool);
@@ -1230,8 +1248,8 @@ public:
     double maximumPageScaleFactorIgnoringAlwaysScalable() const;
     bool allowsUserScaling() const;
 
-    void attemptSyntheticClick(const WebCore::IntPoint&, OptionSet<WebKit::WebEventModifier>, TransactionID lastLayerTreeTransactionId);
-    void tapHighlightAtPosition(WebKit::TapIdentifier, const WebCore::FloatPoint&);
+    void attemptSyntheticClick(std::optional<WebCore::FrameIdentifier>, const WebCore::IntPoint&, OptionSet<WebKit::WebEventModifier>, TransactionID lastLayerTreeTransactionId, CompletionHandler<void(std::optional<WebCore::RemoteUserInputEventData>)>&&);
+    void tapHighlightAtPosition(std::optional<WebCore::FrameIdentifier>, WebKit::TapIdentifier, const WebCore::FloatPoint&, CompletionHandler<void(std::optional<WebCore::RemoteUserInputEventData>)>&&);
     void didRecognizeLongPress();
 
     void inspectorNodeSearchMovedToPosition(const WebCore::FloatPoint&);
@@ -1279,11 +1297,11 @@ public:
     bool isShowingInputViewForFocusedElement() const { return m_isShowingInputViewForFocusedElement; }
     void updateSelectionAppearance();
     void getSelectionContext(CompletionHandler<void(const String&, const String&, const String&)>&&);
-    void handleTwoFingerTapAtPoint(const WebCore::IntPoint&, OptionSet<WebKit::WebEventModifier>, WebKit::TapIdentifier);
+    void handleTwoFingerTapAtPoint(std::optional<WebCore::FrameIdentifier>, const WebCore::IntPoint&, OptionSet<WebKit::WebEventModifier>, WebKit::TapIdentifier, CompletionHandler<void(std::optional<WebCore::RemoteUserInputEventData>)>&&);
     void getRectsForGranularityWithSelectionOffset(WebCore::TextGranularity, int32_t, CompletionHandler<void(const Vector<WebCore::SelectionGeometry>&)>&&);
     void getRectsAtSelectionOffsetWithText(int32_t, const String&, CompletionHandler<void(const Vector<WebCore::SelectionGeometry>&)>&&);
     void storeSelectionForAccessibility(bool);
-    void requestEvasionRectsAboveSelection(CompletionHandler<void(const Vector<WebCore::FloatRect>&)>&&);
+    void requestEvasionRectsAboveSelection(std::optional<WebCore::FloatRect> selectionBoundsInMainFrameView, double pageScaleFactor, double contextMenuAreaLimit, CompletionHandler<void(const Vector<WebCore::FloatRect>&)>&&);
 
     void contentSizeCategoryDidChange(const String&);
 
@@ -1577,7 +1595,7 @@ public:
     void drawToSnapshot(const std::optional<WebCore::FloatRect>&, bool allowTransparentBackground, RemoteSnapshotIdentifier, CompletionHandler<void(bool)>&&);
 
     // Submessage for a frame delivered during web page snapshot draw.
-    void drawFrameToSnapshot(WebCore::FrameIdentifier, const WebCore::IntRect& rectRelativeToVisibleContent, RemoteSnapshotIdentifier, WebCore::RenderingMode);
+    void drawFrameToSnapshot(WebCore::FrameIdentifier, const WebCore::IntRect& rectRelativeToVisibleContent, RemoteSnapshotIdentifier, WebCore::RenderingMode, const WebCore::FloatSize& scale);
 
     void addResourceRequest(WebCore::ResourceLoaderIdentifier, const WebCore::ResourceRequest&, const WebCore::DocumentLoader*, WebCore::LocalFrame*);
     void removeResourceRequest(WebCore::ResourceLoaderIdentifier, WebCore::LocalFrame*);
@@ -1632,6 +1650,7 @@ public:
 #if PLATFORM(IOS_FAMILY)
     void setDeviceOrientation(WebCore::IntDegrees);
     void dynamicViewportSizeUpdate(const DynamicViewportSizeUpdate&);
+    void setUnobscuredSafeAreaInsets(const WebCore::FloatBoxExtent&);
     bool scaleWasSetByUIProcess() const { return m_scaleWasSetByUIProcess; }
     void willStartUserTriggeredZooming();
     void didEndUserTriggeredZooming();
@@ -1652,7 +1671,7 @@ public:
 
     bool canShowWhileLocked() const;
 
-    void shouldDismissKeyboardAfterTapAtPoint(WebCore::FloatPoint, CompletionHandler<void(bool)>&&);
+    void shouldDismissKeyboardAfterTapAtPoint(std::optional<WebCore::FrameIdentifier>, WebCore::FloatPoint, std::optional<float> unobscuredContentWidth, CompletionHandler<void(Variant<bool, WebCore::RemoteUserInputEventData>&&)>&&);
 #endif
 
 #if ENABLE(CONTENT_CHANGE_OBSERVER)
@@ -1789,6 +1808,7 @@ public:
 
     void addUserScript(String&& source, InjectedBundleScriptWorld&, WebCore::UserContentInjectedFrames = WebCore::UserContentInjectedFrames::InjectInAllFrames, WebCore::UserScriptInjectionTime = WebCore::UserScriptInjectionTime::DocumentStart, WebCore::UserContentMatchParentFrame = WebCore::UserContentMatchParentFrame::Never);
     void addUserStyleSheet(const String& source, WebCore::UserContentInjectedFrames);
+    void injectUserStyleSheetsScopedToThisPage();
     void removeAllUserContent();
 
     void dispatchDidReachLayoutMilestone(OptionSet<WebCore::LayoutMilestone>);
@@ -1797,6 +1817,8 @@ public:
 
     NODELETE bool isControlledByAutomation() const;
     NODELETE void setControlledByAutomation(bool);
+    void setNetworkInterception(Inspector::NetworkInterception&&, CompletionHandler<void()>&&);
+    void resolveNetworkInterception(WebCore::ResourceLoaderIdentifier, Inspector::NetworkInterceptOwner, Inspector::NetworkInterceptionPhase, Inspector::NetworkInterceptionResolution&&);
 
     void connectInspector(Inspector::FrontendChannel::ConnectionType);
     void disconnectInspector();
@@ -1874,7 +1896,7 @@ public:
 
 #if ENABLE(MODEL_ELEMENT_IMMERSIVE)
     void allowImmersiveElement(CompletionHandler<void(bool)>&&);
-    void presentImmersiveElement(const WebCore::LayerHostingContextIdentifier, CompletionHandler<void(bool)>&&);
+    void presentImmersiveElement(WebCore::ImmersiveElement&, CompletionHandler<void(bool)>&&);
     void dismissImmersiveElement(CompletionHandler<void()>&&);
     void exitImmersive(CompletionHandler<void()>&&);
     bool allowsImmersiveEnvironments() const;
@@ -2256,6 +2278,8 @@ public:
 
     void takeSnapshotForTargetedElement(WebCore::NodeIdentifier, WebCore::ScriptExecutionContextIdentifier, CompletionHandler<void(std::optional<WebCore::ShareableBitmapHandle>&&)>&&);
     void takeRemoteSnapshotForTargetedElement(WebCore::NodeIdentifier, WebCore::ScriptExecutionContextIdentifier, RemoteSnapshotIdentifier, CompletionHandler<void(bool)>&&);
+    void snapshotCSSPageBoxesForTesting(const WebCore::IntSize& defaultPageBoxSize, int defaultPageMargin, CompletionHandler<void(std::optional<WebCore::ShareableBitmapHandle>&&)>&&);
+    void remoteSnapshotCSSPageBoxesForTesting(const WebCore::IntSize& defaultPageBoxSize, int defaultPageMargin, RemoteSnapshotIdentifier, CompletionHandler<void(bool)>&&);
 
     OptionSet<LayerTreeFreezeReason> layerTreeFreezeReasons() const { return m_layerTreeFreezeReasons; }
 
@@ -2321,14 +2345,18 @@ public:
     RefPtr<WebCore::ShareableBitmap> shareableBitmapForNodeIncludingOffscreen(WebCore::Node&);
 
     void paintRemoteFrameContents(WebCore::FrameIdentifier, const WebCore::IntRect&, WebCore::GraphicsContext&);
+#if ENABLE(GPU_PROCESS) && ENABLE(PDF_PLUGIN)
+    bool recordPDFPageIntoRemoteSnapshot(WebCore::GraphicsContext&, PDFPluginIdentifier, NOESCAPE const Function<RefPtr<WebCore::SharedBuffer>()>& documentData, unsigned pageIndex, const WebCore::FloatRect& pageRect, WebCore::ImageBuffer& fallback);
+#endif
 
 #if ENABLE(GPU_PROCESS)
     // Frames hosted elsewhere that paint calls into record themselves into the same snapshot. The
     // root of the snapshot creates it; a frame asked to paint into one records into what exists.
     // False if another recording is already painting into this page.
     enum class RemoteSnapshotRole : bool { Frame, Root };
-    // A root is drawn at rootSize, which is unused for a frame.
-    bool recordRemoteSnapshot(RemoteSnapshotIdentifier, WebCore::FrameIdentifier, RemoteSnapshotRole, WebCore::RenderingMode, const WebCore::FloatRect& initialClip, const WebCore::FloatSize& rootSize, Ref<MainRunLoopSuccessCallbackAggregator>&&, NOESCAPE const Function<void(WebCore::GraphicsContext&)>& paint);
+    // A root is drawn at rootSize, which is unused for a frame. The recording is drawn at scale: paint sees
+    // it in the CTM, so that it rasterizes at the resolution of the output, but it is not recorded.
+    bool recordRemoteSnapshot(RemoteSnapshotIdentifier, WebCore::FrameIdentifier, RemoteSnapshotRole, WebCore::RenderingMode, const WebCore::FloatRect& initialClip, const WebCore::FloatSize& scale, const WebCore::FloatSize& rootSize, Ref<MainRunLoopSuccessCallbackAggregator>&&, NOESCAPE const Function<void(WebCore::GraphicsContext&)>& paint);
     // For the reply to a request to record the root of a snapshot the UI process minted. The UI process
     // may be blocked waiting for the snapshot in the GPU process, where it cannot hear of the root
     // failing, so the GPU process is told directly.
@@ -2349,6 +2377,10 @@ private:
     WebPage(WebCore::PageIdentifier, WebPageCreationParameters&&);
 
     void constructFrameTree(WebFrame& parent, const FrameTreeCreationParameters&);
+#if ENABLE(PDF_PLUGIN)
+    bool frameHasPDFPlugin(WebCore::LocalFrame&) const;
+    void updateFrameHasPDFPlugin(WebCore::FrameIdentifier);
+#endif
 
     void stopLoadingInRootFrames(WebCore::AbortOngoingNavigation);
 
@@ -2401,7 +2433,7 @@ private:
 #endif
 
 #if ENABLE(META_VIEWPORT)
-    void resetViewportDefaultConfiguration(WebFrame* mainFrame, bool hasMobileDocType = false);
+    void resetViewportDefaultConfiguration(WebFrame* mainFrame);
     enum class ZoomToInitialScale : bool { No, Yes };
     void viewportConfigurationChanged(ZoomToInitialScale = ZoomToInitialScale::No);
     bool shouldIgnoreMetaViewport() const;
@@ -2439,6 +2471,7 @@ private:
 
 #if PLATFORM(MAC)
     bool executeKeypressCommandsInternal(const Vector<WebCore::KeypressCommand>&, WebCore::KeyboardEvent*);
+    void updateScrollerPairsForScrollbarStyleOverride();
 #endif
 
     void testProcessIncomingSyncMessagesWhenWaitingForSyncReply(CompletionHandler<void(bool)>&&);
@@ -2462,6 +2495,7 @@ private:
 
     // Actions
     void tryClose(CompletionHandler<void(bool)>&&);
+    void closeFromRemoteFrame();
     void dispatchPendingNavigateEventForProcessSwap(WebCore::FrameIdentifier, WebCore::PendingNavigateEventIdentifier, CompletionHandler<void(bool)>&&);
     void dispatchCrossOriginBeforeUnloadCheckForFrame(WebCore::FrameIdentifier, WebCore::SecurityOriginData&&);
     void platformDidReceiveLoadParameters(const LoadParameters&);
@@ -2490,6 +2524,7 @@ private:
     void increaseListLevel();
     void decreaseListLevel();
     void changeListType();
+    void applyBlockPresentationIntent(const WebCore::BlockPresentationIntent&);
 
     void setBaseWritingDirection(WebCore::WritingDirection);
 
@@ -2501,6 +2536,7 @@ private:
     void setLastKnownMousePosition(WebCore::FrameIdentifier, const WebCore::DoublePoint&, const WebCore::DoublePoint&, std::optional<WebCore::LastKnownMousePositionSource>&& = std::nullopt);
     void mousePointerDidDisappear();
     void mouseDidLeaveLocalRoot(WebCore::FrameIdentifier);
+    void dispatchFakeMouseMoveEventInFrame(WebCore::FrameIdentifier, const WebCore::DoublePoint&, const WebCore::DoublePoint&);
 
 #if ENABLE(IOS_TOUCH_EVENTS)
     void touchEventSync(const WebTouchEvent&, CompletionHandler<void(bool)>&&);
@@ -2512,6 +2548,7 @@ private:
 
 #if ENABLE(TWO_PHASE_CLICKS)
     void dispatchDeferredSyntheticClickIfNeeded();
+    void sendDidNotHandleTapAsClick(WebCore::LocalFrame* localRootFrame, WebCore::FloatPoint pointInLocalRootView);
 #endif
 
     void cancelPointer(WebCore::PointerID, const WebCore::IntPoint&);
@@ -2572,10 +2609,9 @@ private:
     void getSourceForFrame(WebCore::FrameIdentifier, CompletionHandler<void(const String&)>&&);
 #if PLATFORM(COCOA)
     void getWebArchiveData(CompletionHandler<void(const std::optional<IPC::SharedBufferReference>&)>&&);
-    void getWebArchivesForFrames(const Vector<WebCore::FrameIdentifier>& frameIdentifiers, CompletionHandler<void(HashMap<WebCore::FrameIdentifier, Ref<WebCore::LegacyWebArchive>>&&)>&&);
+    void getWebArchivesForFrames(const Vector<WebCore::FrameIdentifier>& frameIdentifiers, const Vector<WebCore::MarkupExclusionRule>&, const String& mainResourceFileName, CompletionHandler<void(HashMap<WebCore::FrameIdentifier, Ref<WebCore::LegacyWebArchive>>&&)>&&);
     void getContentsAsAttributedStringForFrames(const Vector<WebCore::FrameIdentifier>& frameIdentifiers, CompletionHandler<void(HashMap<WebCore::FrameIdentifier, WebCore::AttributedString>&&)>&&);
 #endif
-    void getWebArchiveOfFrameWithFileName(WebCore::FrameIdentifier, const Vector<WebCore::MarkupExclusionRule>&, const String& fileName, CompletionHandler<void(const std::optional<IPC::SharedBufferReference>&)>&&);
     void runJavaScript(WebFrame*, RunJavaScriptParameters&&, ContentWorldIdentifier, bool, CompletionHandler<void(RunJavaScriptResult&&)>&&);
     void runJavaScriptInFrameInScriptWorld(RunJavaScriptParameters&&, std::optional<WebCore::FrameIdentifier>, const ContentWorldData&, bool, CompletionHandler<void(RunJavaScriptResult&&)>&&);
     void clearContentWorld(ContentWorldIdentifier, CompletionHandler<void()>&&);
@@ -2732,7 +2768,7 @@ private:
     NODELETE void setCanUseCredentialStorage(bool);
 
 #if ENABLE(CONTEXT_MENUS)
-    void didSelectItemFromActiveContextMenu(const WebContextMenuItemData&);
+    void didSelectItemFromActiveContextMenu(const WebContextMenuItemData&, CompletionHandler<void()>&&);
 #endif
 
     void changeSelectedIndex(int32_t index);
@@ -2861,6 +2897,7 @@ private:
     void addResourceTimingFromSubframe(WebCore::FrameIdentifier parentFrameID, WebCore::ResourceTiming&&);
 
     void frameWasFocusedInAnotherProcess(std::optional<WebCore::FrameIdentifier>&&);
+    void focusedFrameProcessDidTerminate(WebCore::FrameIdentifier);
 
 #if ENABLE(WRITING_TOOLS)
     void willBeginWritingToolsSession(const std::optional<WebCore::WritingTools::Session>&, Vector<WebCore::JSHandleIdentifier>&& preservedNodeIdentifiers, CompletionHandler<void(const Vector<WebCore::WritingTools::Context>&)>&&);
@@ -2902,6 +2939,8 @@ private:
     void layerTreeAsTextForTesting(WebCore::FrameIdentifier, uint64_t baseIndent, OptionSet<WebCore::LayerTreeAsTextOptions>, CompletionHandler<void(String&&)>&&);
     void frameTextForTesting(WebCore::FrameIdentifier, CompletionHandler<void(String&&)>&&);
     void bindRemoteAccessibilityFrames(int processIdentifier, WebCore::FrameIdentifier, WebCore::AccessibilityRemoteToken, CompletionHandler<void(WebCore::AccessibilityRemoteToken, int)>&&);
+    void rebindRemoteAccessibilityFrames(WebCore::FrameIdentifier);
+    void repostAccessibilityFocusInFrame(WebCore::FrameIdentifier);
     void updateRemotePageOffsetInMainFrame(WebCore::FrameIdentifier, WebCore::IntPoint);
 #if ENABLE(ACCESSIBILITY_LOCAL_FRAME)
     void updateRemotePageAccessibilityInheritedState(WebCore::FrameIdentifier, const WebCore::InheritedFrameState&);
@@ -2970,6 +3009,7 @@ private:
     RefPtr<WebPageTesting> m_webPageTesting;
 
     const Ref<WebFrame> m_mainFrame;
+    std::unique_ptr<NetworkInterceptionSink> m_networkInterceptionSink;
     std::optional<WebCore::FrameIdentifier> m_unresolvedMainFrameOpenerIdentifier;
     URL m_mainFrameOpenerURL;
 
@@ -3313,7 +3353,7 @@ private:
     RefPtr<WebCore::Node> m_potentialTapNode;
     WebCore::FloatPoint m_potentialTapLocation;
     RefPtr<WebCore::SecurityOrigin> m_potentialTapSecurityOrigin;
-    WebCore::MouseEventInputSource m_potentialTapInputSource { WebCore::MouseEventInputSource::UserDriven };
+    WebCore::MouseEventInputSource m_potentialTapInputSource { WebCore::MouseEventInputSource::Default };
 
     bool m_completingSyntheticClick { false };
     bool m_hasHandledSyntheticClick { false };
@@ -3471,9 +3511,16 @@ private:
         RemoteSnapshotIdentifier identifier;
         UniqueRef<RemoteSnapshotRecorderProxy> recorder;
         Ref<MainRunLoopSuccessCallbackAggregator> callback;
-        // Frames hosted elsewhere that were painted into the recording, and the parts painted, relative to each
-        // frame's visible content.
-        HashMap<WebCore::FrameIdentifier, WebCore::IntRect> paintedFrameRects;
+        struct PaintedFrame {
+            WebCore::IntRect rectRelativeToVisibleContent;
+            WebCore::FloatSize scale;
+        };
+        // Frames hosted elsewhere that were painted into the recording, the parts painted, relative to each
+        // frame's visible content, and the largest scale they were painted at.
+        HashMap<WebCore::FrameIdentifier, PaintedFrame> paintedFrames;
+#if ENABLE(PDF_PLUGIN)
+        HashMap<PDFPluginIdentifier, WebCore::RenderingResourceIdentifier> recordedPDFDocuments;
+#endif
     };
     std::optional<RemoteSnapshotState> m_remoteSnapshotState;
 #endif

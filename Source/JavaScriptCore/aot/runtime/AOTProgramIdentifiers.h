@@ -136,10 +136,10 @@ private:
     unsigned m_numberOfInstances { 0 };
     ProgramSymbols m_symbols;
     mutable Lock m_symbolsLock;
-    UncheckedKeyHashMap<UniquedStringImpl*, uint32_t> m_numbersOfSymbols WTF_GUARDED_BY_LOCK(m_symbolsLock);
-    UncheckedKeyHashMap<const void*, AtomString> m_namesOfVariables;
-    UncheckedKeyHashMap<uint64_t, AtomString, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_namesOfCaptures;
-    UncheckedKeyHashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_capturesThatAreVariablesOfModules;
+    HashMap<UniquedStringImpl*, uint32_t> m_numbersOfSymbols WTF_GUARDED_BY_LOCK(m_symbolsLock);
+    HashMap<const void*, AtomString> m_namesOfVariables;
+    HashMap<uint64_t, AtomString, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_namesOfCaptures;
+    HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_capturesThatAreVariablesOfModules;
     std::array<NativeText, 128> m_recentNativeTexts;
     std::array<NativeTextFingerprintSet, 32> m_nativeTextsByCharacters;
 };

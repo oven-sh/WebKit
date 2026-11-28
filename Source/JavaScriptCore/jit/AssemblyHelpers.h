@@ -191,6 +191,7 @@ public:
     void storeProperty(GPRReg valueGPR, GPRReg objectGPR, GPRReg offsetGPR, GPRReg scratchGPR);
 
     JumpList loadMegamorphicProperty(VM&, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl*, GPRReg resultGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR);
+    JumpList loadMegamorphicPrivateProperty(VM&, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl*, GPRReg resultGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR);
     JumpList loadMegamorphicGetterSetter(VM&, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl*, GPRReg resultGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR);
     template<uint32_t primaryMask, ptrdiff_t primaryEntriesOffset, uint32_t secondaryMask, ptrdiff_t secondaryEntriesOffset>
     JumpList findMegamorphicCacheEntry(VM&, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl*, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR);
@@ -837,6 +838,7 @@ public:
     void loadTypedArrayByteLength(GPRReg baseGPR, GPRReg valueGPR, GPRReg scratchGPR, GPRReg scratch2GPR, TypedArrayType);
     std::tuple<Jump, JumpList> loadDataViewByteLength(GPRReg baseGPR, GPRReg valueGPR, GPRReg scratchGPR, GPRReg scratch2GPR, TypedArrayType);
     void loadTypedArrayLength(GPRReg baseGPR, GPRReg valueGPR, GPRReg scratchGPR, GPRReg scratch2GPR, std::optional<TypedArrayType>);
+    JumpList loadTypedArrayBufferWrapper(GPRReg baseGPR, GPRReg resultGPR);
 
     void emitTurnUndefinedIntoNull(GPRReg valueGPR)
     {
@@ -1090,6 +1092,23 @@ public:
     void unboxDouble(GPRReg gpr, FPRReg fpr)
     {
         unboxDouble(gpr, gpr, fpr);
+    }
+
+    // Unboxing yields bits below NumberTag << 1 for every boxed double, NaNs included because a boxed
+    // NaN is never impure, and bits at or above it for every other JSValue.
+    Jump unboxDoubleOrBranchIfNotDouble(GPRReg gpr, GPRReg scratchGPR, FPRReg fpr)
+    {
+        constexpr uint64_t firstNonDoubleBits = static_cast<uint64_t>(JSValue::NumberTag) << 1;
+        static_assert(isImpureNaN(std::bit_cast<double>(firstNonDoubleBits)));
+        static_assert(!isImpureNaN(std::bit_cast<double>(firstNonDoubleBits - 1)));
+        add64(GPRInfo::numberTagRegister, gpr, scratchGPR);
+#if CPU(ARM64)
+        Jump notDouble = branch64LeftShift(AboveOrEqual, scratchGPR, GPRInfo::numberTagRegister, TrustedImm32(1));
+#else
+        Jump notDouble = branch64(AboveOrEqual, scratchGPR, TrustedImm64(static_cast<int64_t>(firstNonDoubleBits)));
+#endif
+        move64ToDouble(scratchGPR, fpr);
+        return notDouble;
     }
 
     Jump isStrictInt52(GPRReg valueGPR, GPRReg scratchGPR)

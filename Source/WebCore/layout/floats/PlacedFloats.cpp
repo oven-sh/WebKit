@@ -32,8 +32,7 @@
 #include "StyleComputedStyle+GettersInlines.h"
 #include <wtf/TZoneMallocInlines.h>
 
-namespace WebCore {
-namespace Layout {
+namespace WebCore::Layout {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(PlacedFloats);
 
@@ -44,6 +43,12 @@ PlacedFloats::Item::Item(const Box& layoutBox, Position position, const BoxGeome
     , m_localTopLeft(localTopLeft)
     , m_shape(layoutBox.shape())
     , m_placedByLine(line)
+{
+}
+
+PlacedFloats::Item::Item(const Box& layoutBox, Position position)
+    : m_layoutBox(layoutBox)
+    , m_position(position)
 {
 }
 
@@ -68,13 +73,18 @@ PlacedFloats::PlacedFloats(const ElementBox& blockFormattingContextRoot)
     : m_blockFormattingContextRoot(blockFormattingContextRoot)
     , m_writingMode(blockFormattingContextRoot.writingMode())
 {
-    ASSERT(blockFormattingContextRoot.establishesBlockFormattingContext());
+    // Render tree layout keeps a float list on every block container, so the root may be a block container in a parent block formatting context.
+    ASSERT(blockFormattingContextRoot.establishesBlockFormattingContext() || blockFormattingContextRoot.isBlockContainer());
 }
 
 void PlacedFloats::add(Item newFloatItem)
 {
     auto isStartPositioned = newFloatItem.isStartPositioned();
     m_positionTypes.add(isStartPositioned ? PositionType::Start : PositionType::End);
+    auto& lowestPositionOnBlockAxis = isStartPositioned ? m_lowestStartPositionOnBlockAxis : m_lowestEndPositionOnBlockAxis;
+    auto mayShareBlockAxisPositionWithEarlierFloat = lowestPositionOnBlockAxis && *lowestPositionOnBlockAxis > newFloatItem.marginBoxTop();
+    lowestPositionOnBlockAxis = std::max(lowestPositionOnBlockAxis.value_or(newFloatItem.marginBoxBottom()), newFloatItem.marginBoxBottom());
+    m_lowestTopPositionOnBlockAxis = std::max(m_lowestTopPositionOnBlockAxis.value_or(newFloatItem.marginBoxTop()), newFloatItem.marginBoxTop());
 
     if (m_list.isEmpty())
         return m_list.append(newFloatItem);
@@ -84,43 +94,41 @@ void PlacedFloats::add(Item newFloatItem)
         return entry.layoutBox() == newFloatItem.layoutBox();
     }) == notFound);
 
-    // When adding a new float item to the list, we have to ensure that it is definitely the left(right)-most item.
-    // Normally it is, but negative inline-axis margins can push the float box beyond another float box.
-    // Float items in m_list list should stay in inline-axis position order (left/right edge) on the same block-axis position.
-    auto inlineAxisMargin = newFloatItem.inlineAxisMargin();
-    auto hasNegativeInlineAxisMargin = (isStartPositioned && inlineAxisMargin.start < 0) || (!isStartPositioned && inlineAxisMargin.end < 0);
-    if (!hasNegativeInlineAxisMargin)
+    // FloatingContext takes the last float in the list that covers a block axis position as the inner-most one there, so floats on the same side
+    // that share a block axis position have to stay in inline-axis order. A new float normally is the inner-most one, but it can end up outside
+    // an earlier float: with a negative inline-axis margin, or when another formatting context placed it against the floored edge of that float
+    // (see LineLayout::preparePlacedFloats()). Then it goes right before the first such float.
+    if (!mayShareBlockAxisPositionWithEarlierFloat)
         return m_list.append(newFloatItem);
 
-    for (size_t i = m_list.size(); i--;) {
-        auto& floatItem = m_list[i];
-        if (isStartPositioned != floatItem.isStartPositioned())
-            continue;
+    auto isOnSameSideAndSharesBlockAxisPosition = [&](auto& floatItem) {
+        return floatItem.isStartPositioned() == isStartPositioned && floatItem.marginBoxBottom() > newFloatItem.marginBoxTop() && floatItem.marginBoxTop() < newFloatItem.marginBoxBottom();
+    };
+    auto isFurtherInward = [&](auto& floatItem) {
+        return isStartPositioned ? floatItem.marginBoxRight() > newFloatItem.marginBoxRight() : floatItem.marginBoxLeft() < newFloatItem.marginBoxLeft();
+    };
+    // No earlier float starts below the new one (see FloatingContext::positionForFloat()), so the last one that shares a block axis position
+    // with it is the inner-most of those.
+    auto innerMostIndex = m_list.reverseFindIf(isOnSameSideAndSharesBlockAxisPosition);
+    if (innerMostIndex == notFound || !isFurtherInward(m_list[innerMostIndex]))
+        return m_list.append(newFloatItem);
 
-        auto isInlineAxisOrdered = [&] {
-            if (newFloatItem.absoluteRectWithMargin().top() > floatItem.absoluteRectWithMargin().top()) {
-                // There's no more floats on this block axis position.
-                return true;
-            }
-            return (isStartPositioned && newFloatItem.absoluteRectWithMargin().right() >= floatItem.absoluteRectWithMargin().right())
-                || (!isStartPositioned && newFloatItem.absoluteRectWithMargin().left() <= floatItem.absoluteRectWithMargin().left());
-        };
-        if (isInlineAxisOrdered())
-            return m_list.insert(i + 1, newFloatItem);
-    }
-    m_list.insert(0, newFloatItem);
+    m_list.insert(m_list.findIf([&](auto& floatItem) {
+        return isOnSameSideAndSharesBlockAxisPosition(floatItem) && isFurtherInward(floatItem);
+    }), newFloatItem);
 }
 
 bool PlacedFloats::Item::isInFormattingContextOf(const ElementBox& formattingContextRoot) const
 {
-    ASSERT(formattingContextRoot.establishesFormattingContext());
+    // Render tree layout places a block-level float with a FloatingContext rooted at its containing block, which may be a block container in a parent block formatting context.
+    ASSERT(formattingContextRoot.establishesFormattingContext() || formattingContextRoot.isBlockContainer());
     // FIXME: No layout box means the render tree integration codepath put it here, which it only does for intruding floats from outside the inline formatting context.
     // This works as long as the incoming formattingContextRoot is the current IFC.
     if (!m_layoutBox)
         return false;
 
     ASSERT(!is<InitialContainingBlock>(m_layoutBox));
-    for (CheckedRef containingBlock : containingBlockChain(*m_layoutBox)) {
+    for (CheckedRef containingBlock : containingBlockChain(protect(*m_layoutBox))) {
         if (containingBlock.ptr() == &formattingContextRoot)
             return true;
     }
@@ -131,27 +139,45 @@ void PlacedFloats::clear()
 {
     m_list.clear();
     m_positionTypes = { };
+    m_lowestStartPositionOnBlockAxis = { };
+    m_lowestEndPositionOnBlockAxis = { };
+    m_lowestTopPositionOnBlockAxis = { };
 }
 
-std::optional<LayoutUnit> PlacedFloats::highestPositionOnBlockAxis() const
+void PlacedFloats::computeLowestTopPositionOnBlockAxis()
 {
-    auto highestBlockAxisPosition = std::optional<LayoutUnit> { };
+    m_lowestTopPositionOnBlockAxis = { };
     for (auto& floatItem : m_list)
-        highestBlockAxisPosition = !highestBlockAxisPosition ? floatItem.absoluteRectWithMargin().top() : std::min(*highestBlockAxisPosition, floatItem.absoluteRectWithMargin().top());
+        m_lowestTopPositionOnBlockAxis = std::max(m_lowestTopPositionOnBlockAxis.value_or(floatItem.marginBoxTop()), floatItem.marginBoxTop());
+}
+
+void PlacedFloats::computeLowestPositionsOnBlockAxis()
+{
+    m_lowestStartPositionOnBlockAxis = { };
+    m_lowestEndPositionOnBlockAxis = { };
+    for (auto& floatItem : m_list) {
+        auto& lowestPositionOnBlockAxis = floatItem.isStartPositioned() ? m_lowestStartPositionOnBlockAxis : m_lowestEndPositionOnBlockAxis;
+        lowestPositionOnBlockAxis = std::max(lowestPositionOnBlockAxis.value_or(floatItem.marginBoxBottom()), floatItem.marginBoxBottom());
+    }
+}
+
+std::optional<AxisPosition<ParentFormattingContextRoot>> PlacedFloats::highestPositionOnBlockAxis() const
+{
+    auto highestBlockAxisPosition = std::optional<AxisPosition<ParentFormattingContextRoot>> { };
+    for (auto& floatItem : m_list)
+        highestBlockAxisPosition = !highestBlockAxisPosition ? floatItem.marginBoxTop() : std::min(*highestBlockAxisPosition, floatItem.marginBoxTop());
     return highestBlockAxisPosition;
 }
 
-std::optional<LayoutUnit> PlacedFloats::lowestPositionOnBlockAxis(Clear type) const
+std::optional<AxisPosition<ParentFormattingContextRoot>> PlacedFloats::lowestPositionOnBlockAxis(Clear type) const
 {
-    // TODO: Currently this is only called once for each formatting context root with floats per layout.
-    // Cache the value if we end up calling it more frequently (and update it at append/remove).
-    auto lowestBlockAxisPosition = std::optional<LayoutUnit> { };
-    for (auto& floatItem : m_list) {
-        if ((type == Clear::InlineStart && !floatItem.isStartPositioned()) || (type == Clear::InlineEnd && floatItem.isStartPositioned()))
-            continue;
-        lowestBlockAxisPosition = !lowestBlockAxisPosition ? floatItem.absoluteRectWithMargin().bottom() : std::max(*lowestBlockAxisPosition, floatItem.absoluteRectWithMargin().bottom());
-    }
-    return lowestBlockAxisPosition;
+    if (type == Clear::InlineStart)
+        return m_lowestStartPositionOnBlockAxis;
+    if (type == Clear::InlineEnd)
+        return m_lowestEndPositionOnBlockAxis;
+    if (!m_lowestStartPositionOnBlockAxis || !m_lowestEndPositionOnBlockAxis)
+        return m_lowestStartPositionOnBlockAxis ? m_lowestStartPositionOnBlockAxis : m_lowestEndPositionOnBlockAxis;
+    return std::max(*m_lowestStartPositionOnBlockAxis, *m_lowestEndPositionOnBlockAxis);
 }
 
 void PlacedFloats::shrinkToFit()
@@ -159,5 +185,4 @@ void PlacedFloats::shrinkToFit()
     m_list.shrinkToFit();
 }
 
-}
 }

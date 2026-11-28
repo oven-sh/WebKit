@@ -34,7 +34,7 @@
 namespace JSC {
 
 class ProfileTreeNode {
-    typedef UncheckedKeyHashMap<String, ProfileTreeNode> Map;
+    typedef HashMap<String, ProfileTreeNode> Map;
     typedef Map::KeyValuePairType MapEntry;
 
 public:
@@ -101,7 +101,7 @@ private:
                 dataLogF("    ");
             SAFE_DATALOGF("% 8lld: %s (%lld stack top)\n",
                 static_cast<long long>(entry->value.count()),
-                entry->key.utf8(),
+                makeUTF8CString(entry->key),
                 static_cast<long long>(entry->value.count() - entry->value.childCount()));
 
             // Recursively dump the child nodes.

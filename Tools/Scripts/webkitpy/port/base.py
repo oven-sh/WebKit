@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Copyright (C) 2010 Google Inc. All rights reserved.
-# Copyright (C) 2013-2019 Apple Inc. All rights reserved.
+# Copyright (C) 2013-2026 Apple Inc. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are
@@ -325,11 +325,11 @@ class Port(object):
                 return group
         return None
 
-    def filter_api_tests_by_allowlist(self, tests):
-        """Split API tests into allowlisted (parallel) and non-allowlisted (system) groups.
+    def filter_api_tests_by_blocklist(self, tests):
+        """Split API tests into parallel and blocklisted (system shard) groups.
 
-        Default implementation: all tests are allowlisted (no system shard).
-        Override in platform-specific ports to implement allowlist filtering.
+        Default implementation: no test is blocklisted (no system shard).
+        Override in platform-specific ports to implement blocklist filtering.
         """
         return tests, []
 
@@ -1166,6 +1166,12 @@ class Port(object):
 
     def allowed_hosts(self):
         return self.get_option("allowed_host", [])
+
+    def requested_disabled_keys(self):
+        return {key for value in self.get_option('disabled_keys', None) or [] for key in (item.strip(' \t\n\r\f') for item in value.split(',')) if key}
+
+    def disabled_keys(self):
+        return sorted(key for key in self.requested_disabled_keys() if re.fullmatch(r'''[^ \t\n\r\f"']+''', key))
 
     def internal_feature(self):
         return self.get_option("internal_feature", [])

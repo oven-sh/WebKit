@@ -225,6 +225,12 @@ enum AutoplayPolicy {
 
 [
     ExportMacro=WEBCORE_TESTSUPPORT_EXPORT,
+] dictionary MockPageOverlayOptions {
+    boolean associateWithLocalRoot = false;
+};
+
+[
+    ExportMacro=WEBCORE_TESTSUPPORT_EXPORT,
     Conditional=MODEL_PROCESS,
     ImplementedAs=ModelSceneGraphAsTextOptions,
 ] dictionary ModelSceneGraphAsTextOptions {
@@ -601,9 +607,11 @@ enum LayerType {
     DOMString computedAppleColorFilter(Element element);
     [Conditional=AX_CUSTOM_COLOR_MODE] undefined setAXCustomColorModeElementQuirksForTesting(DOMString forceFilterSelector, DOMString preserveAuthoredColorsSelector);
     DOMString usedBackgroundColor(Element element);
+    undefined setOverrideBackgroundColor(Element element, DOMString? color);
 
     Node ensureUserAgentShadowRoot(Element host);
     Node? shadowRoot(Element host);
+    undefined scheduleDeferredMediaControlsBuild(Element host);
 
     DOMString shadowRootType(Node root);
     DOMString userAgentPart(Element element);
@@ -825,9 +833,9 @@ enum LayerType {
     undefined setImageFrameDecodingDuration(HTMLImageElement element, unrestricted float duration);
     undefined resetImageAnimation(HTMLImageElement element);
     boolean isImageAnimating(HTMLImageElement element);
-    [Conditional=ACCESSIBILITY_ANIMATION_CONTROL] undefined setImageAnimationEnabled(boolean enabled);
-    [Conditional=ACCESSIBILITY_ANIMATION_CONTROL] undefined resumeImageAnimation(HTMLImageElement element);
-    [Conditional=ACCESSIBILITY_ANIMATION_CONTROL] undefined pauseImageAnimation(HTMLImageElement element);
+    undefined setImageAnimationEnabled(boolean enabled);
+    undefined resumeImageAnimation(HTMLImageElement element);
+    undefined pauseImageAnimation(HTMLImageElement element);
     [Conditional=ACCESSIBILITY_VIDEO_AUTOPLAY_CONTROL] undefined setVideoAutoplayPreviewsEnabled(boolean enabled);
     unsigned long imagePendingDecodePromisesCountForTesting(HTMLImageElement element);
     undefined setClearDecoderAfterAsyncFrameRequestForTesting(HTMLImageElement element, boolean enabled);
@@ -857,6 +865,7 @@ enum LayerType {
     boolean testProcessIncomingSyncMessagesWhenWaitingForSyncReply();
 
     undefined setResourceCachingDisabledByWebInspector(boolean disabled);
+    boolean isNetworkInterceptionConfiguredForTesting(DOMString url);
     undefined lowerAllFrameMemoryMonitorLimits();
 
     [Conditional=DAMAGE_TRACKING] sequence<FrameDamage> getFrameDamageHistory();
@@ -975,6 +984,7 @@ enum LayerType {
 
     undefined setUseFixedLayout(boolean useFixedLayout);
     undefined setFixedLayoutSize(long width, long height);
+    undefined setVisualUpdatesAllowed(boolean allowed);
     undefined setPrinting(long width, long height);
 
     undefined setViewExposedRect(unrestricted float x, unrestricted float y, unrestricted float width, unrestricted float height);
@@ -983,6 +993,9 @@ enum LayerType {
     undefined setFooterHeight(unrestricted float height);
 
     float obscuredContentInsetTop();
+
+    // Covers the bottom of the view with a fake software keyboard; 0 removes it.
+    undefined setSoftwareKeyboardHeight(unrestricted float height);
 
     undefined setFullscreenInsets(FullscreenInsets insets);
     undefined setFullscreenAutoHideDuration(double duration);
@@ -1014,6 +1027,7 @@ enum LayerType {
     undefined setCanvasNoiseInjectionSalt(HTMLCanvasElement element, unsigned long long salt);
     boolean doesCanvasHavePendingCanvasNoiseInjection(HTMLCanvasElement element);
 
+    long timerNestingLevel();
     // Query if a timer is currently throttled, to debug timer throttling.
     boolean isTimerThrottled(long timerHandle);
     boolean isTimerAligned(long timerHandle);
@@ -1119,7 +1133,9 @@ enum LayerType {
 
     [Conditional=VIDEO] double effectiveDynamicRangeLimitValue(HTMLMediaElement media);
     double getContextEffectiveDynamicRangeLimitValue(HTMLCanvasElement canvas);
+    boolean isCanvasContextHDR(HTMLCanvasElement canvas);
     undefined setPageShouldSuppressHDR(boolean shouldSuppressHDR);
+    boolean pageIsTakingSnapshotsForApplicationSuspension();
 
     [Conditional=VIDEO&FULLSCREEN_API] boolean isChildOfElementFullscreen(HTMLMediaElement media);
 
@@ -1234,7 +1250,7 @@ enum LayerType {
     [Conditional=VIDEO] double effectiveRate(HTMLMediaElement element);
     [Conditional=VIDEO] undefined forceStereoDecoding(HTMLMediaElement element);
 
-    MockPageOverlay installMockPageOverlay(PageOverlayType type);
+    MockPageOverlay installMockPageOverlay(PageOverlayType type, optional MockPageOverlayOptions options = {});
     DOMString pageOverlayLayerTreeAsText(optional unsigned short flags = 0);
 
     undefined setPageMuted(DOMString mutedState);
@@ -1389,6 +1405,7 @@ enum LayerType {
     unsigned long long pageIdentifier(Document document);
 
     boolean isAnyWorkletGlobalScopeAlive();
+    [Conditional=WEB_AUDIO] boolean hasAudioWorkletGlobalScope(Document document);
 
     readonly attribute long processIdentifier;
     DOMString serviceWorkerClientInternalIdentifier(Document document);
@@ -1463,6 +1480,7 @@ enum LayerType {
     [Conditional=VIDEO] Promise<boolean> elementIsRemoteCommandTargetInGPUProcess(HTMLMediaElement element);
     [Conditional=VIDEO] Promise<DOMRect> hostedVideoLayerBoundsInGPUProcess(HTMLMediaElement element);
     [Conditional=VIDEO] attribute double nowPlayingUpdateInterval;
+    [Conditional=VIDEO] readonly attribute unsigned long mediaSessionStatusUpdateCount;
 
     [Conditional=VIDEO] HTMLMediaElement? bestMediaElementForRemoteControls(PlaybackControlsPurpose purpose);
     [Conditional=VIDEO] MediaSessionState mediaSessionState(HTMLMediaElement element);
@@ -1543,6 +1561,7 @@ enum LayerType {
 
     DOMString systemColorForCSSValue(DOMString cssValue, boolean useDarkModeAppearance, boolean useElevatedUserInterfaceLevel);
     DOMString focusRingColor();
+    DOMString autocorrectionReplacementMarkerColor(Node textNode);
 
     readonly attribute double switchAnimationVisuallyOnDuration;
 
@@ -1569,6 +1588,7 @@ enum LayerType {
 
     [Conditional=APP_HIGHLIGHTS] readonly attribute sequence<DOMString> appHighlightContextMenuItemTitles;
     [Conditional=APP_HIGHLIGHTS] unsigned long numberOfAppHighlights();
+    [Conditional=APP_HIGHLIGHTS] boolean appHighlightsVisible();
 
     readonly attribute sequence<AbstractRange> textExtractionHighlightRanges;
 
@@ -1670,8 +1690,10 @@ enum LayerType {
     [Conditional=MODEL_PROCESS] Promise<DOMString> modelSceneGraphAsText(Element element, optional ModelSceneGraphAsTextOptions options = {});
 
     [Conditional=SPATIAL_PORTAL] unsigned long numberOfHostedModelsInSpatialPortal(Element element);
+    [Conditional=SPATIAL_PORTAL] unsigned long numberOfHostedPromotedChildrenInSpatialPortal(Element element);
     [Conditional=SPATIAL_PORTAL] boolean establishesSpatialPortal(Element element);
     [Conditional=SPATIAL_PORTAL] Element? spatialPortalAnchorForModel(HTMLModelElement model);
+    [Conditional=SPATIAL_PORTAL] Element? spatialPortalAnchorForPromotedChild(Element element);
     [Conditional=SPATIAL_PORTAL] sequence<unrestricted double>? spatialPortalResolvedTransform(Element element);
     [Conditional=SPATIAL_PORTAL] DOMString effectiveEnvironmentMap(Element element);
 

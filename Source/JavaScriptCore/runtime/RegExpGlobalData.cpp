@@ -55,6 +55,9 @@ NEVER_INLINE JSValue RegExpGlobalData::getBackref(JSGlobalObject* globalObject, 
 {
     JSC_REMOVABLE_DEFINITION(RegExp, &RegExpGlobalData::getBackref);
     willReadLegacyStatics(globalObject->vm());
+    if (!i)
+        return m_cachedResult.lastMatch(globalObject, globalObject);
+
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 

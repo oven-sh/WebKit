@@ -291,6 +291,12 @@ UIProcess/Launcher/libwpe/ProcessProviderLibWPE.cpp
 
 UIProcess/Notifications/glib/NotificationService.cpp
 
+UIProcess/WebAuthentication/AuthenticatorManager.cpp
+
+UIProcess/WebAuthentication/fido/CtapAuthenticator.cpp
+
+UIProcess/WebAuthentication/glib/WebAuthenticatorCoordinatorProxyGLib.cpp
+
 UIProcess/WebsiteData/glib/WebsiteDataStoreGLib.cpp
 UIProcess/WebsiteData/soup/WebsiteDataStoreSoup.cpp
 
@@ -310,6 +316,7 @@ UIProcess/wpe/WebPasteboardProxyWPE.cpp
 UIProcess/wpe/WebPreferencesWPE.cpp
 UIProcess/wpe/WebContextMenuProxyWPE.cpp
 
+UIProcess/XR/openxr/OpenXRAnchorManager.cpp
 UIProcess/XR/openxr/OpenXRExtensions.cpp
 UIProcess/XR/openxr/OpenXRGraphicsBindingOpenGLES.cpp
 UIProcess/XR/openxr/OpenXRHitTestManager.cpp

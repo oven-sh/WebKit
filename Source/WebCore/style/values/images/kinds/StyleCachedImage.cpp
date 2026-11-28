@@ -51,8 +51,7 @@
 #include "StyleLinkParameters.h"
 #include <wtf/TZoneMallocInlines.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(CachedImage);
 
@@ -282,6 +281,7 @@ WebCore::ImageOrientation CachedImage::usedOrientation(WebCore::ImageOrientation
 ImageRenditionOptions CachedImage::renditionOptionsForRenderer(const RenderElement& renderer, ImageRenditionOptions rendition) const
 {
     rendition = ImageRenditionOptions::forDocument(protect(renderer.document()), WTF::move(rendition));
+    rendition.deviceScaleFactor = renderer.document().deviceScaleFactor();
 
     auto fragmentURL = m_url.resolved;
     auto fragmentDirective = fragmentURL.consumeFragmentDirective();
@@ -531,6 +531,14 @@ std::optional<IntPoint> CachedImage::hotSpot() const
     return image ? image->hotSpot() : std::nullopt;
 }
 
+ColorSpace CachedImage::colorSpace(const ColorSpace& defaultColorSpace) const
+{
+    if (m_isPending)
+        return defaultColorSpace;
+    RefPtr image = resolvedImage();
+    return image ? image->colorSpace(defaultColorSpace) : defaultColorSpace;
+}
+
 bool CachedImage::drawsSVGImage() const
 {
     RefPtr image = m_cachedImage ? protect(m_cachedImage)->image() : nullptr;
@@ -607,5 +615,4 @@ bool CachedImage::usesDataProtocol() const
     return m_url.resolved.protocolIsData();
 }
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

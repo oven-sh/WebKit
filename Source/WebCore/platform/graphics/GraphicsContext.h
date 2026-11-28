@@ -26,6 +26,7 @@
 
 #pragma once
 
+#include <WebCore/AffineTransform.h>
 #include <WebCore/ColorSpace.h>
 #include <WebCore/ControlPart.h>
 #include <WebCore/DashArray.h>
@@ -50,6 +51,7 @@ class AffineTransform;
 class Filter;
 class FilterResults;
 class FloatRoundedRect;
+class FreeformGradient;
 class Gradient;
 class ImageBuffer;
 class MeshGradient;
@@ -97,26 +99,26 @@ public:
 
     const SourceBrush& fillBrush() const LIFETIME_BOUND { return m_state.fillBrush(); }
     const Color& fillColor() const { return fillBrush().color(); }
-    Gradient* fillGradient() const { return fillBrush().gradient(); }
+    const Gradient* fillGradient() const { return fillBrush().gradient(); }
     const AffineTransform& fillGradientSpaceTransform() const { return fillBrush().gradientSpaceTransform(); }
-    Pattern* fillPattern() const { return fillBrush().pattern(); }
+    const Pattern* fillPattern() const { return fillBrush().pattern(); }
     void setFillBrush(const SourceBrush& brush) { m_state.setFillBrush(brush); didUpdateState(m_state); }
     void setFillColor(const Color& color) { m_state.setFillColor(color); didUpdateState(m_state); }
-    void setFillGradient(Ref<Gradient>&& gradient, const AffineTransform& spaceTransform = { }) { m_state.setFillGradient(WTF::move(gradient), spaceTransform); didUpdateState(m_state); }
-    void setFillPattern(Ref<Pattern>&& pattern) { m_state.setFillPattern(WTF::move(pattern)); didUpdateState(m_state); }
+    void setFillGradient(Ref<const Gradient>&& gradient, const AffineTransform& spaceTransform = { }) { m_state.setFillGradient(WTF::move(gradient), spaceTransform); didUpdateState(m_state); }
+    void setFillPattern(Ref<const Pattern>&& pattern) { m_state.setFillPattern(WTF::move(pattern)); didUpdateState(m_state); }
 
     WindRule fillRule() const { return m_state.fillRule(); }
     void setFillRule(WindRule fillRule) { m_state.setFillRule(fillRule); didUpdateState(m_state); }
 
     const SourceBrush& strokeBrush() const LIFETIME_BOUND { return m_state.strokeBrush(); }
     const Color& strokeColor() const { return strokeBrush().color(); }
-    Gradient* strokeGradient() const { return strokeBrush().gradient(); }
+    const Gradient* strokeGradient() const { return strokeBrush().gradient(); }
     const AffineTransform& strokeGradientSpaceTransform() const { return strokeBrush().gradientSpaceTransform(); }
-    Pattern* strokePattern() const { return strokeBrush().pattern(); }
+    const Pattern* strokePattern() const { return strokeBrush().pattern(); }
     void setStrokeBrush(const SourceBrush& brush) { m_state.setStrokeBrush(brush); didUpdateState(m_state); }
     void setStrokeColor(const Color& color) { m_state.setStrokeColor(color); didUpdateState(m_state); }
-    void setStrokeGradient(Ref<Gradient>&& gradient, const AffineTransform& spaceTransform = { }) { m_state.setStrokeGradient(WTF::move(gradient), spaceTransform); didUpdateState(m_state); }
-    void setStrokePattern(Ref<Pattern>&& pattern) { m_state.setStrokePattern(WTF::move(pattern)); didUpdateState(m_state); }
+    void setStrokeGradient(Ref<const Gradient>&& gradient, const AffineTransform& spaceTransform = { }) { m_state.setStrokeGradient(WTF::move(gradient), spaceTransform); didUpdateState(m_state); }
+    void setStrokePattern(Ref<const Pattern>&& pattern) { m_state.setStrokePattern(WTF::move(pattern)); didUpdateState(m_state); }
 
     float strokeThickness() const { return m_state.strokeThickness(); }
     void setStrokeThickness(float thickness) { m_state.setStrokeThickness(thickness); didUpdateState(m_state); }
@@ -167,16 +169,26 @@ public:
     void mergeLastChanges(const GraphicsContextState&);
     void mergeAllChanges(const GraphicsContextState&);
 
+#if USE(CG) || USE(SKIA)
+    // Compatibility function: when all platforms implement lazy state sync, remove this.
+    void didUpdateState(GraphicsContextState&) { }
+#else
     // Called *after* any change to GraphicsContextState; generally used to propagate changes
     // to the platform context's state.
     virtual void didUpdateState(GraphicsContextState&) = 0;
+#endif
 
     void didInvalidatePlatformState(GraphicsContextState::ChangeFlags properties) { m_state.markChanged(properties); }
 
     void updatePlatformContextState() { didUpdateState(m_state); }
 
     WEBCORE_EXPORT virtual void save(GraphicsContextState::Purpose = GraphicsContextState::Purpose::SaveRestore);
-    WEBCORE_EXPORT virtual void restore(GraphicsContextState::Purpose = GraphicsContextState::Purpose::SaveRestore);
+    // These return false, doing nothing, when the innermost saved state was not saved for the matching purpose.
+    WEBCORE_EXPORT virtual bool restore(GraphicsContextState::Purpose = GraphicsContextState::Purpose::SaveRestore);
+
+    // Saves and restores only the CTM, leaving the rest of the state, such as the clip, as it is.
+    WEBCORE_EXPORT virtual void saveTransform();
+    WEBCORE_EXPORT virtual bool restoreTransform();
 
     void unwindStateStack(unsigned count);
     WEBCORE_EXPORT void unwindStateStack();
@@ -184,10 +196,6 @@ public:
     unsigned stackSize() const { return m_stack.size(); }
 
 #if USE(CG)
-    // FIXME: Should these really be public GraphicsContext methods?
-    virtual void applyStrokePattern() = 0;
-    virtual void applyFillPattern() = 0;
-
     // FIXME: Can we make this a why instead of a what, and then have it exist cross-platform?
     virtual bool isCALayerContext() const = 0;
 #endif
@@ -223,8 +231,8 @@ public:
     using RequiresClipToRect = WebCore::RequiresClipToRect;
     virtual void fillRect(const FloatRect&, RequiresClipToRect = RequiresClipToRect::Yes) = 0;
     virtual void fillRect(const FloatRect&, const Color&) = 0;
-    virtual void fillRect(const FloatRect&, Gradient&, const AffineTransform&, RequiresClipToRect = RequiresClipToRect::Yes) = 0;
-    WEBCORE_EXPORT virtual void fillRect(const FloatRect&, Gradient&);
+    virtual void fillRect(const FloatRect&, const Gradient&, const AffineTransform&, RequiresClipToRect = RequiresClipToRect::Yes) = 0;
+    WEBCORE_EXPORT virtual void fillRect(const FloatRect&, const Gradient&);
     WEBCORE_EXPORT virtual void fillRect(const FloatRect&, const Color&, CompositeOperator, BlendMode = BlendMode::Normal);
     virtual void fillRoundedRectImpl(const FloatRoundedRect&, const Color&) = 0;
     WEBCORE_EXPORT virtual void fillRoundedRect(const FloatRoundedRect&, const Color&, BlendMode = BlendMode::Normal);
@@ -297,7 +305,7 @@ public:
     virtual void clipPath(const Path&, WindRule = WindRule::EvenOdd) = 0;
     // Clips to the path mapped by pathTransform, leaving the CTM unchanged.
     WEBCORE_EXPORT virtual void clipTransformedPath(const AffineTransform& pathTransform, const Path&, WindRule = WindRule::EvenOdd);
-    WEBCORE_EXPORT virtual void clipToImageBuffer(ImageBuffer&, const FloatRect&) = 0;
+    WEBCORE_EXPORT virtual void clipToNativeImage(const NativeImage&, const FloatRect&) = 0;
     WEBCORE_EXPORT virtual IntRect clipBounds() const;
 
     // Text
@@ -319,6 +327,7 @@ public:
     virtual void drawLinesForText(const FloatPoint& origin, float thickness, std::span<const FloatSegment> lineSegments, bool isPrinting, bool doubleLines, StrokeStyle) = 0;
     virtual void drawDotsForDocumentMarker(const FloatRect&, DocumentMarkerLineStyle) = 0;
 
+    WEBCORE_EXPORT virtual void drawFreeformGradient(FreeformGradient&, const FloatRect& destination);
     WEBCORE_EXPORT virtual void drawMeshGradient(MeshGradient&, const FloatRect& destination);
 
     // Transparency Layers
@@ -412,6 +421,10 @@ protected:
         Color strokeColor;
     };
     RectsAndStrokeColor computeRectsAndStrokeColorForLinesForText(const FloatPoint& origin, float thickness, std::span<const FloatSegment>, bool isPrinting, bool doubleLines, StrokeStyle);
+
+    // Whether the innermost saved state was saved for the purpose. A restore for another purpose is ignored,
+    // since the platform context did not save its state for the innermost saved state.
+    bool canRestore(GraphicsContextState::Purpose purpose) const { return !m_stack.isEmpty() && m_state.purpose() == purpose; }
 
     GraphicsContextState m_state;
 private:

@@ -73,10 +73,10 @@ static Vector<unsigned> serializeActions(const Vector<ContentExtensionRule>& rul
     Vector<uint32_t> actionLocations;
 
     using ActionLocation = uint32_t;
-    using ActionMap = HashMap<ResourceFlags, ActionLocation, DefaultHash<ResourceFlags>, WTF::UnsignedWithZeroKeyHashTraits<ResourceFlags>>;
-    using StringActionMap = HashMap<std::pair<String, ResourceFlags>, ActionLocation, DefaultHash<std::pair<String, ResourceFlags>>, PairHashTraits<HashTraits<String>, WTF::UnsignedWithZeroKeyHashTraits<ResourceFlags>>>;
-    using RedirectActionMap = HashMap<std::pair<RedirectAction, ResourceFlags>, ActionLocation, DefaultHash<std::pair<RedirectAction, ResourceFlags>>, PairHashTraits<HashTraits<RedirectAction>, WTF::UnsignedWithZeroKeyHashTraits<ResourceFlags>>>;
-    using ModifyHeadersActionMap = HashMap<std::pair<ModifyHeadersAction, ResourceFlags>, ActionLocation, DefaultHash<std::pair<ModifyHeadersAction, ResourceFlags>>, PairHashTraits<HashTraits<ModifyHeadersAction>, WTF::UnsignedWithZeroKeyHashTraits<ResourceFlags>>>;
+    using ActionMap = HashMap<ResourceFlags, ActionLocation>;
+    using StringActionMap = HashMap<std::pair<String, ResourceFlags>, ActionLocation>;
+    using RedirectActionMap = HashMap<std::pair<RedirectAction, ResourceFlags>, ActionLocation>;
+    using ModifyHeadersActionMap = HashMap<std::pair<ModifyHeadersAction, ResourceFlags>, ActionLocation>;
     ActionMap blockLoadActionsMap;
     ActionMap blockCookiesActionsMap;
     PendingDisplayNoneActionsMap cssDisplayNoneActionsMap;
@@ -185,7 +185,7 @@ static Vector<unsigned> serializeActions(const Vector<ContentExtensionRule>& rul
     return actionLocations;
 }
 
-using UniversalActionSet = HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
+using UniversalActionSet = HashSet<uint64_t>;
 
 static void addUniversalActionsToDFA(DFA& dfa, UniversalActionSet&& universalActions)
 {
@@ -373,9 +373,7 @@ std::error_code compileRuleList(ContentExtensionCompilationClient& client, Strin
 
 #if CONTENT_EXTENSIONS_PERFORMANCE_REPORTING
     MonotonicTime patternPartitioningEnd = MonotonicTime::now();
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-    dataLogF("    Time spent partitioning the rules into groups: %f\n", (patternPartitioningEnd - patternPartitioningStart).seconds());
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+    dataLogLn("    Time spent partitioning the rules into groups: "_s, (patternPartitioningEnd - patternPartitioningStart).seconds());
 #endif
 
     LOG_LARGE_STRUCTURES(filtersWithoutConditions, filtersWithoutConditions.memoryUsed());
@@ -405,9 +403,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #if CONTENT_EXTENSIONS_PERFORMANCE_REPORTING
     MonotonicTime totalNFAToByteCodeBuildTimeEnd = MonotonicTime::now();
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-    dataLogF("    Time spent building and compiling the DFAs: %f\n", (totalNFAToByteCodeBuildTimeEnd - totalNFAToByteCodeBuildTimeStart).seconds());
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+    dataLogLn("    Time spent building and compiling the DFAs: "_s, (totalNFAToByteCodeBuildTimeEnd - totalNFAToByteCodeBuildTimeStart).seconds());
 #endif
 
     client.finalize();

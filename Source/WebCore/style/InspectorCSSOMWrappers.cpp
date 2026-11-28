@@ -50,8 +50,7 @@
 #include "StyleSheetContents.h"
 #include "UserAgentStyle.h"
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 void InspectorCSSOMWrappers::collectFromStyleSheetIfNeeded(CSSStyleSheet& styleSheet)
 {
@@ -140,26 +139,28 @@ void InspectorCSSOMWrappers::maybeCollectFromStyleSheets(const Vector<Ref<CSSSty
 void InspectorCSSOMWrappers::collectDocumentWrappers(ExtensionStyleSheets& extensionStyleSheets)
 {
     if (m_styleRuleToCSSOMWrapperMap.isEmpty() || m_keyframesRuleToCSSOMWrapperMap.isEmpty()) {
-        collectFromStyleSheetContents(protect(UserAgentStyle::defaultStyleSheet));
-        collectFromStyleSheetContents(protect(UserAgentStyle::quirksStyleSheet));
-        collectFromStyleSheetContents(protect(UserAgentStyle::svgStyleSheet));
-        collectFromStyleSheetContents(protect(UserAgentStyle::mathMLStyleSheet));
-        collectFromStyleSheetContents(protect(UserAgentStyle::mathMLCoreExtrasStyleSheet));
-        collectFromStyleSheetContents(protect(UserAgentStyle::mathMLCoreMathvariantStyleSheet));
-        collectFromStyleSheetContents(protect(UserAgentStyle::mathMLFontSizeMathStyleSheet));
-        collectFromStyleSheetContents(protect(UserAgentStyle::mathMLLegacyFontSizeMathStyleSheet));
-        collectFromStyleSheetContents(protect(UserAgentStyle::horizontalFormControlsStyleSheet));
-        collectFromStyleSheetContents(protect(UserAgentStyle::viewTransitionsStyleSheet));
-        collectFromStyleSheetContents(protect(UserAgentStyle::htmlSwitchControlStyleSheet));
+        auto& userAgentSheets = UserAgentStyle::sheets();
+        collectFromStyleSheetContents(userAgentSheets.defaultStyleSheet.get());
+        collectFromStyleSheetContents(userAgentSheets.quirksStyleSheet.get());
+        collectFromStyleSheetContents(userAgentSheets.svgStyleSheet.get());
+        collectFromStyleSheetContents(userAgentSheets.mathMLStyleSheet.get());
+        collectFromStyleSheetContents(userAgentSheets.mathMLCoreExtrasStyleSheet.get());
+        collectFromStyleSheetContents(userAgentSheets.mathMLCoreMathvariantStyleSheet.get());
+        collectFromStyleSheetContents(userAgentSheets.mathMLFontSizeMathStyleSheet.get());
+        collectFromStyleSheetContents(userAgentSheets.mathMLLegacyFontSizeMathStyleSheet.get());
+        collectFromStyleSheetContents(userAgentSheets.horizontalFormControlsStyleSheet.get());
+        collectFromStyleSheetContents(userAgentSheets.viewTransitionsStyleSheet.get());
+        collectFromStyleSheetContents(userAgentSheets.htmlSwitchControlStyleSheet.get());
 #if ENABLE(FULLSCREEN_API)
-        collectFromStyleSheetContents(protect(UserAgentStyle::fullscreenStyleSheet));
+        collectFromStyleSheetContents(userAgentSheets.fullscreenStyleSheet.get());
 #endif
-        collectFromStyleSheetContents(protect(UserAgentStyle::mediaQueryStyleSheet));
+        collectFromStyleSheetContents(userAgentSheets.mediaQueryStyleSheet.get());
 
         collect<CSSStyleSheet>(protect(extensionStyleSheets.pageUserSheet()));
         collectFromStyleSheets(extensionStyleSheets.injectedUserStyleSheets());
         collectFromStyleSheets(extensionStyleSheets.documentUserStyleSheets());
         collectFromStyleSheets(extensionStyleSheets.injectedAuthorStyleSheets());
+        collectFromStyleSheets(extensionStyleSheets.quirkStyleSheets());
         collectFromStyleSheets(extensionStyleSheets.authorStyleSheetsForTesting());
     }
 }
@@ -184,5 +185,4 @@ CSSKeyframesRule* InspectorCSSOMWrappers::getWrapperForKeyframesRuleInSheets(con
     return m_keyframesRuleToCSSOMWrapperMap.get(rule);
 }
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

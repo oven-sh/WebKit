@@ -33,6 +33,7 @@
 #include <WebCore/HTTPHeaderMap.h>
 #include <WebCore/InspectorResourceType.h>
 #include <WebCore/InspectorResourceUtilities.h>
+#include <WebCore/NetworkInterception.h>
 #include <WebCore/PageIdentifier.h>
 #include <WebCore/ProcessIdentifier.h>
 #include <WebCore/ResourceLoaderIdentifier.h>
@@ -40,12 +41,14 @@
 #include <WebCore/ResourceResponse.h>
 #include <optional>
 #include <wtf/CheckedPtr.h>
+#include <wtf/CompletionHandler.h>
 #include <wtf/Forward.h>
 #include <wtf/HashMap.h>
 #include <wtf/JSONValues.h>
 #include <wtf/MonotonicTime.h>
 #include <wtf/RefCounted.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/text/StringHash.h>
 
 namespace WebCore {
 class NetworkLoadMetrics;
@@ -91,10 +94,10 @@ public:
     CommandResult<void> setClearResourceDataOnNavigate(bool) final;
     void loadResource(const Protocol::Network::FrameId&, const String& url, Ref<LoadResourceCallback>&&) final;
     void getSerializedCertificate(const Protocol::Network::RequestId&, Ref<GetSerializedCertificateCallback>&&) final;
-    CommandResult<Ref<Protocol::Runtime::RemoteObject>> resolveWebSocket(const Protocol::Network::RequestId&, const String& objectGroup) final;
-    CommandResult<void> setInterceptionEnabled(bool) final;
-    CommandResult<void> addInterception(const String& url, Protocol::Network::NetworkStage, std::optional<bool>&& caseSensitive, std::optional<bool>&& isRegex) final;
-    CommandResult<void> removeInterception(const String& url, Protocol::Network::NetworkStage, std::optional<bool>&& caseSensitive, std::optional<bool>&& isRegex) final;
+    void resolveWebSocket(const Protocol::Network::RequestId&, const String& objectGroup, Ref<ResolveWebSocketCallback>&&) final;
+    void setInterceptionEnabled(bool, Ref<SetInterceptionEnabledCallback>&&) final;
+    void addInterception(const String& url, Protocol::Network::NetworkStage, std::optional<bool>&& caseSensitive, std::optional<bool>&& isRegex, Ref<AddInterceptionCallback>&&) final;
+    void removeInterception(const String& url, Protocol::Network::NetworkStage, std::optional<bool>&& caseSensitive, std::optional<bool>&& isRegex, Ref<RemoveInterceptionCallback>&&) final;
     CommandResult<void> interceptContinue(const Protocol::Network::RequestId&, Protocol::Network::NetworkStage) final;
     CommandResult<void> interceptWithRequest(const Protocol::Network::RequestId&, const String& url, const String& method, RefPtr<JSON::Object>&& headers, const String& postData) final;
     CommandResult<void> interceptWithResponse(const Protocol::Network::RequestId&, const String& content, bool base64Encoded, const String& mimeType, std::optional<int>&& status, const String& statusText, RefPtr<JSON::Object>&& headers) final;
@@ -113,8 +116,22 @@ private:
     void responseReceived(ResourceID, FrameID, const String& loaderId, const WebCore::ResourceResponse&, ResourceType, double timestamp, std::optional<MonotonicTime> resourceLoadStartTime);
     void dataReceived(ResourceID, int dataLength, int encodedDataLength, double timestamp);
     void loadingFinished(ResourceID, double timestamp, const String& sourceMapURL, WebCore::NetworkLoadMetrics&&);
-    void loadingFailed(ResourceID, double timestamp, const String& errorText, bool canceled);
+    void loadingFailed(IPC::Connection&, ResourceID, double timestamp, const String& errorText, bool canceled);
     void requestServedFromMemoryCache(ResourceID, FrameID, const String& loaderId, const String& documentURL, const URL&, const WebCore::ResourceResponse&, ResourceType, const String& sourceMapURL, uint64_t bodySize, double timestamp, InitiatorData&&);
+    void requestIntercepted(IPC::Connection&, ResourceID, const WebCore::ResourceRequest&);
+    void responseIntercepted(IPC::Connection&, ResourceID, const WebCore::ResourceResponse&);
+
+    void updateInterceptPatterns(CompletionHandler<void()>&& = [] { });
+    CommandResult<void> resolveInterception(const Protocol::Network::RequestId&, NetworkInterceptionPhase, NetworkInterceptionResolution&&);
+    void continuePendingInterceptions();
+
+    void webSocketCreated(IPC::Connection&, WebCore::ProcessIdentifier, uint64_t channelID, FrameID, const String& loaderId, const String& requestURL);
+    void webSocketWillSendHandshakeRequest(IPC::Connection&, WebCore::ProcessIdentifier, uint64_t channelID, double timestamp, double walltime, const WebCore::HTTPHeaderMap&);
+    void webSocketHandshakeResponseReceived(IPC::Connection&, WebCore::ProcessIdentifier, uint64_t channelID, double timestamp, int statusCode, const String& statusText, const WebCore::HTTPHeaderMap&);
+    void webSocketFrameReceived(IPC::Connection&, WebCore::ProcessIdentifier, uint64_t channelID, double timestamp, int opcode, bool mask, const String& payloadData, uint64_t payloadLength);
+    void webSocketFrameSent(IPC::Connection&, WebCore::ProcessIdentifier, uint64_t channelID, double timestamp, int opcode, bool mask, const String& payloadData, uint64_t payloadLength);
+    void webSocketFrameError(IPC::Connection&, WebCore::ProcessIdentifier, uint64_t channelID, double timestamp, const String& errorMessage);
+    void webSocketClosed(IPC::Connection&, WebCore::ProcessIdentifier, uint64_t channelID, double timestamp);
 
     void removeAllRegisteredReceivers();
 
@@ -127,6 +144,15 @@ private:
 
     WebCore::HTTPHeaderMap m_extraRequestHeaders;
     bool m_resourceCachingDisabled { false };
+
+    // Web Inspector's interception state. The page's interception authority holds the patterns
+    // only while interception is enabled (WebPageProxy::setNetworkInterceptPatterns).
+    bool m_interceptionEnabled { false };
+    Vector<InterceptPattern> m_interceptPatterns;
+    // Loads paused for Web Inspector, by protocol request id, each waiting in the process that
+    // started it.
+    HashMap<String, ResourceID> m_pendingInterceptRequests;
+    HashMap<String, ResourceID> m_pendingInterceptResponses;
 
     // Pin each instrumented WebProcessProxy alive while we hold an IPC message
     // receiver registration on it. Without this, the process can be destructed

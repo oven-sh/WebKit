@@ -34,12 +34,12 @@
 #include "SQLiteIDBTransaction.h"
 #include "SQLiteStatement.h"
 #include <sqlite3.h>
+#include <wtf/Borrow.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/TextStream.h>
 
-namespace WebCore {
-namespace IDBServer {
+namespace WebCore::IDBServer {
 
 static const size_t prefetchLimit = 256;
 static const size_t prefetchSizeLimit = 1 * MB;
@@ -110,7 +110,7 @@ SQLiteIDBTransaction* SQLiteIDBCursor::transaction() const
 
 void SQLiteIDBCursor::currentData(IDBGetResult& result, const std::optional<IDBKeyPath>& keyPath, ShouldIncludePrefetchedRecords shouldIncludePrefetchedRecords)
 {
-    ASSERT(!m_fetchedRecords.isEmpty());
+    RELEASE_ASSERT(!m_fetchedRecords.isEmpty());
 
     auto& currentRecord = m_fetchedRecords.first();
     if (currentRecord.completed) {
@@ -213,7 +213,7 @@ void SQLiteIDBCursor::objectStoreRecordsChanged()
     if (m_statementNeedsReset)
         return;
 
-    ASSERT(!m_fetchedRecords.isEmpty());
+    RELEASE_ASSERT(!m_fetchedRecords.isEmpty());
 
     m_currentKeyForUniqueness = m_fetchedRecords.first().record.key;
     if (m_indexID)
@@ -417,7 +417,7 @@ bool SQLiteIDBCursor::advance(uint64_t count)
         if (!fetch())
             return false;
 
-        ASSERT(!m_fetchedRecords.isEmpty());
+        RELEASE_ASSERT(!m_fetchedRecords.isEmpty());
         ASSERT(!m_fetchedRecords.first().errored);
         if (m_fetchedRecords.first().completed)
             break;
@@ -481,7 +481,7 @@ SQLiteIDBCursor::FetchResult SQLiteIDBCursor::internalFetchNextRecord(SQLiteCurs
 {
     ASSERT(m_transaction->sqliteDatabase());
     ASSERT(m_statement);
-    ASSERT(!m_fetchedRecords.isEmpty());
+    ASSERT_WITH_SECURITY_IMPLICATION(!m_fetchedRecords.isEmpty());
     ASSERT(!m_fetchedRecords.last().isTerminalRecord());
 
     record.record.value = { };
@@ -549,7 +549,7 @@ SQLiteIDBCursor::FetchResult SQLiteIDBCursor::internalFetchNextRecord(SQLiteCurs
             record.record.value = WTF::move(*valueResult);
         }
     } else {
-        if (!deserializeIDBKeyData(keyData.span(), record.record.primaryKey)) {
+        if (!deserializeIDBKeyData(borrow(keyData)->span(), record.record.primaryKey)) {
             LOG_ERROR("Unable to deserialize value data from database while advancing index cursor");
             markAsErrored(record);
             return FetchResult::Failure;
@@ -562,7 +562,7 @@ SQLiteIDBCursor::FetchResult SQLiteIDBCursor::internalFetchNextRecord(SQLiteCurs
 
         CheckedPtr cachedObjectStoreStatement = m_cachedObjectStoreStatement.get();
         if (!cachedObjectStoreStatement
-            || cachedObjectStoreStatement->bindBlob(1, keyData) != SQLITE_OK
+            || cachedObjectStoreStatement->bindBlob(1, borrow(keyData)->span()) != SQLITE_OK
             || cachedObjectStoreStatement->bindInt64(2, m_objectStoreID.toUInt64()) != SQLITE_OK) {
             LOG_ERROR("Could not create index cursor statement into object store records (%i) '%s'", database->lastError(), database->lastErrorMsg());
             markAsErrored(record);
@@ -608,7 +608,7 @@ bool SQLiteIDBCursor::iterate(const IDBKeyData& targetKey, const IDBKeyData& tar
     ASSERT(m_statement);
 
     bool result = advance(1);
-    ASSERT(!m_fetchedRecords.isEmpty());
+    RELEASE_ASSERT(!m_fetchedRecords.isEmpty());
 
     // Iterating with no key is equivalent to advancing 1 step.
     if (targetKey.isNull() || !result)
@@ -649,37 +649,37 @@ bool SQLiteIDBCursor::iterate(const IDBKeyData& targetKey, const IDBKeyData& tar
 
 const IDBKeyData& SQLiteIDBCursor::currentKey() const
 {
-    ASSERT(!m_fetchedRecords.isEmpty());
+    RELEASE_ASSERT(!m_fetchedRecords.isEmpty());
     return m_fetchedRecords.first().record.key;
 }
 
 const IDBKeyData& SQLiteIDBCursor::currentPrimaryKey() const
 {
-    ASSERT(!m_fetchedRecords.isEmpty());
+    RELEASE_ASSERT(!m_fetchedRecords.isEmpty());
     return m_fetchedRecords.first().record.primaryKey;
 }
 
 const IDBValue& SQLiteIDBCursor::currentValue() const
 {
-    ASSERT(!m_fetchedRecords.isEmpty());
+    RELEASE_ASSERT(!m_fetchedRecords.isEmpty());
     return m_fetchedRecords.first().record.value;
 }
 
 bool SQLiteIDBCursor::didComplete() const
 {
-    ASSERT(!m_fetchedRecords.isEmpty());
+    RELEASE_ASSERT(!m_fetchedRecords.isEmpty());
     return m_fetchedRecords.first().completed;
 }
 
 bool SQLiteIDBCursor::didError() const
 {
-    ASSERT(!m_fetchedRecords.isEmpty());
+    RELEASE_ASSERT(!m_fetchedRecords.isEmpty());
     return m_fetchedRecords.first().errored;
 }
 
 int64_t SQLiteIDBCursor::currentRecordRowID() const
 {
-    ASSERT(!m_fetchedRecords.isEmpty());
+    RELEASE_ASSERT(!m_fetchedRecords.isEmpty());
     return m_fetchedRecords.first().rowID;
 }
 
@@ -688,5 +688,4 @@ uint64_t SQLiteIDBCursor::boundIDValue() const
     return std::holds_alternative<IDBObjectStoreIdentifier>(m_boundID) ? std::get<IDBObjectStoreIdentifier>(m_boundID).toUInt64() : std::get<IDBIndexIdentifier>(m_boundID).toUInt64();
 }
 
-} // namespace IDBServer
-} // namespace WebCore
+} // namespace WebCore::IDBServer

@@ -32,8 +32,7 @@
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/TextStream.h>
 
-namespace WebCore {
-namespace IDBServer {
+namespace WebCore::IDBServer {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(MemoryObjectStoreCursor);
 
@@ -96,7 +95,7 @@ void MemoryObjectStoreCursor::setFirstInRemainingRange(IDBKeyDataSet& set)
         }
     }
 
-    ASSERT(!m_iterator || *m_iterator != set.end());
+    RELEASE_ASSERT(!m_iterator || *m_iterator != set.end());
 }
 
 void MemoryObjectStoreCursor::setForwardIteratorFromRemainingRange(IDBKeyDataSet& set)
@@ -225,7 +224,7 @@ void MemoryObjectStoreCursor::incrementForwardIterator(IDBKeyDataSet& set, const
     if (!m_iterator)
         return;
 
-    ASSERT(*m_iterator != set.end());
+    RELEASE_ASSERT(*m_iterator != set.end());
 
     if (key.isValid()) {
         // If iterating to a key, the count passed in must be zero, as there is no way to iterate by both a count and to a key.
@@ -361,5 +360,4 @@ void MemoryObjectStoreCursor::iterate(const IDBKeyData& key, const IDBKeyData& p
     currentData(outData);
 }
 
-} // namespace IDBServer
-} // namespace WebCore
+} // namespace WebCore::IDBServer

@@ -234,9 +234,10 @@ void RemoteScrollingCoordinatorProxy::adjustMainFrameDelegatedScrollPosition(Scr
         case ScrollRequestType::DeltaUpdate:
         case ScrollRequestType::AnimatedDeltaUpdate:
         case ScrollRequestType::ImplicitDeltaUpdate: {
+            auto interruptScrollAnimation = request.requestType == ScrollRequestType::PositionUpdate || request.requestType == ScrollRequestType::DeltaUpdate ? InterruptScrollAnimation::ProgrammaticAnimationsOnly : InterruptScrollAnimation::No;
             scrollPosition = request.destinationPosition(scrollPosition);
             LOG_WITH_STREAM(Scrolling, stream << "RemoteScrollingCoordinatorProxy::adjustViewScrollPosition requesting scroll to " << scrollPosition << " animated " << isAnimatedUpdate(request.requestType));
-            protect(webPageProxy())->requestScroll(scrollPosition, scrollOrigin(), isAnimatedUpdate(request.requestType) ? ScrollIsAnimated::Yes : ScrollIsAnimated::No, InterruptScrollAnimation::No);
+            protect(webPageProxy())->requestScroll(scrollPosition, scrollOrigin(), isAnimatedUpdate(request.requestType) ? ScrollIsAnimated::Yes : ScrollIsAnimated::No, interruptScrollAnimation);
             break;
         }
         case ScrollRequestType::CancelAnimatedScroll:
@@ -321,9 +322,9 @@ bool RemoteScrollingCoordinatorProxy::isPointInScrollbar(FloatPoint p)
     return m_scrollingTree->isPointInScrollbar(p);
 }
 
-void RemoteScrollingCoordinatorProxy::viewportChangedViaDelegatedScrolling(const FloatPoint& scrollPosition, const FloatRect& layoutViewport, double scale)
+void RemoteScrollingCoordinatorProxy::viewportChangedViaDelegatedScrolling(const FloatPoint& scrollPosition, const FloatRect& layoutViewport, double scale, DeferViewportConstrainedLayerRepositioning deferViewportConstrainedLayerRepositioning)
 {
-    m_scrollingTree->mainFrameViewportChangedViaDelegatedScrolling(scrollPosition, layoutViewport, scale);
+    m_scrollingTree->mainFrameViewportChangedViaDelegatedScrolling(scrollPosition, layoutViewport, scale, deferViewportConstrainedLayerRepositioning);
 }
 
 void RemoteScrollingCoordinatorProxy::applyScrollingTreeLayerPositionsAfterCommit()

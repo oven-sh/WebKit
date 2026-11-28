@@ -37,6 +37,10 @@ test(/(?!(?:(a)|(b))+y)[ab]+?z/, 960, "y bz", 2, ["bz", null, null]);
 test(/(?=((?:ab|c)+))\1x|(?=((?:ba|c)+))\2z/, 1600, "ybaz", 1, ["baz", null, "ba"]);
 test(/^q|(?=((?:ab|c)+))\1x/, 2160, "yabx", 1, ["abx", "ab"]);
 
+// Three alternatives that begin with different characters: the character at the start picks the one to enter, and in the filler
+// that is always the second.
+test(/x(?=((?:ab|c)+))\1!|a(?=((?:ba|c)+))\2!|y(?=((?:ab|c)+))\3!/, 2160, "yab!", 0, ["yab!", null, null, "ab"]);
+
 // 16-bit input.
 test(/(?=((?:ab|c)+))\1x/, 2160, "あabx", 1, ["abx", "ab"]);
 

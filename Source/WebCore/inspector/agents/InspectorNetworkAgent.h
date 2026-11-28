@@ -81,7 +81,7 @@ class InspectorNetworkAgent : public Inspector::NetworkAgentInstrumentation, pub
 public:
     ~InspectorNetworkAgent() override;
 
-    static constexpr ASCIILiteral errorDomain() { return "InspectorNetworkAgent"_s; }
+    static constexpr ASCIILiteral errorDomain() { return errorDomainInspectorNetworkAgent; }
 
     // InspectorAgentBase
     void didCreateFrontendAndBackend() final;
@@ -96,10 +96,10 @@ public:
     Inspector::Protocol::ErrorStringOr<void> setClearResourceDataOnNavigate(bool) final;
     void loadResource(const Inspector::Protocol::Network::FrameId&, const String& url, Ref<LoadResourceCallback>&&) final;
     void getSerializedCertificate(const Inspector::Protocol::Network::RequestId&, Ref<GetSerializedCertificateCallback>&&) final;
-    Inspector::Protocol::ErrorStringOr<Ref<Inspector::Protocol::Runtime::RemoteObject>> resolveWebSocket(const Inspector::Protocol::Network::RequestId&, const String& objectGroup) final;
-    Inspector::Protocol::ErrorStringOr<void> setInterceptionEnabled(bool) final;
-    Inspector::Protocol::ErrorStringOr<void> addInterception(const String& url, Inspector::Protocol::Network::NetworkStage, std::optional<bool>&& caseSensitive, std::optional<bool>&& isRegex) final;
-    Inspector::Protocol::ErrorStringOr<void> removeInterception(const String& url, Inspector::Protocol::Network::NetworkStage, std::optional<bool>&& caseSensitive, std::optional<bool>&& isRegex) final;
+    void resolveWebSocket(const Inspector::Protocol::Network::RequestId&, const String& objectGroup, Ref<ResolveWebSocketCallback>&&) final;
+    void setInterceptionEnabled(bool, Ref<SetInterceptionEnabledCallback>&&) final;
+    void addInterception(const String& url, Inspector::Protocol::Network::NetworkStage, std::optional<bool>&& caseSensitive, std::optional<bool>&& isRegex, Ref<AddInterceptionCallback>&&) final;
+    void removeInterception(const String& url, Inspector::Protocol::Network::NetworkStage, std::optional<bool>&& caseSensitive, std::optional<bool>&& isRegex, Ref<RemoveInterceptionCallback>&&) final;
     Inspector::Protocol::ErrorStringOr<void> interceptContinue(const Inspector::Protocol::Network::RequestId&, Inspector::Protocol::Network::NetworkStage) final;
     Inspector::Protocol::ErrorStringOr<void> interceptWithRequest(const Inspector::Protocol::Network::RequestId&, const String& url, const String& method, RefPtr<JSON::Object>&& headers, const String& postData) final;
     Inspector::Protocol::ErrorStringOr<void> interceptWithResponse(const Inspector::Protocol::Network::RequestId&, const String& content, bool base64Encoded, const String& mimeType, std::optional<int>&& status, const String& statusText, RefPtr<JSON::Object>&& headers) final;
@@ -124,14 +124,14 @@ public:
     NODELETE void didLoadXHRSynchronously();
     void didReceiveScriptResponse(ResourceLoaderIdentifier) override;
     void willDestroyCachedResource(CachedResource&) override;
-    void didCreateWebSocket(WebSocketChannelIdentifier, const URL& requestURL);
-    void willSendWebSocketHandshakeRequest(WebSocketChannelIdentifier, ResourceRequest&);
-    void didSendWebSocketHandshakeRequest(WebSocketChannelIdentifier, const ResourceRequest&);
-    void didReceiveWebSocketHandshakeResponse(WebSocketChannelIdentifier, const ResourceResponse&);
-    void didCloseWebSocket(WebSocketChannelIdentifier);
-    void didReceiveWebSocketFrame(WebSocketChannelIdentifier, const WebSocketFrame&);
-    void didSendWebSocketFrame(WebSocketChannelIdentifier, const WebSocketFrame&);
-    void didReceiveWebSocketFrameError(WebSocketChannelIdentifier, const String&);
+    void didCreateWebSocket(WebSocketChannelIdentifier, const URL& requestURL) override;
+    void willSendWebSocketHandshakeRequest(WebSocketChannelIdentifier, ResourceRequest&) override;
+    void didSendWebSocketHandshakeRequest(WebSocketChannelIdentifier, const ResourceRequest&) override;
+    void didReceiveWebSocketHandshakeResponse(WebSocketChannelIdentifier, const ResourceResponse&) override;
+    void didCloseWebSocket(WebSocketChannelIdentifier) override;
+    void didReceiveWebSocketFrame(WebSocketChannelIdentifier, const WebSocketFrame&) override;
+    void didSendWebSocketFrame(WebSocketChannelIdentifier, const WebSocketFrame&) override;
+    void didReceiveWebSocketFrameError(WebSocketChannelIdentifier, const String&) override;
     void mainFrameNavigated(DocumentLoader&) override;
     void setInitialScriptContent(ResourceLoaderIdentifier, const String& sourceString) override;
     void didScheduleStyleRecalculation(Document&);

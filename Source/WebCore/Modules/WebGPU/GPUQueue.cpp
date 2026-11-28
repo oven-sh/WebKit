@@ -30,6 +30,7 @@
 #include "CachedImage.h"
 #include "CanvasRenderingContext.h"
 #include "ElementAncestorIteratorInlines.h"
+#include "EventLoop.h"
 #include "GPUBuffer.h"
 #include "GPUDevice.h"
 #include "GPUDrawElementImageDestination.h"
@@ -56,6 +57,7 @@
 #include "WebCodecsVideoFrame.h"
 #include <JavaScriptCore/HeapCellInlines.h>
 #include <array>
+#include <wtf/Borrow.h>
 #include <wtf/CheckedArithmetic.h>
 #include <wtf/MallocSpan.h>
 
@@ -113,10 +115,16 @@ void GPUQueue::submit(Vector<Ref<GPUCommandBuffer>>&& commandBuffers)
     }
 }
 
-void GPUQueue::onSubmittedWorkDone(OnSubmittedWorkDonePromise&& promise)
+void GPUQueue::onSubmittedWorkDone(ScriptExecutionContext& scriptExecutionContext, OnSubmittedWorkDonePromise&& promise)
 {
-    m_backing->onSubmittedWorkDone([promise = WTF::move(promise)]() mutable {
-        promise.resolve();
+    // The promise resolves also when the work cannot complete because the device is lost.
+    m_backing->onSubmittedWorkDone([weakContext = WeakPtr { scriptExecutionContext }, promise = WTF::move(promise)](bool) mutable {
+        RefPtr context = weakContext;
+        if (!context)
+            return;
+        protect(context->eventLoop())->queueTask(TaskSource::WebGPU, [promise = WTF::move(promise)] mutable {
+            promise.resolve();
+        });
     });
 }
 
@@ -704,7 +712,7 @@ static void imageBytesForSource(WebGPUIntegration& gpu, WebGPU::Queue& backing, 
                     }
                 }
             }
-            callback(tempBuffer.span(), orientedWidth, orientedHeight);
+            callback(borrow(tempBuffer)->span(), orientedWidth, orientedHeight);
 #else
             return callback({ }, 0, 0);
 #endif
@@ -793,6 +801,7 @@ struct GPUResidentSource {
     // Set instead of imageBuffer when the source is a video: a decoded frame is not an ImageBuffer,
     // it is a CVPixelBuffer the GPU process already holds.
     std::optional<WebGPUVideoSourceIdentifier> videoSource { };
+    IntSize videoSourceSize { };
 
     NODELETE bool isGPUResident() const { return imageBuffer || videoSource; }
 };
@@ -815,8 +824,10 @@ static GPUResidentSource gpuResidentSourceForVideo(const GPUVideoSource& source)
         return { };
 
     // A decoded frame is opaque, so premultiplied and unpremultiplied alpha describe the same
-    // pixels and the backing queue does not have to undo anything.
-    return { nullptr, true, WTF::move(videoSource) };
+    // pixels and the backing queue does not have to undo anything. The presented size is empty
+    // until a video element has metadata, and the backing queue then falls back to the frame's
+    // clean aperture.
+    return { nullptr, true, WTF::move(videoSource), GPUExternalTextureDescriptor::visibleSizeForSource(source) };
 }
 
 // An ImageData is a plain byte array, so it has to be moved into an accelerated buffer before Metal
@@ -1463,7 +1474,7 @@ ExceptionOr<void> GPUQueue::copyExternalImageToTexture(ScriptExecutionContext& c
         // call is what covers the in-process backing, which has no proxy to do it.
         if (RefPtr sourceImageBuffer = gpuResidentSource.imageBuffer)
             sourceImageBuffer->flushDrawingContext();
-        m_gpu->copyExternalImageToTexture(m_backing, source.convertToBacking(WTF::move(gpuResidentSource.imageBuffer), gpuResidentSource.premultipliedAlpha, WTF::move(gpuResidentSource.videoSource)), destination.convertToBacking(), backingCopySize);
+        m_gpu->copyExternalImageToTexture(m_backing, source.convertToBacking(WTF::move(gpuResidentSource.imageBuffer), gpuResidentSource.premultipliedAlpha, WTF::move(gpuResidentSource.videoSource), gpuResidentSource.videoSourceSize), destination.convertToBacking(), backingCopySize);
         return { };
     }
 

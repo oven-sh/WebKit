@@ -650,9 +650,25 @@ window.test_driver_internal.set_permission = async function(permission_params)
     case "storage-access":
         await testRunner.setStorageAccessPermission(permission_params.state === "granted", location.href);
         break;
+    case "notifications":
+        if (permission_params.state === "granted")
+            testRunner.grantWebNotificationPermission(location.origin);
+        else if (permission_params.state === "denied")
+            testRunner.denyWebNotificationPermission(location.origin);
+        else
+            testRunner.removeAllWebNotificationPermissions();
+        break;
     default:
         throw new Error(`Unsupported permission name "${permission_params.descriptor.name}".`);
     }
+};
+
+// There is no virtual authenticator in WebKitTestRunner. Reject with the
+// WebDriver unknown-command string so web-platform-tests/webauthn/helpers.js
+// falls back to running without one.
+window.test_driver_internal.add_virtual_authenticator = function(config, context = null)
+{
+    return Promise.reject("error: Action add_virtual_authenticator not implemented");
 };
 
 // Digital Credentials virtual wallet actuation; see webkit.org/b/306292.

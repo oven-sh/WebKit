@@ -47,7 +47,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderVTTCue);
 
-RenderVTTCue::RenderVTTCue(VTTCueBox& element, Style::ComputedStyle&& style)
+RenderVTTCue::RenderVTTCue(VTTCueBox& element, UniqueRef<Style::ComputedStyle>&& style)
     : RenderBlockFlow(Type::VTTCue, element, WTF::move(style))
     , m_cue(downcast<VTTCue>(element.getCue()))
 {
@@ -146,7 +146,8 @@ bool RenderVTTCue::initializeLayoutParameters(LayoutUnit& step, LayoutUnit& posi
     if (linePosition < 0) {
         // Horizontal / Vertical: ... then increase position by the
         // height / width of the video's rendering area ...
-        position += cue->vertical() == VTTCue::DirectionSetting::Horizontal ? containingBlock()->borderBoxHeight() : containingBlock()->borderBoxWidth();
+        auto containingBlockSize = protect(containingBlock())->borderBoundingBox().size();
+        position += cue->vertical() == VTTCue::DirectionSetting::Horizontal ? containingBlockSize.height() : containingBlockSize.width();
 
         // ... and negate step.
         step = -step;
@@ -174,7 +175,7 @@ void RenderVTTCue::placeBoxInDefaultPosition(LayoutUnit position, bool& switched
     switched = false;
 }
 
-FloatRect RenderVTTCue::unroundedAbsoluteBoundingBoxRect(const RenderBox& box)
+FloatRect RenderVTTCue::unroundedAbsoluteBoundingBoxRect(const RenderBoxModelObject& box)
 {
     // Unlike RenderObject::absoluteBoundingBoxRect(), this does not round the
     // result to an IntRect. Sibling cues are compared against each other and
@@ -183,7 +184,9 @@ FloatRect RenderVTTCue::unroundedAbsoluteBoundingBoxRect(const RenderBox& box)
     // independently before doing that comparison can make boxes whose true
     // (subpixel) edges already touch appear to have a gap between them, or
     // vice-versa appear to overlap when they don't.
-    FloatRect localRect(0, 0, box.borderBoxWidth(), box.borderBoxHeight());
+    // localToAbsoluteQuad() maps the rects of an inline box (e.g. the cue's containing block when author styles make it inline) from the
+    // coordinate space of its containing block.
+    FloatRect localRect = box.isInlineBox() ? box.borderBoxRectInContainer() : box.borderBoundingBox();
     return box.localToAbsoluteQuad(localRect).boundingBox();
 }
 
@@ -237,7 +240,7 @@ CheckedPtr<RenderVTTCue> RenderVTTCue::overlappingObjectForRect(const FloatRect&
 
 bool RenderVTTCue::shouldSwitchDirection(const InlineIterator::InlineBox& firstInlineBox, LayoutUnit step) const
 {
-    auto firstInlineBoxSize = firstInlineBox.visualRectIgnoringBlockDirection().size();
+    auto firstInlineBoxSize = firstInlineBox.blockStartRelativePhysicalRect().size();
     LayoutUnit top = y();
     LayoutUnit left = x();
     LayoutUnit bottom { top + firstInlineBoxSize.height() };
@@ -248,7 +251,7 @@ bool RenderVTTCue::shouldSwitchDirection(const InlineIterator::InlineBox& firstI
     // or if step is positive and the bottom of the first line box in
     // boxes is now below the bottom of the video's rendering area, jump
     // to the step labeled switch direction.
-    LayoutUnit parentHeight = containingBlock()->borderBoxHeight();
+    LayoutUnit parentHeight = protect(containingBlock())->borderBoundingBox().height();
     if (m_cue->vertical() == VTTCue::DirectionSetting::Horizontal && ((step < 0 && top < 0) || (step > 0 && bottom > parentHeight)))
         return true;
 
@@ -257,7 +260,7 @@ bool RenderVTTCue::shouldSwitchDirection(const InlineIterator::InlineBox& firstI
     // rendering area, or if step is positive and the right edge of the
     // first line box in boxes is now to the right of the right edge of
     // the video's rendering area, jump to the step labeled switch direction.
-    LayoutUnit parentWidth = containingBlock()->borderBoxWidth();
+    LayoutUnit parentWidth = protect(containingBlock())->borderBoundingBox().width();
     if (m_cue->vertical() != VTTCue::DirectionSetting::Horizontal && ((step < 0 && left < 0) || (step > 0 && right > parentWidth)))
         return true;
 
@@ -446,8 +449,9 @@ void RenderVTTCue::repositionGenericCue()
 
     auto firstInlineBox = InlineIterator::lineLeftmostInlineBoxFor(*box);
     if (downcast<TextTrackCueGeneric>(*m_cue).useDefaultPosition() && firstInlineBox) {
-        LayoutUnit parentWidth = containingBlock()->logicalWidth();
-        LayoutUnit width { firstInlineBox->visualRectIgnoringBlockDirection().width() };
+        auto containingBlockSize = protect(containingBlock())->borderBoundingBox().size();
+        LayoutUnit parentWidth = containingBlock()->isHorizontalWritingMode() ? containingBlockSize.width() : containingBlockSize.height();
+        LayoutUnit width { firstInlineBox->blockStartRelativePhysicalRect().width() };
         LayoutUnit right = (parentWidth / 2) - (width / 2);
         setX(right);
     }

@@ -74,13 +74,13 @@ public:
     virtual Ref<DeprecatedCSSOMValue> computedStyleDeprecatedCSSOMValue(CSSValuePool&, const Style::ComputedStyle&, CSSStyleDeclaration&) const = 0;
 
     // Opaque representation.
-    virtual WrappedImagePtr data() const = 0;
+    NODELETE virtual WrappedImagePtr data() const = 0;
 
     // Loading.
     virtual bool isPending() const = 0;
     virtual void load(CachedResourceLoader&, const ResourceLoaderOptions&) = 0;
     virtual bool isLoaded(const RenderElement*) const { return true; }
-    virtual bool errorOccurred() const { return false; }
+    NODELETE virtual bool errorOccurred() const { return false; }
     virtual bool usesDataProtocol() const { return false; }
     virtual bool hasImage() const { return false; }
     virtual bool hasDecodedImage() const { return true; }
@@ -99,9 +99,10 @@ public:
     ConcreteObjectSize negotiate(const RenderElement&, const ImageSizingContext&) const;
 
     // Platform Image.
-    virtual WebCore::CachedImage* cachedImage() const { return nullptr; }
+    NODELETE virtual WebCore::CachedImage* cachedImage() const { return nullptr; }
     virtual bool currentFrameIsComplete(const RenderElement*) const { return true; }
     virtual std::optional<IntPoint> hotSpot() const { return std::nullopt; }
+    virtual ColorSpace colorSpace(const ColorSpace& defaultColorSpace = ColorSpace::SRGB()) const { return defaultColorSpace; }
 
     // Multiple Image selection.
     virtual Image* selectedImage() { return this; }
@@ -142,11 +143,12 @@ public:
     ALWAYS_INLINE bool isCachedImage() const { return m_type == Type::CachedImage; }
     ALWAYS_INLINE bool isCursorImage() const { return m_type == Type::CursorImage; }
     ALWAYS_INLINE bool isImageSet() const { return m_type == Type::ImageSet; }
-    ALWAYS_INLINE bool isGeneratedImage() const { return isFilterImage() || isCanvasImage() || isCrossfadeImage() || isGradientImage() || isMeshGradientImage() || isNamedImage() || isColorImage() || isPaintImage() || isInvalidImage(); }
+    ALWAYS_INLINE bool isGeneratedImage() const { return isFilterImage() || isCanvasImage() || isCrossfadeImage() || isGradientImage() || isFreeformGradientImage() || isMeshGradientImage() || isNamedImage() || isColorImage() || isPaintImage() || isInvalidImage(); }
     ALWAYS_INLINE bool isFilterImage() const { return m_type == Type::FilterImage; }
     ALWAYS_INLINE bool isCanvasImage() const { return m_type == Type::CanvasImage; }
     ALWAYS_INLINE bool isCrossfadeImage() const { return m_type == Type::CrossfadeImage; }
     ALWAYS_INLINE bool isGradientImage() const { return m_type == Type::GradientImage; }
+    ALWAYS_INLINE bool isFreeformGradientImage() const { return m_type == Type::FreeformGradientImage; }
     ALWAYS_INLINE bool isMeshGradientImage() const { return m_type == Type::MeshGradientImage; }
     ALWAYS_INLINE bool isNamedImage() const { return m_type == Type::NamedImage; }
     ALWAYS_INLINE bool isColorImage() const { return m_type == Type::ColorImage; }
@@ -164,6 +166,7 @@ protected:
         CanvasImage,
         CrossfadeImage,
         GradientImage,
+        FreeformGradientImage,
         MeshGradientImage,
         NamedImage,
         ColorImage,
@@ -196,7 +199,7 @@ protected:
     static ImageDrawResult drawResolvedTiled(GraphicsContext&, ImageBuffer&, const ImageDrawDescriptor&, const FloatRect& destination, const FloatPoint& phase, const FloatSize& tileSize, const FloatSize& spacing);
     static ImageDrawResult drawResolvedNinePiece(GraphicsContext&, ImageBuffer&, const ImageDrawDescriptor&, const NinePieceGeometry&);
 
-    static ImageDrawResult drawPatternBuffer(GraphicsContext&, ImageBuffer&, const ImageDrawDescriptor&, const FloatRect& destination, const FloatRect& tile, const AffineTransform&, const FloatPoint& phase, const FloatSize& spacing);
+    static ImageDrawResult drawPatternBuffer(GraphicsContext&, ImageBuffer&, const FloatSize&, const ImageDrawDescriptor&, const FloatRect& destination, const FloatRect& tile, const AffineTransform&, const FloatPoint& phase, const FloatSize& spacing);
 
     using DestinationPaint = ImageDrawResult(GraphicsContext&);
     using PatternBufferPaint = void(GraphicsContext&);

@@ -161,7 +161,7 @@ static bool isValidMicrophoneDevice(const CoreAudioCaptureDevice& device, bool f
 
     // FIXME: We might want to use properties like whether a device can be selected as default once we move device enumeration to GPUProcess.
     if (isVirtualDeviceFromLabel(device.label())) {
-        RELEASE_LOG(WebRTC, "Ignoring virtual microphone device '%s'", device.label().utf8());
+        RELEASE_LOG(WebRTC, "Ignoring virtual microphone device '%s'", makeUTF8CString(device.label()));
         return false;
     }
 
@@ -327,7 +327,7 @@ static inline Vector<CoreAudioCaptureDevice> computeAudioDeviceList(bool filterT
 
 void CoreAudioCaptureDeviceManager::refreshAudioCaptureDevices(NotifyIfDevicesHaveChanged notify)
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
 
     auto audioDevices = computeAudioDeviceList(m_filterTapEnabledDevices);
     bool haveDeviceChanges = audioDevices.size() != m_coreAudioCaptureDevices.size();

@@ -33,6 +33,7 @@
 #include "MarkSurfacesAsVolatileRequestIdentifier.h"
 #include "MessageReceiver.h"
 #include "MessageSender.h"
+#include "RemoteFreeformGradientIdentifier.h"
 #include "RemoteGradientIdentifier.h"
 #include "RemoteGraphicsContextMessages.h"
 #include "RemoteImageBufferProxy.h"
@@ -135,8 +136,10 @@ public:
     void releaseFont(WebCore::RenderingResourceIdentifier);
     void cacheFontCustomPlatformData(Ref<const WebCore::FontCustomPlatformData>&&);
     void releaseFontCustomPlatformData(WebCore::RenderingResourceIdentifier);
-    void cacheGradient(Ref<WebCore::Gradient>&&, RemoteGradientIdentifier);
+    void cacheGradient(Ref<const WebCore::Gradient>&&, RemoteGradientIdentifier);
     void releaseGradient(RemoteGradientIdentifier);
+    void cacheFreeformGradient(Ref<WebCore::FreeformGradient>&&, RemoteFreeformGradientIdentifier);
+    void releaseFreeformGradient(RemoteFreeformGradientIdentifier);
     void cacheMeshGradient(Ref<WebCore::MeshGradient>&&, RemoteMeshGradientIdentifier);
     void releaseMeshGradient(RemoteMeshGradientIdentifier);
     void cacheFilter(Ref<WebCore::Filter>&&);
@@ -150,7 +153,7 @@ public:
     void getImageBufferResourceLimitsForTesting(CompletionHandler<void(WebCore::ImageBufferResourceLimits)>&&);
 
     void createSnapshot(RemoteSnapshotIdentifier, WebCore::FrameIdentifier rootFrameIdentifier, const WebCore::FloatSize&);
-    UniqueRef<RemoteSnapshotRecorderProxy> createSnapshotRecorder(const WebCore::FloatRect& initialClip, RemoteSnapshotIdentifier, WebCore::RenderingMode);
+    UniqueRef<RemoteSnapshotRecorderProxy> createSnapshotRecorder(const WebCore::FloatRect& initialClip, const WebCore::FloatSize& scale, RemoteSnapshotIdentifier, WebCore::RenderingMode);
     void sinkSnapshotRecorderIntoSnapshotFrame(UniqueRef<RemoteSnapshotRecorderProxy>&&, WebCore::FrameIdentifier, CompletionHandler<void(bool)>&&);
 
     Ref<ShapeDetection::RemoteBarcodeDetectorProxy> createBarcodeDetector(const WebCore::ShapeDetection::BarcodeDetectorOptions&);
@@ -201,6 +204,7 @@ public:
     RefPtr<IPC::StreamClientConnection> connection();
     // The connection of the GPU process connection that connection() was created on.
     RefPtr<IPC::Connection> gpuProcessIPCConnection();
+    void gpuProcessConnectionDidClose(IPC::Connection&);
 
     bool isCurrent() const final;
     Ref<WorkQueue> workQueue() { return m_queue; }
@@ -227,6 +231,7 @@ private:
     // Connection::Client
     void didClose(IPC::Connection&) final;
     void didReceiveInvalidMessage(IPC::Connection&, IPC::MessageName, const Vector<uint32_t>& indicesOfObjectsFailingDecoding) final { }
+    void gpuProcessConnectionDidClose();
     void disconnectGPUProcess();
     void ensureGPUProcessConnection();
 

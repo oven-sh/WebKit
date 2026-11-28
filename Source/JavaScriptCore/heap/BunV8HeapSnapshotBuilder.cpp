@@ -162,7 +162,7 @@ unsigned BunV8HeapSnapshotBuilder::analyzeNodeInternal(JSCell* cell)
     if (auto existing = m_previousSnapshot ? m_previousSnapshot->nodeForCell(cell) : std::nullopt)
         identifier = existing->identifier;
     else {
-        identifier = HeapSnapshotBuilder::getNextObjectIdentifier();
+        identifier = m_profiler.takeNextObjectIdentifier();
         m_snapshot->appendNode(HeapSnapshotNode(cell, identifier));
     }
 
@@ -835,7 +835,7 @@ static void appendUTF8BytesQuotedJSON(JsonByteSink& out, const WTF::String& str)
 {
     out.append('"');
     if (!str.isEmpty()) {
-        auto utf8 = str.utf8();
+        auto utf8 = makeUTF8CString(str);
         auto data = utf8.span();
         for (size_t i = 0; i < data.size(); ++i) {
             uint8_t ch = data[i];

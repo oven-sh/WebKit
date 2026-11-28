@@ -2154,7 +2154,7 @@ auto Modules::collectDynamicExports(ModuleID module) -> Vector<DynamicExport>
         AbstractModuleRecord* record = isOfModuleItself && activeMock(module) ? ensureDisplacedRecord(module) : recordForResolution(module);
         IdentifierSet listedNames;
         BitVector entriesThatYieldToStars;
-        UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, uint32_t, IdentifierRepHash> whereHeldNamesLand;
+        HashMap<RefPtr<UniquedStringImpl>, uint32_t, IdentifierRepHash> whereHeldNamesLand;
         bool mockMaySettleNames = hasAnyActiveMock() || keepsSomeEndedMock();
         IdentifierSet namesPassedByWhileHidden;
         Vector<Identifier> namesToSearchFor;
@@ -2186,7 +2186,7 @@ auto Modules::collectDynamicExports(ModuleID module) -> Vector<DynamicExport>
             return record->resolveExport(realm, name).type == StarExportResolution::Type::Resolved;
         };
         Vector<std::pair<ModuleID, unsigned>, 8> pending { { module, 0 } };
-        UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, Vector<ModuleID, 2>, IdentifierRepHash> filesThatTakeNameBack;
+        HashMap<RefPtr<UniquedStringImpl>, Vector<ModuleID, 2>, IdentifierRepHash> filesThatTakeNameBack;
         Vector<Identifier> namesTakenBack;
         auto filesThatTakeBack = [&](const Identifier& name) -> Vector<ModuleID, 2>& {
             auto added = filesThatTakeNameBack.add(name.impl(), Vector<ModuleID, 2>());
@@ -2237,8 +2237,8 @@ auto Modules::collectDynamicExports(ModuleID module) -> Vector<DynamicExport>
             }
             return names.all.contains(nameSearchedFor->impl()) ? std::span<const Identifier>(&*nameSearchedFor, 1) : std::span<const Identifier>();
         };
-        UncheckedKeyHashMap<ModuleID, NamesInOrder> namesBehindStarsOfMocks;
-        std::array<UncheckedKeyHashMap<JSObject*, NamesInOrder>, 2> namesOfObjects;
+        HashMap<ModuleID, NamesInOrder> namesBehindStarsOfMocks;
+        std::array<HashMap<JSObject*, NamesInOrder>, 2> namesOfObjects;
         auto namesAskedOf = [&](JSObject* object, DontEnumPropertiesMode mode) -> std::span<const Identifier> {
             auto& known = namesOfObjects[mode == DontEnumPropertiesMode::Include];
             auto found = known.find(object);

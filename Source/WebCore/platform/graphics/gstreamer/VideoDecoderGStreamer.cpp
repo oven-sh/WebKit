@@ -89,6 +89,7 @@ private:
     std::optional<uint64_t> m_duration;
     bool m_isClosed { false };
     GRefPtr<GstCaps> m_inputCaps;
+    GRefPtr<GstCaps> m_outputCaps;
     std::optional<VideoFrameGStreamer::Info> m_videoInfo;
     std::optional<PlatformVideoColorSpace> m_colorSpaceFromConfig;
     PlatformVideoColorSpace m_colorSpaceOverride;
@@ -116,19 +117,19 @@ void GStreamerVideoDecoder::create(const String& codecName, const Config& config
     auto& scanner = GStreamerRegistryScanner::singleton();
     auto lookupResult = scanner.isCodecSupported(GStreamerRegistryScanner::Configuration::Decoding, codecName, usingHardware);
     if (usingHardware && !lookupResult) {
-        GST_DEBUG("No hardware decoder found for codec %s, falling back to software", codecName.utf8());
+        GST_DEBUG("No hardware decoder found for codec %s, falling back to software", makeUTF8CString(codecName));
         lookupResult = scanner.isCodecSupported(GStreamerRegistryScanner::Configuration::Decoding, codecName, false);
     }
 
     if (!lookupResult) {
-        GST_WARNING("No decoder found for codec %s", codecName.utf8());
+        GST_WARNING("No decoder found for codec %s", makeUTF8CString(codecName));
         callback(makeUnexpected(makeString("No decoder found for codec "_s, codecName)));
         return;
     }
 
     GRefPtr<GstElement> element = gst_element_factory_create(lookupResult.factory.get(), nullptr);
     if (!element) {
-        GST_WARNING("Unable to create decoder for codec %s", codecName.utf8());
+        GST_WARNING("Unable to create decoder for codec %s", makeUTF8CString(codecName));
         callback(makeUnexpected(makeString("Unable to create decoder for codec "_s, codecName)));
         return;
     }
@@ -136,7 +137,7 @@ void GStreamerVideoDecoder::create(const String& codecName, const Config& config
     Ref decoder = adoptRef(*new GStreamerVideoDecoder(codecName, config, WTF::move(outputCallback), WTF::move(element)));
     Ref internalDecoder = decoder->m_internalDecoder;
     if (!internalDecoder->isConfigured()) {
-        GST_WARNING("Internal video decoder failed to configure for codec %s", codecName.utf8());
+        GST_WARNING("Internal video decoder failed to configure for codec %s", makeUTF8CString(codecName));
         callback(makeUnexpected(makeString("Internal video decoder failed to configure for codec "_s, codecName)));
         return;
     }
@@ -266,7 +267,7 @@ GStreamerInternalVideoDecoder::GStreamerInternalVideoDecoder(const String& codec
 #endif // USE(GSTREAMER_GL)
     gst_caps_append(allowedSinkCaps.get(), gst_caps_from_string("video/x-raw"));
 
-    lazyInitialize(m_harness, GStreamerElementHarness::create(WTF::move(harnessedElement), [weakThis = ThreadSafeWeakPtr { *this }, this](auto& stream, GRefPtr<GstSample>&& outputSample) {
+    lazyInitialize(m_harness, GStreamerElementHarness::create(WTF::move(harnessedElement), [weakThis = ThreadSafeWeakPtr { *this }, this](auto&, GRefPtr<GstSample>&& outputSample) {
         RefPtr protectedThis = weakThis.get();
         if (!protectedThis)
             return;
@@ -277,9 +278,6 @@ GStreamerInternalVideoDecoder::GStreamerInternalVideoDecoder(const String& codec
         std::call_once(onceFlag, [this] {
             m_harness->dumpGraph("video-decoder"_s);
         });
-
-        if (m_presentationSize.isEmpty())
-            m_presentationSize = getVideoResolutionFromCaps(stream.outputCaps().get()).value_or(FloatSize { 0, 0 });
 
         auto outputBuffer = gst_sample_get_buffer(outputSample.get());
         auto duration = m_duration.value_or(GST_BUFFER_DURATION(outputBuffer));
@@ -293,13 +291,16 @@ GStreamerInternalVideoDecoder::GStreamerInternalVideoDecoder(const String& codec
         }
 
         GRefPtr caps = gst_sample_get_caps(outputSample.get());
-        if (!m_videoInfo) {
+        if (!m_outputCaps || !gst_caps_is_equal(caps.get(), m_outputCaps.get())) {
             m_videoInfo = VideoFrameGStreamer::infoFromCaps(caps);
             if (m_videoInfo) [[likely]] {
                 m_colorSpaceOverride = videoColorSpaceFromInfo(m_videoInfo->info);
                 overrideVideoColorSpaceAsNeeded(m_colorSpaceOverride, m_colorSpaceFromConfig);
                 fillVideoInfoColorimetryFromColorSpace(&m_videoInfo->info, m_colorSpaceOverride);
             }
+
+            m_presentationSize = getVideoResolutionFromCaps(caps.get()).value_or(FloatSize { 0, 0 });
+            m_outputCaps = caps;
         }
 
         auto currentColorSpace = videoColorSpaceFromCaps(caps.get());

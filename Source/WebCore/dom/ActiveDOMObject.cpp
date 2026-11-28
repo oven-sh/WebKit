@@ -45,29 +45,30 @@ NODELETE static inline ScriptExecutionContext* suitableScriptExecutionContext(Sc
     return scriptExecutionContext;
 }
 
-inline ActiveDOMObject::ActiveDOMObject(ScriptExecutionContext* context, CheckedScriptExecutionContextType)
+// FIXME: These constructors should be detected as NODELETE (rdar://192678282).
+SUPPRESS_NODELETE inline ActiveDOMObject::ActiveDOMObject(ScriptExecutionContext* context, CheckedScriptExecutionContextType)
     : ContextDestructionObserver(context)
 {
     ASSERT(!is<Document>(context) || &downcast<Document>(context)->contextDocument() == downcast<Document>(context));
     if (!context)
         return;
 
-    ASSERT(context->isContextThread());
+    ASSERT_WITH_SECURITY_IMPLICATION(context->isContextThread());
     context->didCreateActiveDOMObject(*this);
 }
 
-ActiveDOMObject::ActiveDOMObject(ScriptExecutionContext* scriptExecutionContext)
-    : ActiveDOMObject(protect(suitableScriptExecutionContext(scriptExecutionContext)), CheckedScriptExecutionContext)
+SUPPRESS_NODELETE ActiveDOMObject::ActiveDOMObject(ScriptExecutionContext* scriptExecutionContext)
+    : ActiveDOMObject(suitableScriptExecutionContext(scriptExecutionContext), CheckedScriptExecutionContext)
 {
 }
 
-ActiveDOMObject::ActiveDOMObject(Document* document)
-    : ActiveDOMObject(protect(document ? &document->contextDocument() : nullptr), CheckedScriptExecutionContext)
+SUPPRESS_NODELETE ActiveDOMObject::ActiveDOMObject(Document* document)
+    : ActiveDOMObject(document ? &document->contextDocument() : nullptr, CheckedScriptExecutionContext)
 {
 }
 
-ActiveDOMObject::ActiveDOMObject(Document& document)
-    : ActiveDOMObject(protect(&document.contextDocument()), CheckedScriptExecutionContext)
+SUPPRESS_NODELETE ActiveDOMObject::ActiveDOMObject(Document& document)
+    : ActiveDOMObject(&document.contextDocument(), CheckedScriptExecutionContext)
 {
 }
 
@@ -87,7 +88,7 @@ ActiveDOMObject::~ActiveDOMObject()
         return;
 
     ASSERT(m_suspendIfNeededWasCalled);
-    ASSERT(context->isContextThread());
+    ASSERT_WITH_SECURITY_IMPLICATION(context->isContextThread());
     context->willDestroyActiveDOMObject(*this);
 }
 

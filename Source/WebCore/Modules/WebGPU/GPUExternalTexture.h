@@ -26,7 +26,10 @@
 #pragma once
 
 #include "EventTarget.h"
+#include "PredefinedColorSpace.h"
 #include <WebCore/WebGPUCppAPI.h>
+#include <optional>
+#include <utility>
 #include <wtf/Ref.h>
 #include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/WeakPtr.h>
@@ -38,9 +41,9 @@ class GPUDevice;
 
 class GPUExternalTexture : public RefCountedAndCanMakeWeakPtr<GPUExternalTexture> {
 public:
-    static Ref<GPUExternalTexture> create(Ref<::WebGPU::ExternalTexture>&& backing, String&& label, GPUDevice& device)
+    static Ref<GPUExternalTexture> create(Ref<::WebGPU::ExternalTexture>&& backing, String&& label, PredefinedColorSpace colorSpace, GPUDevice& device)
     {
-        return adoptRef(*new GPUExternalTexture(WTF::move(backing), WTF::move(label), device));
+        return adoptRef(*new GPUExternalTexture(WTF::move(backing), WTF::move(label), colorSpace, device));
     }
 
     NODELETE String label() const;
@@ -50,17 +53,32 @@ public:
     const ::WebGPU::ExternalTexture& backing() const { return m_backing; }
     void destroy();
     void undestroy();
+    bool isDestroyed() const { return m_destroyed; }
+    void activate() { m_active = true; }
+    void deactivate() { m_active = false; }
+    bool isActive() const { return m_active; }
+    PredefinedColorSpace colorSpace() const { return m_colorSpace; }
+#if ENABLE(VIDEO)
+    std::optional<unsigned> takeVideoFrameCallbackIdentifier() { return std::exchange(m_videoFrameCallbackIdentifier, std::nullopt); }
+    void setVideoFrameCallbackIdentifier(std::optional<unsigned> identifier) { m_videoFrameCallbackIdentifier = identifier; }
+#endif
 
     NODELETE GPUDevice* device() const;
 
     bool hasActiveInspectorCanvasCallTracer() const;
 
 private:
-    GPUExternalTexture(Ref<::WebGPU::ExternalTexture>&&, String&& label, GPUDevice&);
+    GPUExternalTexture(Ref<::WebGPU::ExternalTexture>&&, String&& label, PredefinedColorSpace, GPUDevice&);
 
     const Ref<::WebGPU::ExternalTexture> m_backing;
     String m_label;
+    PredefinedColorSpace m_colorSpace { PredefinedColorSpace::SRGB };
     WeakPtr<GPUDevice, WeakPtrImplWithEventTargetData> m_device;
+    bool m_destroyed { false };
+    bool m_active { false };
+#if ENABLE(VIDEO)
+    std::optional<unsigned> m_videoFrameCallbackIdentifier;
+#endif
 };
 
 }

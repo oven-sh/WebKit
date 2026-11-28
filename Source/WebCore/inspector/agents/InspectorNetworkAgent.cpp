@@ -44,6 +44,7 @@
 #include "DocumentThreadableLoader.h"
 #include "DocumentView.h"
 #include "FormData.h"
+#include "FrameInspectorController.h"
 #include "FrameLoader.h"
 #include "HTTPHeaderMap.h"
 #include "HTTPHeaderNames.h"
@@ -61,6 +62,7 @@
 #include "MIMETypeRegistry.h"
 #include "MemoryCache.h"
 #include "Page.h"
+#include "PageInspectorController.h"
 #include "PlatformStrategies.h"
 #include "ProgressTracker.h"
 #include "RenderObjectInlines.h"
@@ -75,6 +77,7 @@
 #include "ThreadableWebSocketChannel.h"
 #include "WebConsoleAgent.h"
 #include "WebCorePersistentCoders.h"
+#include "WebInjectedScriptManager.h"
 #include "WebSocket.h"
 #include "WebSocketFrame.h"
 #include <JavaScriptCore/IdentifiersFactory.h>
@@ -552,7 +555,8 @@ Ref<Inspector::Protocol::Network::Initiator> InspectorNetworkAgent::buildInitiat
 
 void InspectorNetworkAgent::didCreateWebSocket(WebSocketChannelIdentifier identifier, const URL& requestURL)
 {
-    m_frontendDispatcher->webSocketCreated(IdentifiersFactory::requestId(identifier.toUInt64()), requestURL.string());
+    // FIXME: Send the creating document's frameId and loaderId here, as FrameNetworkAgentProxy does, once the frontend files a non-Site-Isolation socket under its real frame instead of the main frame. https://bugs.webkit.org/show_bug.cgi?id=332480
+    m_frontendDispatcher->webSocketCreated(IdentifiersFactory::requestId(identifier.toUInt64()), requestURL.string(), { }, { });
 }
 
 void InspectorNetworkAgent::willSendWebSocketHandshakeRequest(WebSocketChannelIdentifier, ResourceRequest& request)
@@ -822,36 +826,97 @@ static JSC::JSValue webSocketAsScriptValue(JSC::JSGlobalObject& state, WebSocket
     return toJS(&state, deprecatedGlobalObjectForPrototype(&state), webSocket);
 }
 
-Inspector::Protocol::ErrorStringOr<Ref<Inspector::Protocol::Runtime::RemoteObject>> InspectorNetworkAgent::resolveWebSocket(const Inspector::Protocol::Network::RequestId& requestId, const String& objectGroup)
+void InspectorNetworkAgent::resolveWebSocket(const Inspector::Protocol::Network::RequestId& requestId, const String& objectGroup, Ref<ResolveWebSocketCallback>&& callback)
 {
     RefPtr webSocket = webSocketForRequestId(requestId);
-    if (!webSocket)
-        return makeUnexpected("Missing web socket for given requestId"_s);
+    if (!webSocket) {
+        callback->sendFailure("Missing web socket for given requestId"_s);
+        return;
+    }
 
     // FIXME: <https://webkit.org/b/168475> Web Inspector: Correctly display iframe's and worker's WebSockets
     RefPtr document = dynamicDowncast<Document>(webSocket->scriptExecutionContext());
-    if (!document)
-        return makeUnexpected("Not supported"_s);
+    if (!document) {
+        callback->sendFailure("Not supported"_s);
+        return;
+    }
 
     RefPtr frame = document->frame();
-    if (!frame)
-        return makeUnexpected("Missing frame of web socket for given requestId"_s);
+    if (!frame) {
+        callback->sendFailure("Missing frame of web socket for given requestId"_s);
+        return;
+    }
 
     auto& globalObject = mainWorldGlobalObject(*frame);
     auto injectedScript = m_injectedScriptManager->injectedScriptFor(&globalObject);
     ASSERT(!injectedScript.hasNoValue());
 
     auto object = injectedScript.wrapObject(webSocketAsScriptValue(globalObject, *webSocket), objectGroup);
+    if (!object) {
+        callback->sendFailure("Internal error: unable to cast WebSocket"_s);
+        return;
+    }
+
+    callback->sendSuccess(object.releaseNonNull());
+}
+
+} // namespace WebCore
+
+namespace Inspector::ResourceUtilities {
+
+Inspector::Protocol::ErrorStringOr<Ref<Inspector::Protocol::Runtime::RemoteObject>> resolveWebSocketInFrame(WebCore::Page& page, uint64_t channelID, const String& objectGroup)
+{
+    RefPtr<WebCore::WebSocket> webSocket;
+    RefPtr<WebCore::Document> document;
+    {
+        Locker locker { WebCore::WebSocket::allActiveWebSocketsLock() };
+        for (CheckedPtr activeWebSocket : WebCore::WebSocket::allActiveWebSockets()) {
+            RefPtr activeDocument = dynamicDowncast<WebCore::Document>(activeWebSocket->scriptExecutionContext());
+            if (!activeDocument || activeDocument->page() != &page)
+                continue;
+
+            RefPtr channel = activeWebSocket->channel();
+            if (!channel || channel->progressIdentifier().toUInt64() != channelID)
+                continue;
+
+            webSocket = activeWebSocket.get();
+            document = WTF::move(activeDocument);
+            break;
+        }
+    }
+    if (!webSocket)
+        return makeUnexpected("Missing web socket for given requestId"_s);
+
+    RefPtr frame = document->frame();
+    if (!frame)
+        return makeUnexpected("Missing frame of web socket for given requestId"_s);
+
+    auto& globalObject = WebCore::mainWorldGlobalObject(*frame);
+    // The main frame's console context belongs to the page target, so a main-frame socket is wrapped
+    // by the page's injected script. Any other frame's socket is wrapped by that frame's own.
+    // FIXME: Keep this main-frame check in sync with the one in WI.RemoteObject.resolveWebSocket (RemoteObject.js): injected script object ids restart at 1 in each injected script manager. Remove both when the page target goes away, or have the reply say which target's injected script wrapped the object. https://bugs.webkit.org/show_bug.cgi?id=332480
+    auto& injectedScriptManager = frame->isMainFrame() ? page.inspectorController().injectedScriptManager() : frame->inspectorController().injectedScriptManager();
+    auto injectedScript = injectedScriptManager.injectedScriptFor(&globalObject);
+    if (injectedScript.hasNoValue())
+        return makeUnexpected("Missing injected script for frame of web socket"_s);
+
+    auto object = injectedScript.wrapObject(WebCore::webSocketAsScriptValue(globalObject, *webSocket), objectGroup);
     if (!object)
         return makeUnexpected("Internal error: unable to cast WebSocket"_s);
 
     return object.releaseNonNull();
 }
 
-Inspector::Protocol::ErrorStringOr<void> InspectorNetworkAgent::setInterceptionEnabled(bool enabled)
+} // namespace Inspector::ResourceUtilities
+
+namespace WebCore {
+
+void InspectorNetworkAgent::setInterceptionEnabled(bool enabled, Ref<SetInterceptionEnabledCallback>&& callback)
 {
-    if (m_interceptionEnabled == enabled)
-        return makeUnexpected(m_interceptionEnabled ? "Interception already enabled"_s : "Interception already disabled"_s);
+    if (m_interceptionEnabled == enabled) {
+        callback->sendFailure(m_interceptionEnabled ? "Interception already enabled"_s : "Interception already disabled"_s);
+        return;
+    }
 
     m_interceptionEnabled = enabled;
 
@@ -860,10 +925,10 @@ Inspector::Protocol::ErrorStringOr<void> InspectorNetworkAgent::setInterceptionE
         continuePendingResponses();
     }
 
-    return { };
+    callback->sendSuccess();
 }
 
-Inspector::Protocol::ErrorStringOr<void> InspectorNetworkAgent::addInterception(const String& url, Inspector::Protocol::Network::NetworkStage networkStage, std::optional<bool>&& caseSensitive, std::optional<bool>&& isRegex)
+void InspectorNetworkAgent::addInterception(const String& url, Inspector::Protocol::Network::NetworkStage networkStage, std::optional<bool>&& caseSensitive, std::optional<bool>&& isRegex, Ref<AddInterceptionCallback>&& callback)
 {
     Intercept intercept;
     intercept.url = url;
@@ -873,13 +938,15 @@ Inspector::Protocol::ErrorStringOr<void> InspectorNetworkAgent::addInterception(
         intercept.isRegex = *isRegex;
     intercept.networkStage = networkStageFromProtocol(networkStage);
 
-    if (!m_intercepts.appendIfNotContains(intercept))
-        return makeUnexpected("Intercept for given url, given isRegex, and given stage already exists"_s);
+    if (!m_intercepts.appendIfNotContains(intercept)) {
+        callback->sendFailure("Intercept for given url, given isRegex, and given stage already exists"_s);
+        return;
+    }
 
-    return { };
+    callback->sendSuccess();
 }
 
-Inspector::Protocol::ErrorStringOr<void> InspectorNetworkAgent::removeInterception(const String& url, Inspector::Protocol::Network::NetworkStage networkStage, std::optional<bool>&& caseSensitive, std::optional<bool>&& isRegex)
+void InspectorNetworkAgent::removeInterception(const String& url, Inspector::Protocol::Network::NetworkStage networkStage, std::optional<bool>&& caseSensitive, std::optional<bool>&& isRegex, Ref<RemoveInterceptionCallback>&& callback)
 {
     Intercept intercept;
     intercept.url = url;
@@ -889,10 +956,12 @@ Inspector::Protocol::ErrorStringOr<void> InspectorNetworkAgent::removeIntercepti
         intercept.isRegex = *isRegex;
     intercept.networkStage = networkStageFromProtocol(networkStage);
 
-    if (!m_intercepts.removeAll(intercept))
-        return makeUnexpected("Missing intercept for given url, given isRegex, and given stage"_s);
+    if (!m_intercepts.removeAll(intercept)) {
+        callback->sendFailure("Missing intercept for given url, given isRegex, and given stage"_s);
+        return;
+    }
 
-    return { };
+    callback->sendSuccess();
 }
 
 bool InspectorNetworkAgent::willIntercept(const ResourceRequest& request)
@@ -1051,7 +1120,7 @@ Inspector::Protocol::ErrorStringOr<void> InspectorNetworkAgent::interceptWithRes
 
         overrideData = SharedBuffer::create(WTF::move(*buffer));
     } else
-        overrideData = SharedBuffer::create(content.utf8().span());
+        overrideData = SharedBuffer::create(makeUTF8CString(content).span());
 
     pendingInterceptResponse->respond(overrideResponse, overrideData);
 
@@ -1077,7 +1146,7 @@ Inspector::Protocol::ErrorStringOr<void> InspectorNetworkAgent::interceptRequest
 
         data = SharedBuffer::create(WTF::move(*buffer));
     } else
-        data = SharedBuffer::create(content.utf8().span());
+        data = SharedBuffer::create(makeUTF8CString(content).span());
 
     // Mimic data URL load behavior - report didReceiveResponse & didFinishLoading.
     ResourceResponse response(URL { protect(pendingRequest->m_loader)->url() }, String { mimeType }, data->size(), String());

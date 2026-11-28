@@ -103,7 +103,7 @@ void Structure::checkOffsetConsistency(PropertyTable* propertyTable, NOESCAPE co
 }
 
 #if DUMP_STRUCTURE_ID_STATISTICS
-static UncheckedKeyHashSet<Structure*>& liveStructureSet = *(new UncheckedKeyHashSet<Structure*>);
+static HashSet<Structure*>& liveStructureSet = *(new HashSet<Structure*>);
 #endif
 
 inline void StructureTransitionTable::setSingleTransition(VM& vm, JSCell* owner, Structure* structure)
@@ -424,6 +424,9 @@ Structure::Structure(VM& vm, StructureVariant variant, Structure* previous)
     setDictionaryKind(previous->dictionaryKind());
     setIsPinnedPropertyTable(false);
     setHasBeenFlattenedBefore(previous->hasBeenFlattenedBefore());
+    setGrewPastTransitionLimitThroughPutById(previous->grewPastTransitionLimitThroughPutById());
+    m_keyedAddsPastTransitionLimit = previous->m_keyedAddsPastTransitionLimit;
+    setPrototypeReflattenCount(previous->prototypeReflattenCount());
     setHasAnyKindOfGetterSetterProperties(previous->hasAnyKindOfGetterSetterProperties());
     setHasReadOnlyOrGetterSetterPropertiesExcludingProto(previous->hasReadOnlyOrGetterSetterPropertiesExcludingProto());
     setHasNonEnumerableProperties(previous->hasNonEnumerableProperties());
@@ -916,6 +919,12 @@ Structure* Structure::addNewPropertyTransition(VM& vm, Structure* structure, Pro
 #endif
 
     Structure* transition = Structure::create(vm, structure, deferred);
+    if (structure->transitionCountEstimate() >= s_maxTransitionLength) {
+        if (context == PutPropertySlot::PutById)
+            transition->setGrewPastTransitionLimitThroughPutById(true);
+        else if (structure->grewPastTransitionLimitThroughPutById())
+            ++transition->m_keyedAddsPastTransitionLimit;
+    }
 
     transition->m_cachedPrototypeChain.setMayBeNull(vm, transition, structure->m_cachedPrototypeChain.get());
     
@@ -1343,8 +1352,11 @@ Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, Tr
     if (preventsExtensions(transitionKind))
         transition->setDidPreventExtensions(true);
 
-    if (transitionKind == TransitionKind::BecomePrototype || transitionKind == TransitionKind::FreezeElementsInPlace)
+    if (transitionKind == TransitionKind::BecomePrototype || transitionKind == TransitionKind::FreezeElementsInPlace) {
         transition->setMayBePrototype(true);
+        // Allow one more flattening, since inline caches give up on every access that goes through a dictionary prototype.
+        transition->setHasBeenFlattenedBefore(false);
+    }
 
     if (makesAllPropertiesImmutable(transitionKind)) {
         transition->setHasImmutableProperties(true);
@@ -1355,7 +1367,7 @@ Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, Tr
         // hasCustomProperties()). This transition adds and changes none, so the answer is the one the object had.
         transition->setDidTransition(structure->didTransition());
     }
-    
+
     if (setsDontDeleteOnAllProperties(transitionKind) || setsReadOnlyOnNonAccessorProperties(transitionKind)) {
         // We pin the property table on transitions that do wholesale editing of the property
         // table, since our logic for walking the property transition chain to rematerialize the
@@ -1577,7 +1589,7 @@ static bool hasDuplicateNames(std::span<UniquedStringImpl* const> names)
         }
         return false;
     }
-    UncheckedKeyHashSet<UniquedStringImpl*> seenNames;
+    HashSet<UniquedStringImpl*> seenNames;
     for (UniquedStringImpl* name : names) {
         if (!seenNames.add(name).isNewEntry)
             return true;
@@ -1891,6 +1903,8 @@ Structure* Structure::flattenDictionaryStructure(VM& vm, JSObject* object)
     }
 
     setDictionaryKind(NoneDictionaryKind);
+    if (hasBeenFlattenedBefore())
+        setPrototypeReflattenCount(std::min<unsigned>(prototypeReflattenCount() + 1, s_prototypeReflattenCountMask));
     setHasBeenFlattenedBefore(true);
 
     ASSERT(this->outOfLineCapacity() == afterOutOfLineCapacity);

@@ -66,6 +66,7 @@
 #include "WebExtensionWindowIdentifier.h"
 #include "WebExtensionWindowParameters.h"
 #include "WebFrameProxy.h"
+#include "WebPageProxy.h"
 #include "WebPageProxyIdentifier.h"
 #include "WebProcessProxy.h"
 #include <WebCore/ContentRuleListResults.h>
@@ -102,7 +103,9 @@
 #endif
 
 #if ENABLE(WK_WEB_EXTENSIONS_BOOKMARKS)
-#include "WebExtensionBookmarksParameters.h"
+#include "WebExtensionBookmark.h"
+#include "WebExtensionBookmarkChanges.h"
+#include "WebExtensionBookmarkParameters.h"
 #endif
 
 #if ENABLE(2022_GLIB_API)
@@ -261,6 +264,7 @@ public:
 
     struct PortQueuedMessage {
         WebExtensionMessage message;
+        WebExtensionContentWorldType sourceContentWorldType { WebExtensionContentWorldType::Main };
         std::optional<WebPageProxyIdentifier> sendingPageProxyIdentifier;
         bool userGesture { false };
     };
@@ -512,6 +516,10 @@ public:
     void forgetWindow(WebExtensionWindowIdentifier) const;
 
     Ref<WebExtensionTab> getOrCreateTab(WKWebExtensionTab *) const;
+
+#if ENABLE(WK_WEB_EXTENSIONS_BOOKMARKS)
+    void bookmarkTree(const String& apiName, CompletionHandler<void(std::expected<Ref<WebExtensionBookmark>, WebExtensionError>&&)>&&);
+#endif
     RefPtr<WebExtensionTab> getTab(WebExtensionTabIdentifier, IgnoreExtensionAccess = IgnoreExtensionAccess::No) const;
     RefPtr<WebExtensionTab> getTab(WebPageProxyIdentifier, std::optional<WebExtensionTabIdentifier> = std::nullopt, IncludeExtensionViews = IncludeExtensionViews::No, IgnoreExtensionAccess = IgnoreExtensionAccess::No) const;
     RefPtr<WebExtensionTab> getCurrentTab(WebPageProxyIdentifier, IncludeExtensionViews = IncludeExtensionViews::Yes, IgnoreExtensionAccess = IgnoreExtensionAccess::No) const;
@@ -702,6 +710,7 @@ public:
     void addPopupPage(WebPageProxy&, WebExtensionAction&);
 
     void enumerateExtensionPages(NOESCAPE const Function<void(WebPageProxy&, bool& stop)>&);
+    std::optional<WebViewPurpose> purposeOfExtensionPage(WebPageProxyIdentifier) const;
 
     WebViewClass *relatedWebView();
     String processDisplayName();
@@ -775,6 +784,8 @@ private:
 
     void permissionsDidChange(PermissionNotification, const PermissionsSet&);
     void permissionsDidChange(PermissionNotification, const MatchPatternSet&);
+    void temporaryPermissionMatchPatternsDidChange(PermissionNotification, const MatchPatternSet&, WebExtensionTab&);
+    void postPermissionMatchPatternsNotification(PermissionNotification, const MatchPatternSet&, WebExtensionTab* = nullptr);
 
     bool removePermissions(PermissionsMap&, PermissionsSet&, WallTime& nextExpirationDate, PermissionNotification = PermissionNotification::None);
     bool removePermissionMatchPatterns(PermissionMatchPatternsMap&, MatchPatternSet&, EqualityOnly, WallTime& nextExpirationDate, PermissionNotification = PermissionNotification::None);
@@ -786,6 +797,7 @@ private:
 
     bool isBackgroundPage(WebCore::FrameIdentifier) const;
     bool isBackgroundPage(WebPageProxyIdentifier) const;
+    bool isOffscreenPage(WebPageProxyIdentifier) const;
     bool isExtensionPage(WebPageProxyIdentifier) const;
     NODELETE bool backgroundContentIsLoaded() const;
 
@@ -843,13 +855,36 @@ private:
     void addInjectedContent() { addInjectedContent(injectedContents()); }
     void addInjectedContent(const InjectedContentVector&);
     void addInjectedContent(const InjectedContentVector&, const MatchPatternSet&);
+
+    // The activeTab permission only covers a single tab, so its content is injected into that tab's page alone.
+    struct TabInjectionTarget {
+        WebExtensionTabIdentifier tabIdentifier;
+        Ref<WebPageProxy> page;
+    };
+
+    struct TabInjectedContent {
+        UserScriptVector userScripts;
+        UserStyleSheetVector userStyleSheets;
+        HashMap<String, UserScriptVector> registeredUserScripts;
+        HashMap<String, UserStyleSheetVector> registeredUserStyleSheets;
+    };
+
     void addInjectedContent(const InjectedContentVector&, WebExtensionMatchPattern&);
+    void addInjectedContent(const InjectedContentVector&, WebExtensionMatchPattern&, const TabInjectionTarget&);
+    void addInjectedContent(const InjectedContentVector&, WebExtensionMatchPattern&, UserScriptVector&, UserStyleSheetVector&, RefPtr<WebPageProxy>, TabInjectedContent* = nullptr);
+    void addInjectedContent(const InjectedContentVector&, WebExtensionTab&, WebExtensionMatchPattern&);
+
+    void addTemporaryInjectedContent(const InjectedContentVector&);
+    void removeTemporaryInjectedContent(const String& scriptID);
 
     void updateInjectedContent() { removeInjectedContent(); addInjectedContent(); }
 
     void removeInjectedContent();
+    void removeAllInjectedContent();
     void removeInjectedContent(const MatchPatternSet&);
     void removeInjectedContent(WebExtensionMatchPattern&);
+    void removeInjectedContent(WebExtensionTab&);
+    void removeInjectedContent(const UserScriptVector&, const UserStyleSheetVector&);
 
     // DeclarativeNetRequest methods.
     // Loading/unloading static rules
@@ -921,18 +956,19 @@ private:
     // Bookmarks APIs
 #if ENABLE(WK_WEB_EXTENSIONS_BOOKMARKS)
     bool isBookmarksMessageAllowed(IPC::Decoder&);
-    void bookmarksCreate(const std::optional<String>& parentId, const std::optional<uint64_t>& index, const std::optional<String>& url, const std::optional<String>& title, CompletionHandler<void(std::expected<WebExtensionBookmarksParameters, WebExtensionError>&&)>&&);
-    void bookmarksGetTree(CompletionHandler<void(std::expected<Vector<WebExtensionBookmarksParameters>, WebExtensionError>&&)>&&);
-    void bookmarksGetSubTree(const String& bookmarkId, CompletionHandler<void(std::expected<Vector<WebExtensionBookmarksParameters>, WebExtensionError>&&)>&&);
-    void bookmarksGet(const Vector<String>& bookmarkId, CompletionHandler<void(std::expected<Vector<WebExtensionBookmarksParameters>, WebExtensionError>&&)>&&);
-    void bookmarksGetChildren(const String& bookmarkId, CompletionHandler<void(std::expected<Vector<WebExtensionBookmarksParameters>, WebExtensionError>&&)>&&);
-    void bookmarksGetRecent(uint64_t count, CompletionHandler<void(std::expected<Vector<WebExtensionBookmarksParameters>, WebExtensionError>&&)>&&);
-    void bookmarksSearch(const std::optional<String>& query, const std::optional<String>& url, const std::optional<String>& title, CompletionHandler<void(std::expected<Vector<WebExtensionBookmarksParameters>, WebExtensionError>&&)>&&);
-    void bookmarksUpdate(const String& bookmarkId, const std::optional<String>& url, const std::optional<String>& title, CompletionHandler<void(std::expected<WebExtensionBookmarksParameters, WebExtensionError>&&)>&&);
-    void bookmarksMove(const String& bookmarkId, const std::optional<String>& parentId, const std::optional<uint64_t>& index, CompletionHandler<void(std::expected<WebExtensionBookmarksParameters, WebExtensionError>&&)>&&);
-    void bookmarksRemove(const String& bookmarkId, CompletionHandler<void(std::expected<void, WebExtensionError>&&)>&&);
-    void bookmarksRemoveTree(const String& bookmarkId, CompletionHandler<void(std::expected<void, WebExtensionError>&&)>&&);
-#endif
+    void bookmarksCreate(const WebExtensionBookmarkChanges&, CompletionHandler<void(std::expected<WebExtensionBookmarkParameters, WebExtensionError>&&)>&&);
+    void bookmarksGetTree(CompletionHandler<void(std::expected<Vector<WebExtensionBookmarkParameters>, WebExtensionError>&&)>&&);
+    void bookmarksGetSubTree(const String& bookmarkIdentifier, CompletionHandler<void(std::expected<Vector<WebExtensionBookmarkParameters>, WebExtensionError>&&)>&&);
+    void bookmarksGet(const Vector<String>& bookmarkIdentifiers, CompletionHandler<void(std::expected<Vector<WebExtensionBookmarkParameters>, WebExtensionError>&&)>&&);
+    void bookmarksGetChildren(const String& bookmarkIdentifier, CompletionHandler<void(std::expected<Vector<WebExtensionBookmarkParameters>, WebExtensionError>&&)>&&);
+    void bookmarksGetRecent(uint64_t numberOfItems, CompletionHandler<void(std::expected<Vector<WebExtensionBookmarkParameters>, WebExtensionError>&&)>&&);
+    void bookmarksSearch(std::optional<String> query, std::optional<String> url, std::optional<String> title, CompletionHandler<void(std::expected<Vector<WebExtensionBookmarkParameters>, WebExtensionError>&&)>&&);
+    void bookmarksUpdate(const WebExtensionBookmarkChanges&, CompletionHandler<void(std::expected<WebExtensionBookmarkParameters, WebExtensionError>&&)>&&);
+    void bookmarksMove(const WebExtensionBookmarkChanges&, CompletionHandler<void(std::expected<WebExtensionBookmarkParameters, WebExtensionError>&&)>&&);
+    void bookmarksRemove(const Vector<String>& bookmarkIdentifiers, CompletionHandler<void(std::expected<void, WebExtensionError>&&)>&&);
+    void bookmarksRemoveTree(const String& bookmarkIdentifier, CompletionHandler<void(std::expected<void, WebExtensionError>&&)>&&);
+#endif // ENABLE(WK_WEB_EXTENSIONS_BOOKMARKS)
+
     // Commands APIs
     bool isCommandsMessageAllowed(IPC::Decoder&);
     void commandsGetAll(CompletionHandler<void(Vector<WebExtensionCommandParameters>)>&&);
@@ -1029,7 +1065,7 @@ private:
     bool isPortConnected(WebExtensionContentWorldType sourceContentWorldType, WebExtensionContentWorldType targetContentWorldType, WebExtensionPortChannelIdentifier);
     void clearQueuedPortMessages(WebExtensionContentWorldType, WebExtensionPortChannelIdentifier);
     Vector<PortQueuedMessage> portQueuedMessages(WebExtensionContentWorldType, WebExtensionPortChannelIdentifier);
-    void firePortMessageEventsIfNeeded(WebExtensionContentWorldType, std::optional<WebPageProxyIdentifier>, WebExtensionPortChannelIdentifier, const WebExtensionMessage&, bool userGesture);
+    void firePortMessageEventsIfNeeded(WebExtensionContentWorldType sourceContentWorldType, WebExtensionContentWorldType targetContentWorldType, std::optional<WebPageProxyIdentifier>, WebExtensionPortChannelIdentifier, const WebExtensionMessage&, bool userGesture);
     void fireQueuedPortMessageEventsIfNeeded(WebExtensionContentWorldType, WebExtensionPortChannelIdentifier);
     void sendQueuedNativePortMessagesIfNeeded(WebExtensionPortChannelIdentifier);
     void firePortDisconnectEventIfNeeded(WebExtensionContentWorldType sourceContentWorldType, WebExtensionContentWorldType targetContentWorldType, WebExtensionPortChannelIdentifier);
@@ -1243,6 +1279,7 @@ private:
     RefPtr<WebExtensionRegisteredScriptsSQLiteStore> m_registeredContentScriptsStorage;
 
     UserStyleSheetVector m_dynamicallyInjectedUserStyleSheets;
+    HashMap<WebExtensionTabIdentifier, TabInjectedContent> m_temporaryInjectedContentPerTabMap;
 
     HashMap<String, Ref<WebExtensionAlarm>> m_alarmMap;
     WeakHashMap<WebExtensionWindow, Ref<WebExtensionAction>> m_actionWindowMap;

@@ -27,8 +27,10 @@
 
 #if ENABLE(GPU_PROCESS)
 
+#include "ImageBufferSetIdentifier.h"
 #include "ModelObjectHeap.h"
 #include "RemoteGPURequestAdapterResponse.h"
+#include "RemoteImageBufferSet.h"
 #include "RemoteVideoFrameIdentifier.h"
 #include "SharedPreferencesForWebProcess.h"
 #include "StreamConnectionWorkQueue.h"
@@ -43,10 +45,15 @@
 #include <WebCore/RenderingResourceIdentifier.h>
 #include <wtf/CompletionHandler.h>
 #include <wtf/Ref.h>
+#include <wtf/RetainPtr.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/ThreadAssertions.h>
 #include <wtf/ThreadSafeWeakPtr.h>
 #include <wtf/WeakPtr.h>
+
+#if HAVE(IOSURFACE)
+#include <IOSurface/IOSurfaceRef.h>
+#endif
 
 namespace IPC {
 class Connection;
@@ -82,7 +89,7 @@ class RemoteGPU final : public CanMakeWeakPtr<RemoteGPU>, public IPC::StreamServ
     WTF_MAKE_TZONE_ALLOCATED(RemoteGPU);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RemoteGPU);
 public:
-    static Ref<RemoteGPU> create(WebGPUIdentifier identifier, GPUConnectionToWebProcess& gpuConnectionToWebProcess, RemoteRenderingBackend& renderingBackend, Ref<IPC::StreamServerConnection>&& serverConnection)
+    static Ref<RemoteGPU> create(RemoteGPUIdentifier identifier, GPUConnectionToWebProcess& gpuConnectionToWebProcess, RemoteRenderingBackend& renderingBackend, Ref<IPC::StreamServerConnection>&& serverConnection)
     {
         auto result = adoptRef(*new RemoteGPU(identifier, gpuConnectionToWebProcess, renderingBackend, WTF::move(serverConnection)));
         result->initialize();
@@ -101,13 +108,24 @@ public:
     RefPtr<WebCore::WebGPUIntegration> backing();
     RefPtr<GPUConnectionToWebProcess> gpuConnectionToWebProcess() const;
 
+#if ENABLE(GPU_PROCESS_MODEL) && ENABLE(SPATIAL_PORTAL) && HAVE(IOSURFACE)
+    struct PortalContentRequest {
+        ImageBufferSetIdentifier bufferSet;
+        Vector<uint64_t> mappedBuffers;
+    };
+
+    Vector<RemoteImageBufferSet::ExternalReadResult> fetchPortalContentSurfaces(const Vector<PortalContentRequest>&);
+#endif
+
     static Vector<UniqueRef<WebCore::IOSurface>> createRenderBuffers(unsigned width, unsigned height, const WebCore::ProcessIdentity&, bool standardDynamicRange = false);
     IPC::StreamConnectionWorkQueue& workQueue() const { return m_workQueue; }
+    // The destination of the messages to RemoteGPUProxy in the Web process.
+    RemoteGPUIdentifier identifier() const { return m_identifier; }
 
 private:
     friend class WebGPU::ObjectHeap;
 
-    RemoteGPU(WebGPUIdentifier, GPUConnectionToWebProcess&, RemoteRenderingBackend&, Ref<IPC::StreamServerConnection>&&);
+    RemoteGPU(RemoteGPUIdentifier, GPUConnectionToWebProcess&, RemoteRenderingBackend&, Ref<IPC::StreamServerConnection>&&);
 
     RemoteGPU(const RemoteGPU&) = delete;
     RemoteGPU(RemoteGPU&&) = delete;
@@ -117,6 +135,7 @@ private:
     void initialize();
     void workQueueInitialize();
     void workQueueUninitialize();
+    void clearObjectHeaps();
 
     template<typename T>
     IPC::Error send(T&& message) const
@@ -129,12 +148,12 @@ private:
     // IPC::StreamServerConnection::Client overrides.
     void didReceiveInvalidMessage(IPC::StreamServerConnection&, IPC::MessageName, const Vector<uint32_t>&) final;
 
-    void requestAdapter(const WebGPU::RequestAdapterOptions&, WebGPUIdentifier, CompletionHandler<void(std::optional<RemoteGPURequestAdapterResponse>&&)>&&);
+    void requestAdapter(const WebGPU::RequestAdapterOptions&, WebGPUAdapterIdentifier, CompletionHandler<void(std::optional<RemoteGPURequestAdapterResponse>&&)>&&);
     NODELETE void createModelBacking(unsigned width, unsigned height, WebModel::ImageAsset&& diffuseTexture, WebModel::ImageAsset&& specularTexture, WebKit::WebModelIdentifier, bool standardDynamicRange, CompletionHandler<void(Vector<MachSendRight>&&)>&&);
 
-    void createPresentationContext(const WebGPU::PresentationContextDescriptor&, WebGPUIdentifier);
+    void createPresentationContext(const WebGPU::PresentationContextDescriptor&, WebGPUPresentationContextIdentifier);
 
-    void createCompositorIntegration(WebGPUIdentifier);
+    void createCompositorIntegration(WebGPUCompositorIntegrationIdentifier);
 
     void isValid(WebGPUIdentifier, CompletionHandler<void(bool, bool)>&&);
 
@@ -145,7 +164,7 @@ private:
     RefPtr<WebCore::WebGPUIntegration> m_backing WTF_GUARDED_BY_CAPABILITY(workQueue());
     const Ref<WebGPU::ObjectHeap> m_objectHeap WTF_GUARDED_BY_CAPABILITY(workQueue());
     const Ref<ModelObjectHeap> m_modelObjectHeap WTF_GUARDED_BY_CAPABILITY(workQueue());
-    const WebGPUIdentifier m_identifier;
+    const RemoteGPUIdentifier m_identifier;
     const Ref<RemoteRenderingBackend> m_renderingBackend;
 };
 

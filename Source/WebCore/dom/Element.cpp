@@ -528,7 +528,8 @@ static ShouldIgnoreMouseEvent dispatchPointerEventIfNeeded(Element& element, con
         // That state should live in PointerCaptureController, not be inferred from event tags.
         // Migrating there would make this short circuit unnecessary.
         bool isSyntheticTouchEvent = [&] {
-            if (platformEvent.syntheticClickType() != SyntheticClickType::NoTap && platformEvent.inputSource() != MouseEventInputSource::Automation)
+            // Except on the macOS touch screen, where a tap's pointer events come from its synthetic click.
+            if (platformEvent.syntheticClickType() != SyntheticClickType::NoTap && platformEvent.inputSource() != MouseEventInputSource::Touch)
                 return true;
 #if ENABLE(TOUCH_EVENTS) && !ENABLE(IOS_TOUCH_EVENTS)
             if (element.document().settings().isTouchEventEmulationEnabled())
@@ -753,16 +754,6 @@ void Element::cloneShadowTreeIfPossible(Element& newHost) const
         Ref clone = oldShadowRoot->cloneNodeInternal(protect(newHost.document()), Node::CloningOperation::SelfWithTemplateContent, nullptr);
         return downcast<ShadowRoot>(WTF::move(clone));
     }();
-    if (oldShadowRoot->usesNullCustomElementRegistry())
-        clonedShadowRoot->setUsesNullCustomElementRegistry(); // Set this flag for Element::insertionSteps.
-    else {
-        clonedShadowRoot->clearUsesNullCustomElementRegistry(); // Unset flag potentially set by DocumentFragment constructor
-        if (RefPtr registry = oldShadowRoot->customElementRegistry()) {
-            if (!registry->isScoped())
-                registry = newHost.document().effectiveGlobalCustomElementRegistry();
-            clonedShadowRoot->setCustomElementRegistry(WTF::move(registry));
-        }
-    }
     newHost.addShadowRoot(clonedShadowRoot.copyRef());
     oldShadowRoot->cloneChildNodes(protect(newHost.document()), nullptr, clonedShadowRoot);
 }
@@ -779,9 +770,9 @@ Ref<Element> Element::cloneElementWithChildren(Document& document, CustomElement
 Ref<Element> Element::cloneElementWithoutChildren(Document& document, CustomElementRegistry* fallbackRegistry) const
 {
     RefPtr registry = CustomElementRegistry::registryForElement(*this);
-    if (!registry)
+    if (!registry && !keepsCustomElementRegistryNull())
         registry = fallbackRegistry;
-    if (registry && !registry->isScoped())
+    if (registry && !registry->isScoped() && registry != document.customElementRegistry())
         registry = document.effectiveGlobalCustomElementRegistry();
 
     Ref clone = cloneElementWithoutAttributesAndChildren(document, registry.get());
@@ -792,7 +783,10 @@ Ref<Element> Element::cloneElementWithoutChildren(Document& document, CustomElem
 
     clone->cloneDataFromElement(*this);
 
-    if (usesNullCustomElementRegistry() && !registry)
+    if (keepsCustomElementRegistryNull()) [[unlikely]] {
+        clone->setUsesNullCustomElementRegistry();
+        clone->setKeepsCustomElementRegistryNull();
+    } else if (!registry && document.customElementRegistry())
         clone->setUsesNullCustomElementRegistry();
 
     return clone;
@@ -966,6 +960,31 @@ bool Element::hasFocusableStyle() const
     return isFocusableStyle(style.get());
 }
 
+// https://w3c.github.io/svgwg/svg2-draft/render.html#TermNeverRenderedElement
+// https://drafts.csswg.org/filter-effects-1/#FilterElement
+static bool isNeverRenderedSVGElement(const Element& element)
+{
+    switch (element.elementName()) {
+    case ElementNames::SVG::clipPath:
+    case ElementNames::SVG::defs:
+    case ElementNames::SVG::desc:
+    case ElementNames::SVG::filter:
+    case ElementNames::SVG::linearGradient:
+    case ElementNames::SVG::marker:
+    case ElementNames::SVG::mask:
+    case ElementNames::SVG::metadata:
+    case ElementNames::SVG::pattern:
+    case ElementNames::SVG::radialGradient:
+    case ElementNames::SVG::script:
+    case ElementNames::SVG::style:
+    case ElementNames::SVG::symbol:
+    case ElementNames::SVG::title:
+        return true;
+    default:
+        return false;
+    }
+}
+
 bool Element::isFocusable() const
 {
     if (!isConnected() || !supportsFocus())
@@ -979,11 +998,15 @@ bool Element::isFocusable() const
             return false;
     }
 
-    // Never-rendered SVG elements (e.g. <defs>, <clipPath>, <symbol>) and any
-    // elements inside them are never rendered and should not be focusable per
-    // the SVG spec. Walk from this element's own renderer upwards so that both
-    // a hidden container and its descendants are rejected.
     // https://w3c.github.io/svgwg/svg2-draft/render.html#Rendered-vs-NonRendered
+    if (is<SVGElement>(*this)) {
+        for (auto* ancestor = parentElementInComposedTree(); ancestor; ancestor = ancestor->parentElementInComposedTree()) {
+            if (isNeverRenderedSVGElement(*ancestor))
+                return false;
+        }
+    }
+
+    // Children of a display: none <g> keep renderers, inside a hidden container.
     for (auto* ancestor = renderer(); ancestor; ancestor = ancestor->parent()) {
         if (ancestor->isRenderSVGHiddenContainer() || ancestor->isLegacyRenderSVGHiddenContainer())
             return false;
@@ -1299,12 +1322,12 @@ void Element::scrollIntoView(Variant<bool, ScrollIntoViewOptions>&& arg)
 
     document->updateLayoutIgnorePendingStylesheets(LayoutOptions::UpdateCompositingLayers);
 
-    SingleThreadWeakPtr<RenderElement> renderer;
+    CheckedPtr<RenderElement> renderer;
     bool insideFixed = false;
     LayoutRect absoluteBounds;
 
     if (auto listBoxScrollResult = listBoxElementScrollIntoView(*this)) {
-        renderer = WTF::move(listBoxScrollResult->first);
+        renderer = listBoxScrollResult->first.get();
         absoluteBounds = listBoxScrollResult->second;
 
         auto listBoxAbsoluteBounds = renderer->absoluteAnchorRectWithScrollMargin(&insideFixed).marginRect;
@@ -1990,29 +2013,44 @@ NODELETE inline bool shouldObtainBoundsFromBoxModel(const Element* element)
     return false;
 }
 
-IntRect Element::boundsInRootViewSpace()
+static std::optional<IntRect> elementBoundingBox(Element& element)
 {
-    Ref document = this->document();
+    Ref document = element.document();
     document->updateLayoutIgnorePendingStylesheets();
 
-    RefPtr view = document->view();
-    if (!view)
-        return IntRect();
+    if (!document->view())
+        return std::nullopt;
 
-    if (isInNonRenderedSVGSubtree(*this))
-        return IntRect();
+    if (isInNonRenderedSVGSubtree(element))
+        return std::nullopt;
 
     Vector<FloatQuad> quads;
 
-    if (RefPtr svgElement = elementWithSVGLayoutBox(*this)) {
+    if (RefPtr svgElement = elementWithSVGLayoutBox(element)) {
         if (auto localRect = svgElement->getBoundingBox())
-            quads.append(protect(renderer())->localToAbsoluteQuad(*localRect));
-    } else if (shouldObtainBoundsFromBoxModel(this)) {
+            quads.append(protect(element.renderer())->localToAbsoluteQuad(*localRect));
+    } else if (shouldObtainBoundsFromBoxModel(&element)) {
         // Get the bounding rectangle from the box model.
-        protect(renderer())->absoluteQuads(quads);
+        protect(element.renderer())->absoluteQuads(quads);
     }
 
-    return view->contentsToRootView(enclosingIntRect(unitedBoundingBoxes(quads)));
+    return enclosingIntRect(unitedBoundingBoxes(quads));
+}
+
+IntRect Element::boundsInRootViewSpace()
+{
+    auto bounds = elementBoundingBox(*this);
+    if (!bounds)
+        return IntRect();
+    return protect(document().view())->contentsToRootView(*bounds);
+}
+
+IntRect Element::boundsInMainFrameViewSpace()
+{
+    auto bounds = elementBoundingBox(*this);
+    if (!bounds)
+        return IntRect();
+    return protect(document().view())->contentsToMainFrameView(*bounds);
 }
 
 IntRect Element::boundingBoxInRootViewCoordinates() const
@@ -2094,8 +2132,7 @@ LayoutRect Element::absoluteEventBounds(bool& boundsIncludeAllDescendantElements
                     // FIXME: this doesn't handle nested columns.
                     if (CheckedPtr multicolContainer = dynamicDowncast<RenderBox>(fragmentedFlow->parent())) {
                         auto overflowRect = multicolContainer->layoutOverflowRect();
-                        // FIXME: Remove suppression once rdar://189998444 is fixed.
-                        SUPPRESS_MEMORY_UNSAFE_CAST result = LayoutRect(multicolContainer->localToAbsoluteQuad(FloatRect(overflowRect), MapCoordinatesMode::UseTransforms, &includesFixedPositionElements).boundingBox());
+                        result = LayoutRect(multicolContainer->localToAbsoluteQuad(FloatRect(overflowRect), MapCoordinatesMode::UseTransforms, &includesFixedPositionElements).boundingBox());
                         computedBounds = true;
                     }
                 }
@@ -2103,8 +2140,7 @@ LayoutRect Element::absoluteEventBounds(bool& boundsIncludeAllDescendantElements
 
             if (!computedBounds) {
                 LayoutRect overflowRect = box->layoutOverflowRect();
-                // FIXME: Remove suppression once rdar://189998444 is fixed.
-                SUPPRESS_MEMORY_UNSAFE_CAST result = LayoutRect(box->localToAbsoluteQuad(FloatRect(overflowRect), MapCoordinatesMode::UseTransforms, &includesFixedPositionElements).boundingBox());
+                result = LayoutRect(box->localToAbsoluteQuad(FloatRect(overflowRect), MapCoordinatesMode::UseTransforms, &includesFixedPositionElements).boundingBox());
                 boundsIncludeAllDescendantElements = layoutOverflowRectContainsAllDescendants(*box);
             }
         } else
@@ -2563,8 +2599,12 @@ void Element::attributeChanged(const QualifiedName& name, const AtomString& oldV
         break;
     }
     case AttributeNames::customelementregistryAttr:
-        if (reason == AttributeModificationReason::Parser && !isDefinedCustomElement())
+        if (reason == AttributeModificationReason::Parser && isHTMLElement() && !isDefinedCustomElement()) {
+            if (usesScopedCustomElementRegistryMap())
+                CustomElementRegistry::removeFromScopedCustomElementRegistryMap(*this);
             setUsesNullCustomElementRegistry();
+            setKeepsCustomElementRegistryNull();
+        }
         break;
     default: {
         Ref document = this->document();
@@ -2860,7 +2900,7 @@ Style::Resolver& Element::styleResolver()
     if (RefPtr shadowRoot = containingShadowRoot())
         return protect(shadowRoot->styleScope())->resolver();
 
-    return document().styleScope().resolver();
+    return protect(document().styleScope())->resolver();
 }
 
 Style::UnadjustedStyle Element::resolveStyle(const Style::ResolutionContext& resolutionContext)
@@ -2886,6 +2926,12 @@ void Element::invalidateStyleForSubtree()
 void Element::invalidateStyleAndRenderersForSubtree()
 {
     Node::invalidateStyle(Style::Validity::SubtreeInvalid, Style::InvalidationMode::RebuildRenderer);
+}
+
+void Element::invalidateStyleAndRenderersAfterSlotReassignment()
+{
+    // The ancestors on the new composed tree path need marking even if the element is already invalid.
+    Node::invalidateStyle(Style::Validity::SubtreeInvalid, Style::InvalidationMode::InsertedIntoAncestor);
 }
 
 void Element::invalidateRenderer()
@@ -3049,10 +3095,11 @@ void Element::didMoveToNewDocument(Document& oldDocument, Document& newDocument)
         CustomElementReactionQueue::enqueueAdoptedCallbackIfNeeded(*this, oldDocument, newDocument);
 
     if (auto* observerData = intersectionObserverDataIfExists()) {
-        for (const auto& observer : observerData->observers) {
+        for (const auto& weakObserver : observerData->observers) {
+            Ref observer = *weakObserver;
             if (observer->hasObservationTargets()) {
-                oldDocument.removeIntersectionObserver(*observer);
-                newDocument.addIntersectionObserver(*observer);
+                oldDocument.removeIntersectionObserver(observer);
+                newDocument.addIntersectionObserver(observer);
             }
         }
     }
@@ -3153,10 +3200,8 @@ void Element::updateEffectiveLangState()
         return;
     }
 
-    if (hasLangAttrKnownToMatchDocumentElement()) {
-        // Unable to protect the document as it may have started destruction.
-        document().removeElementWithLangAttrMatchingDocumentElement(*this);
-    }
+    if (hasLangAttrKnownToMatchDocumentElement())
+        protect(document())->removeElementWithLangAttrMatchingDocumentElement(*this);
 
     setEffectiveLangKnownToMatchDocumentElement(false);
     ensureElementRareData().setEffectiveLang(lang);
@@ -3215,33 +3260,42 @@ bool Element::rendererIsNeeded(const Style::ComputedStyle& style)
     return style.display().doesGenerateBox();
 }
 
-RenderPtr<RenderElement> Element::createElementRenderer(Style::ComputedStyle&& style, const RenderTreePosition&)
+RenderPtr<RenderElement> Element::createElementRenderer(UniqueRef<Style::ComputedStyle>&& style, const RenderTreePosition&)
 {
     return RenderElement::createFor(*this, WTF::move(style));
 }
 
 static void preserveCustomElementRegistryAfterLeavingTreeScope(Element& element, ContainerNode& oldParent)
 {
-    if (!oldParent.isInShadowTree())
+    if (!oldParent.isInShadowTree() || element.usesNullCustomElementRegistry())
         return;
     if (RefPtr registry = oldParent.treeScope().customElementRegistry()) {
-        if (registry->isScoped() && !element.usesScopedCustomElementRegistryMap()) [[unlikely]]
+        if (registry->isScoped() && !element.usesScopedCustomElementRegistryMap() && !element.usesGlobalCustomElementRegistry()) [[unlikely]]
             CustomElementRegistry::addToScopedCustomElementRegistryMap(element, *registry);
     }
 }
 
 static void preserveCustomElementRegistryAfterEnteringTreeScope(Element& element)
 {
+    if (element.isInUserAgentShadowTree())
+        return;
     if (element.usesScopedCustomElementRegistryMap()) {
         if (CustomElementRegistry::registryForElement(element) == element.treeScope().customElementRegistry())
             CustomElementRegistry::removeFromScopedCustomElementRegistryMap(element);
     } else if (!element.usesNullCustomElementRegistry()) {
         if (element.treeScope().customElementRegistry() != element.document().customElementRegistry()) [[unlikely]] {
-            // This element was moved into a shadow tree with a scoped custom element registry.
-            // Keep using the document's non-scoped custom element registry.
-            if (RefPtr window = element.document().window())
-                CustomElementRegistry::addToScopedCustomElementRegistryMap(element, protect(window->ensureCustomElementRegistry()));
-        }
+            // This element was moved into a shadow tree with a different custom element registry.
+            // Keep using the document's custom element registry.
+            RefPtr registry = element.document().customElementRegistry();
+            if (!registry)
+                element.setUsesNullCustomElementRegistry();
+            else if (registry->isScoped()) [[unlikely]] {
+                // This happens when initialize() was called on a document without a browsing context.
+                CustomElementRegistry::addToScopedCustomElementRegistryMap(element, *registry);
+            } else
+                element.setUsesGlobalCustomElementRegistry();
+        } else if (element.usesGlobalCustomElementRegistry())
+            element.resetCustomElementRegistryType();
     }
 }
 
@@ -3580,10 +3634,9 @@ static bool canAttachAuthorShadowRoot(const Element& element)
         break;
     }
 
-    if (auto localName = element.localName(); Document::validateCustomElementName(localName) == CustomElementNameValidationStatus::Valid) {
-        if (auto* window = element.document().window()) {
-            auto* registry = window->customElementRegistry();
-            if (registry && registry->isShadowDisabled(localName))
+    if (auto localName = element.localName(); NameValidation::validateCustomElementName(localName) == CustomElementNameValidationStatus::Valid) {
+        if (auto* registry = CustomElementRegistry::registryForElement(element)) {
+            if (registry->isShadowDisabled(localName))
                 return false;
         }
 
@@ -3615,28 +3668,16 @@ ExceptionOr<ShadowRoot&> Element::attachShadow(const ShadowRootInit& init, std::
         registry = *init.customElementRegistry;
         if (registry && !registry->isScoped() && registry != document().customElementRegistry())
             return Exception { ExceptionCode::NotSupportedError };
-        if (!registry)
-            registryKind = CustomElementRegistryKind::Null;
-    }
-    auto scopedRegistry = ShadowRootScopedCustomElementRegistry::No;
-    if (!registryKind)
-        registryKind = CustomElementRegistryKind::Window;
-    if (registryKind == CustomElementRegistryKind::Null) {
-        ASSERT(!registry);
-        scopedRegistry = ShadowRootScopedCustomElementRegistry::Yes;
-    } else if (registry) {
-        ASSERT(registryKind == CustomElementRegistryKind::Window);
-        scopedRegistry = ShadowRootScopedCustomElementRegistry::Yes;
-    } else
+    } else if (registryKind != CustomElementRegistryKind::Null)
         registry = document().customElementRegistry();
+    // Only declarative shadow roots pass a kind, and those with a null registry keep it null.
+    auto keepsRegistryNull = registryKind == CustomElementRegistryKind::Null ? ShadowRootKeepsCustomElementRegistryNull::Yes : ShadowRootKeepsCustomElementRegistryNull::No;
     Ref shadow = ShadowRoot::create(protect(document()), init.mode, init.slotAssignment,
         init.delegatesFocus ? ShadowRootDelegatesFocus::Yes : ShadowRootDelegatesFocus::No,
         init.clonable ? ShadowRoot::Clonable::Yes : ShadowRoot::Clonable::No,
         init.serializable ? ShadowRootSerializable::Yes : ShadowRootSerializable::No,
         isPrecustomizedOrDefinedCustomElement() ? ShadowRootAvailableToElementInternals::Yes : ShadowRootAvailableToElementInternals::No,
-        WTF::move(registry), scopedRegistry);
-    if (registryKind == CustomElementRegistryKind::Null)
-        shadow->setUsesNullCustomElementRegistry(); // Set this flag for Element::insertionSteps.
+        WTF::move(registry), keepsRegistryNull);
     shadow->setReferenceTarget(AtomString(init.referenceTarget));
     addShadowRoot(shadow.copyRef());
     return shadow.get();
@@ -3812,8 +3853,6 @@ CustomElementReactionQueue* Element::reactionQueue() const
 
 CustomElementRegistry* Element::customElementRegistry() const
 {
-    if (RefPtr window = document().window())
-        window->ensureCustomElementRegistry(); // Create the global registry before querying since registryForElement doesn't ensure it.
     return CustomElementRegistry::registryForElement(*this);
 }
 
@@ -3870,7 +3909,7 @@ void Element::childrenChanged(const ChildChange& change)
         case ChildChange::Type::TextChanged:
         case ChildChange::Type::TextMovedFrom:
         case ChildChange::Type::TextMovedInto:
-            shadowRoot->didMutateTextNodesOfShadowHost();
+            shadowRoot->didMutateTextNodesOfShadowHost(change.type);
             break;
         case ChildChange::Type::NonContentsChildInserted:
         case ChildChange::Type::NonContentsChildRemoved:
@@ -4492,7 +4531,7 @@ void Element::blur()
 {
     if (treeScope().focusedElementInScope() == this) {
         if (RefPtr frame = document().frame())
-            frame->page()->focusController().setFocusedElement(nullptr, frame.get());
+            protect(frame->page()->focusController())->setFocusedElement(nullptr, frame.get());
         else
             protect(document())->setFocusedElement(nullptr);
     }
@@ -4580,7 +4619,7 @@ bool Element::dispatchMouseForceWillBegin()
     if (!frame)
         return false;
 
-    PlatformMouseEvent platformMouseEvent { frame->eventHandler().lastKnownMousePosition(), frame->eventHandler().lastKnownMouseGlobalPosition(), std::unexpected { MouseButtonState::None }, PlatformEvent::Type::NoType, 1, { }, MonotonicTime::now(), ForceAtClick, SyntheticClickType::NoTap, MouseEventInputSource::UserDriven };
+    PlatformMouseEvent platformMouseEvent { frame->eventHandler().lastKnownMousePosition(), frame->eventHandler().lastKnownMouseGlobalPosition(), std::unexpected { MouseButtonState::None }, PlatformEvent::Type::NoType, 1, { }, MonotonicTime::now(), ForceAtClick, SyntheticClickType::NoTap, MouseEventInputSource::Default };
     auto mouseForceWillBeginEvent = MouseEvent::create(eventNames().webkitmouseforcewillbeginEvent, document().windowProxy(), platformMouseEvent, { }, { }, 0, nullptr);
     mouseForceWillBeginEvent->setTarget(Ref { *this });
     dispatchEvent(mouseForceWillBeginEvent);
@@ -4840,8 +4879,7 @@ void Element::removeFromTopLayer()
         }
     }
 
-    // Unable to protect the document as it may have started destruction.
-    document().removeTopLayerElement(*this);
+    protect(document())->removeTopLayerElement(*this);
     clearEventTargetFlag(EventTargetFlag::IsInTopLayer);
 
     // User-action pseudo-classes should now propagate past this element since it is
@@ -5470,8 +5508,8 @@ void Element::disconnectFromIntersectionObserversSlow(IntersectionObserverData& 
     }
     observerData.registrations.clear();
 
-    for (const auto& observer : observerData.observers) {
-        if (observer)
+    for (const auto& weakObserver : observerData.observers) {
+        if (RefPtr observer = weakObserver)
             observer->rootDestroyed();
     }
     observerData.observers.clear();
@@ -5656,8 +5694,9 @@ bool Element::hasPendingKeyframesUpdate(const std::optional<Style::PseudoElement
     return data && data->hasPendingKeyframesUpdate();
 }
 
-void Element::disconnectFromResizeObserversSlow(ResizeObserverData& observerData)
+void Element::disconnectFromResizeObserversSlow()
 {
+    auto& observerData = *resizeObserverDataIfExists();
     for (RefPtr observer : observerData.observers)
         observer->targetDestroyed(*this);
     observerData.observers.clear();
@@ -6305,7 +6344,7 @@ String Element::resolveURLStringIfNeeded(const String& urlString, ResolveURLs re
     case ResolveURLs::YesExcludingURLsForPrivacy: {
         if (protect(document())->shouldMaskURLForBindings(completeURL))
             return maskedURLStringForBindings.get();
-#if PLATFORM(GTK)
+#if PLATFORM(GTK) || PLATFORM(WPE)
         return protect(document())->url().protocolIsFile() ? urlString : completeURL.string();
 #else
         return completeURL.string();
@@ -6413,7 +6452,7 @@ static ExceptionOr<Ref<Element>> contextElementForInsertion(const String& where,
     RefPtr contextElement = dynamicDowncast<Element>(contextNode.get());
     if (!contextElement || (contextNode->document().isHTMLDocument() && is<HTMLHtmlElement>(contextNode.get()))) {
         Ref bodyElement = HTMLBodyElement::create(protect(contextNode->document()));
-        if (contextNode->usesNullCustomElementRegistry())
+        if (contextNode->usesNullCustomElementRegistry() && contextNode->document().customElementRegistry())
             bodyElement->setUsesNullCustomElementRegistry();
         return Ref<Element> { WTF::move(bodyElement) };
     }

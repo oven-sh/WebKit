@@ -70,7 +70,7 @@ template<typename T>
 concept CanUseDefaultRefDerefTraits = !std::is_void_v<T> && (HasRefPtrMemberFunctions<T> || !DefaultRefDerefTraits<T>::isDefaultImplementation);
 
 template<typename T, typename PtrTraits, typename RefDerefTraits> class Ref;
-template<typename T, typename PtrTraits = RawPtrTraits<T>, typename RefDerefTraits = DefaultRefDerefTraits<T>> Ref<T, PtrTraits, RefDerefTraits> adoptRef(T&);
+template<typename T, typename PtrTraits = RawPtrTraits<T>, typename RefDerefTraits = DefaultRefDerefTraits<T>> SWIFT_UNSAFE Ref<T, PtrTraits, RefDerefTraits> adoptRef(T&);
 
 /**
  * @brief Ref is the non-nullable variant of RefPtr.
@@ -168,7 +168,6 @@ public:
 
     T* operator->() const LIFETIME_BOUND { ASSERT(m_ptr); return PtrTraits::unwrap(m_ptr); }
     T* ptr() const LIFETIME_BOUND RETURNS_NONNULL { ASSERT(m_ptr); return PtrTraits::unwrap(m_ptr); }
-    T* unsafePtr() const RETURNS_NONNULL { ASSERT(m_ptr); return PtrTraits::unwrap(m_ptr); } // FIXME: Replace with ptr() then remove.
     T& get() const LIFETIME_BOUND { ASSERT(m_ptr); return *PtrTraits::unwrap(m_ptr); }
     T& unsafeGet() const { ASSERT(m_ptr); return *PtrTraits::unwrap(m_ptr); } // FIXME: Replace with get() then remove.
     operator T&() const LIFETIME_BOUND { ASSERT(m_ptr); return *PtrTraits::unwrap(m_ptr); }

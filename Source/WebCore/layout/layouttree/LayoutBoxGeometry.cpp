@@ -28,8 +28,7 @@
 
 #include <wtf/TZoneMallocInlines.h>
 
-namespace WebCore {
-namespace Layout {
+namespace WebCore::Layout {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(BoxGeometry);
 
@@ -43,6 +42,7 @@ BoxGeometry::BoxGeometry(const BoxGeometry& other)
     , m_verticalSpaceForScrollbar(other.m_verticalSpaceForScrollbar)
     , m_horizontalSpaceForScrollbar(other.m_horizontalSpaceForScrollbar)
     , m_baseline(other.m_baseline)
+    , m_isBaselineSynthesized(other.m_isBaselineSynthesized)
 #if ASSERT_ENABLED
     , m_hasValidTop(other.m_hasValidTop)
     , m_hasValidLeft(other.m_hasValidLeft)
@@ -121,5 +121,3 @@ void BoxGeometry::reset()
 }
 
 }
-}
-

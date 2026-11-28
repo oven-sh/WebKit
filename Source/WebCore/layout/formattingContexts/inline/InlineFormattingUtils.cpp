@@ -43,8 +43,7 @@
 #include "TextUtil.h"
 #include <ranges>
 
-namespace WebCore {
-namespace Layout {
+namespace WebCore::Layout {
 
 InlineFormattingUtils::InlineFormattingUtils(const InlineFormattingContext& inlineFormattingContext)
     : m_inlineFormattingContext(inlineFormattingContext)
@@ -63,7 +62,7 @@ InlineLayoutUnit InlineFormattingUtils::logicalTopForNextLine(const LineLayoutRe
             CheckedRef lastRunLayoutBox = lineLayoutResult.runs.last().layoutBox();
             if (!lastRunLayoutBox->hasFloatClear() || lastRunLayoutBox->isOutOfFlowPositioned())
                 return lineLogicalRect.bottom();
-            auto blockAxisPositionWithClearance = floatingContext.blockAxisPositionWithClearance(lastRunLayoutBox.get(), formattingContext().geometryForBox(lastRunLayoutBox.get()));
+            auto blockAxisPositionWithClearance = floatingContext.blockAxisPositionWithClearance(lastRunLayoutBox.get(), formattingContext().geometryForBox(lastRunLayoutBox.get()), { });
             if (!blockAxisPositionWithClearance)
                 return lineLogicalRect.bottom();
             return std::max(lineLogicalRect.bottom(), InlineLayoutUnit(blockAxisPositionWithClearance->position));
@@ -80,17 +79,17 @@ InlineLayoutUnit InlineFormattingUtils::logicalTopForNextLine(const LineLayoutRe
                 return LayoutUnit { *nextLineLogicalTopCandidate };
             // We have to have a hint when intrusive floats prevented any inline content placement.
             ASSERT_NOT_REACHED();
-            return LayoutUnit { lineLogicalRect.top() + formattingContext().root().style().usedLineHeight() };
+            return LayoutUnit { lineLogicalRect.top() + protect(formattingContext().root().style())->usedLineHeight() };
         };
-        auto floatConstraints = floatingContext.constraints(toLayoutUnit(lineLogicalRect.top()), nextLineLogicalTop(), FloatingContext::MayBeAboveLastFloat::Yes);
+        auto floatConstraints = floatingContext.constraints(AxisPosition<FormattingContextRoot> { toLayoutUnit(lineLogicalRect.top()) }, AxisPosition<FormattingContextRoot> { nextLineLogicalTop() }, FloatingContext::MayBeAboveLastFloat::Yes);
         if (floatConstraints.start && floatConstraints.end) {
             // In case of left and right constraints, we need to pick the one that's closer to the current line.
-            return std::min(floatConstraints.start->y, floatConstraints.end->y);
+            return std::min(floatConstraints.start->y(), floatConstraints.end->y()).value();
         }
         if (floatConstraints.start)
-            return floatConstraints.start->y;
+            return floatConstraints.start->y().value();
         if (floatConstraints.end)
-            return floatConstraints.end->y;
+            return floatConstraints.end->y().value();
         // If we didn't manage to place a content on this vertical position due to intrusive floats, we have to have
         // at least one float here.
         ASSERT_NOT_REACHED();
@@ -113,10 +112,6 @@ bool InlineFormattingUtils::inlineLevelBoxAffectsLineBox(const InlineLevelBox& i
         if (inlineLevelBox.isPreferredLineHeightFontMetricsBased())
             return false;
         return formattingContext().layoutState().inStandardsMode() ? true : InlineQuirks::lineBreakBoxIsOnlyContentOnLine(lineBox);
-    }
-    if (inlineLevelBox.isListMarker()) {
-        // This does not match other browser engines. see webkit.org/b/256390.
-        return true;
     }
     if (inlineLevelBox.isInlineBox()) {
         // https://drafts.csswg.org/css-overflow-4/#block-ellipsis
@@ -198,7 +193,7 @@ InlineLayoutUnit InlineFormattingUtils::computedTextIndent(IsIntrinsicWidthMode 
 InlineLayoutUnit InlineFormattingUtils::initialLineHeight(bool isFirstLine) const
 {
     if (formattingContext().layoutState().inStandardsMode())
-        return isFirstLine ? formattingContext().root().firstLineStyle().usedLineHeight() : formattingContext().root().style().usedLineHeight();
+        return isFirstLine ? protect(formattingContext().root().firstLineStyle())->usedLineHeight() : protect(formattingContext().root().style())->usedLineHeight();
     return formattingContext().quirks().initialLineHeight();
 }
 
@@ -209,7 +204,7 @@ FloatingContext::Constraints InlineFormattingUtils::floatConstraintsForLine(Inli
     if (logicalTopCandidate.mightBeSaturated() || logicalBottomCandidate.mightBeSaturated())
         return { };
     // Check for intruding floats and adjust logical left/available width for this line accordingly.
-    return floatingContext.constraints(logicalTopCandidate, logicalBottomCandidate, FloatingContext::MayBeAboveLastFloat::Yes);
+    return floatingContext.constraints(AxisPosition<FormattingContextRoot> { logicalTopCandidate }, AxisPosition<FormattingContextRoot> { logicalBottomCandidate }, FloatingContext::MayBeAboveLastFloat::Yes);
 }
 
 InlineLayoutUnit InlineFormattingUtils::horizontalAlignmentOffset(const Style::ComputedStyle& rootStyle, InlineLayoutUnit contentLogicalRight, InlineLayoutUnit lineLogicalWidth, InlineLayoutUnit hangingTrailingWidth, bool isLastLineOrLineEndsWithForcedLineBreak, std::optional<TextDirection> inlineBaseDirectionOverride)
@@ -441,7 +436,7 @@ bool InlineFormattingUtils::isAtSoftWrapOpportunity(const InlineItem& previous, 
         return inlineItem.layoutBox().parent().style().isListMarkerStyle();
     };
     if (isMarkerContent(previous) && !isMarkerContent(next))
-        return TextUtil::isWrappingAllowed(nearestCommonAncestor(previous.layoutBox(), next.layoutBox(), formattingContext().root()).style());
+        return TextUtil::isWrappingAllowed(nearestCommonAncestor(protect(previous.layoutBox()), protect(next.layoutBox()), protect(formattingContext().root())).style());
 
     if (is<InlineTextItem>(previous) && is<InlineTextItem>(next)) {
         auto& previousInlineTextItem = uncheckedDowncast<InlineTextItem>(previous);
@@ -474,15 +469,7 @@ bool InlineFormattingUtils::isAtSoftWrapOpportunity(const InlineItem& previous, 
         // For soft wrap opportunities defined by the boundary between two characters, the white-space property on the nearest common ancestor of the two characters controls breaking.
         if (!endsWithSoftWrapOpportunity(previousInlineTextItem, nextInlineTextItem))
             return false;
-        return TextUtil::isWrappingAllowed(nearestCommonAncestor(previousInlineTextItem.layoutBox(), nextInlineTextItem.layoutBox(), formattingContext().root()).style());
-    }
-    if (previous.layoutBox().isListMarkerBox()) {
-        // An outside marker is not on the line's content flow, so it offers nothing to break after.
-        return false;
-    }
-    if (next.layoutBox().isListMarkerBox()) {
-        // FIXME: SHould this ever be the case?
-        return true;
+        return TextUtil::isWrappingAllowed(nearestCommonAncestor(protect(previousInlineTextItem.layoutBox()), protect(nextInlineTextItem.layoutBox()), protect(formattingContext().root())).style());
     }
     if (previous.isAtomicInlineBox() || next.isAtomicInlineBox()) {
         auto isImageWithNoSoftWrapOpportunityNextTo = [&](auto& inlineItem, auto& adjacentInlineItem) {
@@ -571,7 +558,7 @@ size_t InlineFormattingUtils::nextWrapOpportunity(size_t startIndex, const Inlin
             // ex-</span><span>ample               : wrap opportunity is after "ex-</span>".
             // ex-<span><span>ample                : wrap opportunity is after "ex-".
             struct InlineBoxPosition {
-                const Box* inlineBox { nullptr };
+                CheckedPtr<const Box> inlineBox;
                 size_t index { 0 };
             };
             Vector<InlineBoxPosition> inlineBoxStack;
@@ -690,7 +677,7 @@ bool InlineFormattingUtils::shouldDiscardRemainingContentInBlockDirection() cons
     return lineClamp->maximumLines == inlineLayoutState.lineCountWithInlineContentIncludingNestedBlocks();
 }
 
-std::optional<BlockOverflowEllipsis> InlineFormattingUtils::blockEllipsisForLine() const
+std::optional<BlockOverflowEllipsis> InlineFormattingUtils::blockEllipsisForLine(std::optional<size_t> numberOfPrecedingLines) const
 {
     auto& inlineLayoutState = formattingContext().layoutState();
     auto lineClamp = inlineLayoutState.parentBlockLayoutState().lineClamp();
@@ -698,7 +685,7 @@ std::optional<BlockOverflowEllipsis> InlineFormattingUtils::blockEllipsisForLine
     if (!lineClamp || lineClamp->isLegacy)
         return { };
     // Clamping is eager: the line that reaches the limit gets the ellipsis even when no content follows it.
-    if (inlineLayoutState.lineCountWithInlineContentIncludingNestedBlocks() + 1 != lineClamp->maximumLines)
+    if (numberOfPrecedingLines.value_or(inlineLayoutState.lineCountWithInlineContentIncludingNestedBlocks()) + 1 != lineClamp->maximumLines)
         return { };
 
     CheckedRef root = formattingContext().root();
@@ -711,7 +698,8 @@ std::optional<BlockOverflowEllipsis> InlineFormattingUtils::blockEllipsisForLine
             return TextUtil::ellipsisText();
         },
         [&](const Style::String& string) -> AtomString {
-            return AtomString { string.value };
+            // https://drafts.csswg.org/css-overflow-4/#valdef-block-ellipsis-string
+            return TextUtil::ellipsisStringWithCollapsedForcedLineBreaks(string.value);
         }
     );
     if (ellipsisText.isEmpty())
@@ -726,5 +714,3 @@ std::optional<BlockOverflowEllipsis> InlineFormattingUtils::blockEllipsisForLine
 }
 
 }
-}
-

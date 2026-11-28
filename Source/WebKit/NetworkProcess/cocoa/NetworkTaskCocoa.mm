@@ -44,9 +44,9 @@
 namespace WebKit {
 using namespace WebCore;
 
-NODELETE static inline bool computeIsAlwaysOnLoggingAllowed(NetworkSession& session)
+static inline bool computeIsAlwaysOnLoggingAllowed(NetworkSession& session)
 {
-    if (session.networkProcess().sessionIsControlledByAutomation(session.sessionID()))
+    if (protect(NetworkProcess::singleton())->sessionIsControlledByAutomation(session.sessionID()))
         return true;
 
     return session.sessionID().isAlwaysOnLoggingAllowed();
@@ -98,8 +98,7 @@ WebCore::RegistrableDomain NetworkTaskCocoa::lastCNAMEDomain(String cname)
 static RetainPtr<NSArray<NSHTTPCookie *>> cookiesByCappingExpiry(NSArray<NSHTTPCookie *> *cookies, Seconds ageCap)
 {
     RetainPtr cappedCookies = [NSMutableArray arrayWithCapacity:cookies.count];
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL NSHTTPCookie *cookie in cookies)
+    for (NSHTTPCookie *cookie in cookies)
         [cappedCookies addObject:NetworkStorageSession::capExpiryOfPersistentCookie(cookie, ageCap).get()];
     return cappedCookies;
 }
@@ -108,8 +107,7 @@ static RetainPtr<NSArray<NSHTTPCookie *>> cookiesByCappingExpiry(NSArray<NSHTTPC
 static RetainPtr<NSArray<NSHTTPCookie *>> cookiesBySettingPartition(NSArray<NSHTTPCookie *> *cookies, NSString* partition)
 {
     RetainPtr<NSMutableArray> partitionedCookies = [NSMutableArray arrayWithCapacity:cookies.count];
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL NSHTTPCookie *cookie in cookies) {
+    for (NSHTTPCookie *cookie in cookies) {
         RetainPtr partitionedCookie = NetworkStorageSession::setCookiePartition(cookie, partition);
         if (partitionedCookie)
             [partitionedCookies addObject:partitionedCookie.get()];
@@ -261,8 +259,7 @@ void NetworkTaskCocoa::setCookieTransformForFirstPartyRequest(const WebCore::Res
             if (shouldCapCookieExpiryForThirdPartyIPAddress(*remoteAddress, *firstPartyAddress) && !needsThirdPartyIPAddressQuirk(requestURL, firstPartyRegistrableDomainName)) {
                 RetainPtr cappedCookies = cookiesByCappingExpiry(cookiesSetInResponse, ageCapForCNAMECloakedCookies);
                 if (debugLoggingEnabled) {
-                    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-                    for (SUPPRESS_UNRETAINED_LOCAL NSHTTPCookie *cookie in cappedCookies.get())
+                    for (NSHTTPCookie *cookie in cappedCookies.get())
                         RELEASE_LOG_INFO(ITPDebug, "Capped the expiry of third-party IP address cookie named %{public}@.", cookie.name);
                 }
                 return cappedCookies.autorelease();
@@ -291,8 +288,7 @@ void NetworkTaskCocoa::setCookieTransformForFirstPartyRequest(const WebCore::Res
             // executing the block.
             RetainPtr cappedCookies = cookiesByCappingExpiry(cookiesSetInResponse, ageCapForCNAMECloakedCookies).autorelease();
             if (debugLoggingEnabled) {
-                // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-                for (SUPPRESS_UNRETAINED_LOCAL NSHTTPCookie *cookie in cappedCookies.get())
+                for (NSHTTPCookie *cookie in cappedCookies.get())
                     RELEASE_LOG_INFO(ITPDebug, "Capped the expiry of third-party CNAME cloaked cookie named %{public}@.", cookie.name);
             }
             return cappedCookies.autorelease();
@@ -419,7 +415,7 @@ void NetworkTaskCocoa::willPerformHTTPRedirection(WebCore::ResourceResponse&& re
 
 #if !RELEASE_LOG_DISABLED
     if (protect(m_networkSession)->shouldLogCookieInformation())
-        RELEASE_LOG_IF(isAlwaysOnLoggingAllowed(), Network, "%p - NetworkTaskCocoa::willPerformHTTPRedirection::logCookieInformation: pageID=%" PRIu64 ", frameID=%" PRIu64 ", taskID=%lu: %s cookies for redirect URL %s", this, pageID() ? pageID()->toUInt64() : 0, frameID() ? frameID()->toUInt64() : 0, (unsigned long)[task() taskIdentifier], (m_hasBeenSetToUseStatelessCookieStorage ? "Blocking" : "Not blocking"), request.url().string().utf8());
+        RELEASE_LOG_IF(isAlwaysOnLoggingAllowed(), Network, "%p - NetworkTaskCocoa::willPerformHTTPRedirection::logCookieInformation: pageID=%" PRIu64 ", frameID=%" PRIu64 ", taskID=%lu: %s cookies for redirect URL %s", this, pageID() ? pageID()->toUInt64() : 0, frameID() ? frameID()->toUInt64() : 0, (unsigned long)[task() taskIdentifier], (m_hasBeenSetToUseStatelessCookieStorage ? "Blocking" : "Not blocking"), makeUTF8CString(request.url().string()));
 #else
     LOG_WITH_STREAM(NetworkSession, stream << (unsigned long)[task() taskIdentifier] << " "_s << (m_hasBeenSetToUseStatelessCookieStorage ? "Blocking" : "Not blocking") << " cookies for redirect URL "_s << request.url().string());
 #endif
@@ -442,7 +438,7 @@ bool NetworkTaskCocoa::shouldAllowOnlyPartitionedCookies(const WebCore::Resource
 
 ShouldRelaxThirdPartyCookieBlocking NetworkTaskCocoa::shouldRelaxThirdPartyCookieBlocking() const
 {
-    return m_networkSession->networkProcess().shouldRelaxThirdPartyCookieBlockingForPage(webPageProxyID());
+    return protect(NetworkProcess::singleton())->shouldRelaxThirdPartyCookieBlockingForPage(webPageProxyID());
 }
 
 } // namespace WebKit

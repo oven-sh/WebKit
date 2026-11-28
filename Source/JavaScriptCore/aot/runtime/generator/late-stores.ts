@@ -14,7 +14,7 @@ const behindFinishCreation = "behind finishCreation";
 const storesWithoutBarrier =
   /\bsetWithoutWriteBarrier\s*\(|WithoutBarrier\s*\(|\bstoreWordOf\w+\s*\(|\batUnsafe\([^)]*\)\s*=[^=]|\btryWriteSlot\s*\(|\bstoreBitsOfWidth\s*\(|\*\s*reinterpret_cast<[^;=]*\*>\s*\([^;]*\)\s*=[^=]/;
 const asksWhetherTryFailed = /!\s*tryWriteSlot\s*\(/;
-const copies = /\b(?:std::copy_n|std::ranges::copy|memcpy|memcpySpan|gcSafeMemcpy|gcSafeMemmove)\s*\(/;
+const copies = /\b(?:std::copy_n|std::ranges::copy|memcpy|memcpySpan|gcSafeMemcpy|gcSafeMemcpySpan|gcSafeMemmove)\s*\(/;
 const namesWordsThatMayBeCells = /indexingPayload|butterfly|propertyStorage|inlineStorage|WriteBarrier|JSValue|uint64_t/;
 const ordersOrRemembers =
   /\bmutatorFence\b|\bstoreStoreFence\b|\bstoreLoadFence\b|\bwriteBarrier\b|\bfinishCreation\b|\bcreateWithButterfly|\.set\(vm\b|\bsetIndex\(vm\b|\bputDirect|\binitializeIndex\b|\bdidStoreRootInStatics\b/;

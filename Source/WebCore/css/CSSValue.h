@@ -64,7 +64,6 @@ public:
     void deref() const;
     bool hasOneRef() const { return m_refCount == refCountIncrement; }
     unsigned refCount() const { return m_refCount / refCountIncrement; }
-    bool hasAtLeastOneRef() const { return m_refCount; }
 
     WEBCORE_EXPORT String cssText(const CSS::SerializationContext&) const;
 
@@ -105,6 +104,7 @@ public:
     bool isFontStyleWithAngleValue() const { return m_classType == ClassType::FontStyleWithAngle; }
     bool isFontValue() const { return m_classType == ClassType::Font; }
     bool isFontVariationValue() const { return m_classType == ClassType::FontVariation; }
+    bool isFreeformGradientValue() const { return m_classType == ClassType::FreeformGradient; }
     bool isFunctionValue() const { return m_classType == ClassType::Function; }
     bool isGradientValue() const { return m_classType == ClassType::Gradient; }
     bool isGridAutoFlowValue() const { return m_classType == ClassType::GridAutoFlow; }
@@ -152,7 +152,7 @@ public:
     bool isWebkitBoxReflectValue() const { return m_classType == ClassType::WebkitBoxReflect; }
 
     bool hasSubstitutionFunctions() const { return isSubstitutionValue() || isShorthandSubstitutionValue(); }
-    bool isImageGeneratorValue() const { return m_classType >= ClassType::Canvas && m_classType <= ClassType::MeshGradient; }
+    bool isImageGeneratorValue() const { return m_classType >= ClassType::Canvas && m_classType <= ClassType::FreeformGradient; }
     bool isImplicitInitialValue() const { return m_isImplicitInitialValue; }
     bool containsVector() const { return m_classType >= ClassType::ValueList; }
 
@@ -178,10 +178,6 @@ public:
 
     // Returns false if the hash is computed from the CSSValue pointer instead of the underlying values.
     bool addHash(Hasher&) const;
-
-    // https://www.w3.org/TR/css-values-4/#local-urls
-    // Empty URLs and fragment-only URLs should not be resolved relative to the base URL.
-    NODELETE static bool isCSSLocalURL(StringView relativeURL);
 
     enum StaticCSSValueTag { StaticCSSValue };
 
@@ -217,6 +213,7 @@ protected:
         FilterImage,
         Gradient,
         MeshGradient,
+        FreeformGradient,
 
         // Other non-list classes.
         AppleColorFilter,
@@ -347,23 +344,6 @@ IGNORE_GCC_WARNINGS_END
     }
 
     m_refCount = tempRefCount;
-}
-
-template<typename ValueType>
-inline bool compareCSSValueVector(const Vector<Ref<ValueType>>& firstVector, const Vector<Ref<ValueType>>& secondVector)
-{
-    size_t size = firstVector.size();
-    if (size != secondVector.size())
-        return false;
-
-    for (size_t i = 0; i < size; ++i) {
-        auto& firstPtr = firstVector[i];
-        auto& secondPtr = secondVector[i];
-        if (firstPtr.ptr() == secondPtr.ptr() || firstPtr->equals(secondPtr))
-            continue;
-        return false;
-    }
-    return true;
 }
 
 template<typename ValueType>

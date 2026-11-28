@@ -318,7 +318,7 @@
 [SafeWrapper] StructureParam IPC::ConnectionHandle.m_handle MachSendRight
 
 [UnsafeWrapper] std::optional<MachSendRight> {
-    [Legacy] MessageParamReply RemoteMediaPlayerProxy.NativeImageForCurrentTime sendRight
+    [NotSentFromWebContent] MessageParamReply RemoteImageBufferSet.FrontBufferForExternalRead surface
 }
 
 [UnsafeWrapper] MachSendRight {
@@ -339,16 +339,17 @@
     [Legacy] StructureParam WTF::MachSendRightAnnotated.sendRight
 
     [NotSentFromWebContent] MessageParam WebPage.SetObscuredContentInsetsFenced machSendRight
+    [NotSentFromWebContent] MessageParamReply RemoteCompositorIntegration.PrepareForDisplay displayBuffer
     [NotSentFromWebContent] MessageParamReply RemoteGraphicsContextGL.PrepareForDisplay displayBuffer
     [NotSentFromWebContent] MessageParamReply RemoteImageBuffer.PrepareForDisplay displayBuffer
 
     [NeedsReview] MessageParam WebProcessProxy.SetTaskNamePort taskNamePort
+    [NeedsReview] MessageParam ModelProcessModelPlayerProxy.SetPortalHostedLayerContents surface
 }
 
 [UnsafeWrapper] Vector<MachSendRight> {
     [Legacy] StructureParam WebCore::DynamicContentScalingDisplayList.takeSurfaces()
 
-    [NotSentFromWebContent] MessageParamReply RemoteCompositorIntegration.RecreateRenderBuffers renderBuffers
     [NotSentFromWebContent] MessageParamReply RemoteGPU.CreateModelBacking renderBuffers
     [NotSentFromWebContent] MessageParamReply RemoteMesh.UpdateRenderBuffers renderBuffers
 }
@@ -407,7 +408,6 @@
     [Legacy] MessageParamReply WebPage.GetResourceDataFromFrame buffer
     [Legacy] MessageParamReply WebPage.GetAccessibilityTreeData dataReference
     [SecurityGatedReply] MessageParamReply WebPage.GetWebArchiveOfFrame dataReference
-    [SecurityGatedReply] MessageParamReply WebPage.GetWebArchiveOfFrameWithFileName dataReference
     [SecurityGatedReply] MessageParamReply WebPage.GetWebArchiveData dataReference
 }
 

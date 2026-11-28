@@ -2614,11 +2614,12 @@ private:
                     int32_t offset = 0;
                     Vector<MemoryValue*, 16> loads;
 
-                    // Only 64-bit accesses are known to be single-copy atomic per word on every target.
+                    // A GC safe move only emits 128-bit and 64-bit accesses, which are single-copy
+                    // atomic per 8-byte word when 8-byte aligned. gcSafeMemcpy relies on the same.
                     if (memoryCopy->isGCSafe())
                         RELEASE_ASSERT(!(count % sizeof(uint64_t)));
 
-                    if (count >= 16 && !memoryCopy->isGCSafe() && m_proc.usesSIMD()) {
+                    if (count >= 16 && m_proc.usesSIMD()) {
                         while (count >= 16) {
                             MemoryValue* load = m_insertionSet.insert<MemoryValue>(m_index, Load, V128, m_value->origin(), m_value->child(1), offset);
                             load->setRange(memoryCopy->readRange());
@@ -2688,62 +2689,37 @@ private:
             break;
         }
 
-        case MemoryFill: {
-            if (m_value->child(1)->hasInt() && m_value->child(2)->hasInt()) {
-                auto* memoryFill = m_value->as<BulkMemoryValue>();
-                uint64_t target = static_cast<uint8_t>(m_value->child(1)->asInt());
-                uint64_t count = m_value->child(2)->asInt();
-                constexpr uint64_t threshold = 128;
-                if (count <= threshold) {
-                    int32_t offset = 0;
-                    if (count >= 16 && m_proc.usesSIMD()) {
-                        uint64_t mask64 = target << 56 | target << 48 | target << 40 | target << 32 | target << 24 | target << 16 | target << 8 | target << 0;
-                        v128_t mask { mask64, mask64 };
-                        auto* maskValue = m_insertionSet.insert<Const128Value>(m_index, m_value->origin(), mask);
-                        while (count >= 16) {
-                            m_insertionSet.insert<MemoryValue>(m_index, Store, m_value->origin(), maskValue, m_value->child(0), offset, memoryFill->writeRange());
-                            offset += 16;
-                            count -= 16;
-                        }
-                    }
+        case MemoryFill8:
+        case MemoryFill16:
+        case MemoryFill32:
+        case MemoryFill64:
+        case MemoryFill128: {
+            if (!m_value->child(2)->hasInt())
+                break;
+            auto* memoryFill = m_value->as<BulkMemoryValue>();
+            unsigned elementSize = bytesForWidth(memoryFill->fillWidth());
+            uint64_t count = m_value->child(2)->asInt();
+            constexpr uint64_t threshold = 128;
+            if (count > threshold / elementSize)
+                break;
 
-                    if (count >= 8) {
-                        uint64_t mask = target << 56 | target << 48 | target << 40 | target << 32 | target << 24 | target << 16 | target << 8 | target << 0;
-                        auto* maskValue = m_insertionSet.insert<Const64Value>(m_index, m_value->origin(), mask);
-                        while (count >= 8) {
-                            m_insertionSet.insert<MemoryValue>(m_index, Store, m_value->origin(), maskValue, m_value->child(0), offset, memoryFill->writeRange());
-                            offset += 8;
-                            count -= 8;
-                        }
-                    }
-
-                    {
-                        uint32_t mask = target << 24 | target << 16 | target << 8 | target << 0;
-                        auto* maskValue = m_insertionSet.insert<Const32Value>(m_index, m_value->origin(), mask);
-                        while (count >= 4) {
-                            m_insertionSet.insert<MemoryValue>(m_index, Store, m_value->origin(), maskValue, m_value->child(0), offset, memoryFill->writeRange());
-                            offset += 4;
-                            count -= 4;
-                        }
-
-                        while (count >= 2) {
-                            m_insertionSet.insert<MemoryValue>(m_index, Store16, m_value->origin(), maskValue, m_value->child(0), offset, memoryFill->writeRange());
-                            offset += 2;
-                            count -= 2;
-                        }
-
-                        while (count >= 1) {
-                            m_insertionSet.insert<MemoryValue>(m_index, Store8, m_value->origin(), maskValue, m_value->child(0), offset, memoryFill->writeRange());
-                            offset += 1;
-                            count -= 1;
-                        }
-                    }
-
-                    m_value->replaceWithNop();
-                    m_changed = true;
-                    break;
-                }
+            int32_t byteCount = count * elementSize;
+            if (byteCount) {
+                Width storeWidth = std::min(memoryFill->widestFillStoreWidth(m_proc), widthForBytes(std::bit_floor(static_cast<unsigned>(byteCount))));
+                int32_t storeSize = bytesForWidth(storeWidth);
+                Value* pattern = memoryFill->splatFillPattern(m_proc, storeWidth, [&](Value* value) {
+                    m_insertionSet.insertValue(m_index, value);
+                });
+                Opcode store = storeOpcode(storeWidth == Width128 ? FP : GP, storeWidth);
+                int32_t offset = 0;
+                for (; offset + storeSize <= byteCount; offset += storeSize)
+                    m_insertionSet.insert<MemoryValue>(m_index, store, m_value->origin(), pattern, m_value->child(0), offset, memoryFill->writeRange());
+                if (offset < byteCount)
+                    m_insertionSet.insert<MemoryValue>(m_index, store, m_value->origin(), pattern, m_value->child(0), byteCount - storeSize, memoryFill->writeRange());
             }
+
+            m_value->replaceWithNop();
+            m_changed = true;
             break;
         }
 
@@ -4929,7 +4905,7 @@ private:
         NaturalLoops& loops = m_proc.naturalLoops();
         // A shift comes before the sums that it is part of.
         for (Opcode opcode : { Shl, Add }) {
-            UncheckedKeyHashMap<ValueKey, Vector<Value*, 8>> valuesByKey;
+            HashMap<ValueKey, Vector<Value*, 8>> valuesByKey;
             for (Value* value : newParts) {
                 if (value->opcode() != opcode || !value->owner)
                     continue;
@@ -6026,7 +6002,7 @@ private:
     Procedure& m_proc;
     ReduceStrengthPass m_pass;
     InsertionSet m_insertionSet;
-    UncheckedKeyHashMap<ValueKey, Value*> m_valueForConstant;
+    HashMap<ValueKey, Value*> m_valueForConstant;
     BasicBlock* m_root { nullptr };
     BasicBlock* m_block { nullptr };
     unsigned m_index { 0 };
@@ -6034,7 +6010,7 @@ private:
     Dominators* m_dominators { nullptr };
     bool m_valueOwnersAreCurrent { false };
     BasicBlock* m_blockOfPhisByInputs { nullptr };
-    UncheckedKeyHashMap<unsigned, Value*, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_phisByInputs;
+    HashMap<unsigned, Value*, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_phisByInputs;
     Vector<Value*> m_inputInBlock;
     std::optional<BitVector> m_hasUserThatKeepsSum;
     Vector<Value*, 8> m_newPartsOfAddresses;
@@ -6050,8 +6026,8 @@ private:
     const bool m_narrowsIntegers { m_proc.policy().optimization.narrowsIntegers };
     const bool m_mergesBlocksAfterForwardingJumps { m_proc.policy().optimization.mergesBlocksAfterForwardingJumps };
     BitVector m_isUsedForLowWord;
-    UncheckedKeyHashMap<Value*, Value*> m_lowWords;
-    UncheckedKeyHashSet<Value*> m_integersConvertedFromDoubles;
+    HashMap<Value*, Value*> m_lowWords;
+    HashSet<Value*> m_integersConvertedFromDoubles;
     std::optional<MemoryNumbering> m_numbering;
     DominatingConditionStack m_conditions;
     const bool m_validatesIRAtEachPhase { shouldValidateIRAtEachPhase(m_proc) };

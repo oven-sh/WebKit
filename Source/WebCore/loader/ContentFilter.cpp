@@ -42,6 +42,7 @@
 #include "ScriptController.h"
 #include "SharedBuffer.h"
 #include <array>
+#include <wtf/Borrow.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/Ref.h>
 #include <wtf/SetForScope.h>
@@ -113,7 +114,7 @@ bool ContentFilter::continueAfterWillSendRequest(ResourceRequest& request, const
     if (!protectedClient)
         return false;
 
-    LOG(ContentFiltering, "ContentFilter received request for <%{sensitive}s> with redirect response from <%{sensitive}s>.\n", request.url().string().utf8(), redirectResponse.url().string().utf8());
+    LOG(ContentFiltering, "ContentFilter received request for <%{sensitive}s> with redirect response from <%{sensitive}s>.\n", makeUTF8CString(request.url().string()), makeUTF8CString(redirectResponse.url().string()));
 #if !LOG_DISABLED
     ResourceRequest originalRequest { request };
 #endif
@@ -125,14 +126,14 @@ bool ContentFilter::continueAfterWillSendRequest(ResourceRequest& request, const
         request = ResourceRequest();
 #if !LOG_DISABLED
     if (request != originalRequest)
-        LOG(ContentFiltering, "ContentFilter changed request url to <%{sensitive}s>.\n", originalRequest.url().string().utf8());
+        LOG(ContentFiltering, "ContentFilter changed request url to <%{sensitive}s>.\n", makeUTF8CString(originalRequest.url().string()));
 #endif
     return !request.isNull();
 }
 
 ContentFilter::ContentFilterCallbackAggregator::~ContentFilterCallbackAggregator()
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
     ASSERT(m_callback);
 
     if (m_isBlocked) {
@@ -152,7 +153,7 @@ ContentFilter::ContentFilterCallbackAggregator::~ContentFilterCallbackAggregator
 
 void ContentFilter::ContentFilterCallbackAggregator::didReceivePlatformContentFilterDecision(PlatformContentFilter& platformContentFilter, String&& urlString)
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
 
     if (platformContentFilter.isAllowed())
         ++m_numberOfFiltersAllowed;
@@ -174,21 +175,21 @@ ContentFilter::ContentFilterCallbackAggregator::ContentFilterCallbackAggregator(
     , m_request(request)
     , m_callback(WTF::move(callback))
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
 }
 
 void ContentFilter::continueAfterWillSendRequest(ResourceRequest&& request, const ResourceResponse& redirectResponse, CompletionHandler<void(ResourceRequest&&)>&& completionHandler)
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
 
-    LOG(ContentFiltering, "ContentFilter received request for <%{sensitive}s> with redirect response from %s" SENSITIVE_LOG_STRING, request.url().string().utf8(), redirectResponse.url().string().utf8());
+    LOG(ContentFiltering, "ContentFilter received request for <%{sensitive}s> with redirect response from %s" SENSITIVE_LOG_STRING, makeUTF8CString(request.url().string()), makeUTF8CString(redirectResponse.url().string()));
     ASSERT(m_state == State::Stopped || m_state == State::Filtering);
 
     Ref contentFilterCallbackAggregator = ContentFilterCallbackAggregator::create(*this, request, WTF::move(completionHandler));
 
     for (Ref platformContentFilter : m_contentFilters) {
         CompletionHandler<void(String&&)> completion = [contentFilterCallbackAggregator, platformContentFilter] (String&& urlString) mutable {
-            ASSERT(RunLoop::isMain());
+            RELEASE_ASSERT(RunLoop::isMain());
             contentFilterCallbackAggregator->didReceivePlatformContentFilterDecision(platformContentFilter, WTF::move(urlString));
         };
 
@@ -205,7 +206,7 @@ void ContentFilter::startFilteringMainResource(const URL& url)
     if (m_state != State::Stopped)
         return;
 
-    LOG(ContentFiltering, "ContentFilter will start filtering main resource at <%{sensitive}s>.\n", url.string().utf8());
+    LOG(ContentFiltering, "ContentFilter will start filtering main resource at <%{sensitive}s>.\n", makeUTF8CString(url.string()));
     m_state = State::Filtering;
     ASSERT(m_mainResourceURL.isEmpty());
     m_mainResourceURL = url;
@@ -216,7 +217,7 @@ void ContentFilter::startFilteringMainResource(CachedRawResource& resource)
     if (m_state != State::Stopped)
         return;
 
-    LOG(ContentFiltering, "ContentFilter will start filtering main resource at <%{sensitive}s>.\n", resource.url().string().utf8());
+    LOG(ContentFiltering, "ContentFilter will start filtering main resource at <%{sensitive}s>.\n", makeUTF8CString(resource.url().string()));
     m_state = State::Filtering;
     ASSERT(!m_mainResource);
     m_mainResource = resource;
@@ -236,7 +237,7 @@ bool ContentFilter::continueAfterResponseReceived(const ResourceResponse& respon
         return false;
 
     if (m_state == State::Filtering) {
-        LOG(ContentFiltering, "ContentFilter received response from <%{sensitive}s>.\n", response.url().string().utf8());
+        LOG(ContentFiltering, "ContentFilter received response from <%{sensitive}s>.\n", makeUTF8CString(response.url().string()));
         forEachContentFilterUntilBlocked([&response](PlatformContentFilter& contentFilter) {
             contentFilter.responseReceived(response);
         });
@@ -254,7 +255,7 @@ bool ContentFilter::continueAfterDataReceived(const SharedBuffer& data, FromDocu
         return false;
 
     if (m_state == State::Filtering) {
-        LOG(ContentFiltering, "ContentFilter received %zu bytes of data from <%{sensitive}s>.\n", data.size(), url().string().utf8());
+        LOG(ContentFiltering, "ContentFilter received %zu bytes of data from <%{sensitive}s>.\n", data.size(), makeUTF8CString(url().string()));
 
         forEachContentFilterUntilBlocked([data = Ref { data }](auto& contentFilter) {
             contentFilter.addData(data);
@@ -286,7 +287,7 @@ bool ContentFilter::continueAfterNotifyFinished(const URL& resourceURL)
     ASSERT_UNUSED(resourceURL, resourceURL == m_mainResourceURL);
 
     if (m_state == State::Filtering) {
-        LOG(ContentFiltering, "ContentFilter will finish filtering main resource at <%{sensitive}s>.\n", url().string().utf8());
+        LOG(ContentFiltering, "ContentFilter will finish filtering main resource at <%{sensitive}s>.\n", makeUTF8CString(url().string()));
         forEachContentFilterUntilBlocked([](PlatformContentFilter& contentFilter) {
             contentFilter.finishedAddingData();
         });
@@ -313,7 +314,7 @@ bool ContentFilter::continueAfterNotifyFinished(CachedResource& resource)
         return true;
 
     if (m_state == State::Filtering) {
-        LOG(ContentFiltering, "ContentFilter will finish filtering main resource at <%{sensitive}s>.\n", url().string().utf8());
+        LOG(ContentFiltering, "ContentFilter will finish filtering main resource at <%{sensitive}s>.\n", makeUTF8CString(url().string()));
         forEachContentFilterUntilBlocked([](PlatformContentFilter& contentFilter) {
             contentFilter.finishedAddingData();
         });
@@ -366,7 +367,7 @@ void ContentFilter::didDecide(State state)
     ASSERT(m_state != State::Blocked);
     ASSERT(state == State::Allowed || state == State::Blocked);
 #if !LOG_DISABLED
-    LOG(ContentFiltering, "ContentFilter decided load should be %s for main resource at <%{sensitive}s>.\n", state == State::Allowed ? "allowed" : "blocked", url().string().utf8());
+    LOG(ContentFiltering, "ContentFilter decided load should be %s for main resource at <%{sensitive}s>.\n", state == State::Allowed ? "allowed" : "blocked", makeUTF8CString(url().string()));
 #endif // !LOG_DISABLED
     m_state = state;
     if (m_state != State::Blocked)
@@ -449,7 +450,7 @@ void ContentFilter::handleProvisionalLoadFailure(const ResourceError& error)
 
 void ContentFilter::deliverStoredResourceData()
 {
-    for (auto& buffer : m_buffers)
+    for (auto& buffer : borrow(m_buffers))
         deliverResourceData(Ref { *buffer.buffer });
     m_buffers.clear();
 }

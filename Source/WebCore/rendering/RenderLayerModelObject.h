@@ -78,6 +78,8 @@ public:
 
     virtual bool requiresLayer() const = 0;
     bool requiresLayerForSVGIntrinsicReasons() const;
+    bool hasSVGGroupingWillChangeProperty() const;
+    bool hasSVG3DTransformRelatedProperty() const;
 
     // Returns false if the rect has no intersection with the applied clip rect. When the context specifies edge-inclusive
     // intersection, this return value allows distinguishing between no intersection and zero-area intersection.
@@ -171,19 +173,19 @@ public:
 #endif
 
     // Nominal transform: the element's transform relative to nominalSVGLayoutLocation(), used for painting and layers.
+    // User-space transform: the same transform relative to the user space origin (0, 0), where the geometry lives.
     AffineTransform computeNominalTransform() const;
+    AffineTransform computeUserSpaceTransform() const;
     AffineTransform nominalTransform() const;
     virtual void updateCachedNominalTransform() { }
-
-    AffineTransform computeRendererTransform() const;
 
     void contentChanged(ContentChangeType, const std::optional<FloatRect>& = std::nullopt);
 
     bool hasAcceleratedCompositing() const;
 
 protected:
-    RenderLayerModelObject(Type, Element&, Style::ComputedStyle&&, OptionSet<TypeFlag>, TypeSpecificFlags);
-    RenderLayerModelObject(Type, Document&, Style::ComputedStyle&&, OptionSet<TypeFlag>, TypeSpecificFlags);
+    RenderLayerModelObject(Type, Element&, UniqueRef<Style::ComputedStyle>&&, OptionSet<TypeFlag>, TypeSpecificFlags);
+    RenderLayerModelObject(Type, Document&, UniqueRef<Style::ComputedStyle>&&, OptionSet<TypeFlag>, TypeSpecificFlags);
 
     void createLayer();
     void willBeDestroyed() override;
@@ -196,6 +198,8 @@ protected:
 private:
     bool createLayerIfAllowed();
     void removeOnlyThisLayerWithRepaint();
+
+    AffineTransform convertToUserSpaceTransform(const AffineTransform& nominalTransform) const;
 
     std::optional<AffineTransform> nominalTransformBeforeStyleChange(const Style::ComputedStyle& oldStyle) const;
     bool markSVGTextForRelayoutIfScaleChanged(const AffineTransform& previousTransform, const AffineTransform& currentTransform);

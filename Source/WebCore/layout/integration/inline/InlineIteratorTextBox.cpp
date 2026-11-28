@@ -33,8 +33,7 @@
 #include "StyleComputedStyle+GettersInlines.h"
 #include "StyleTabSize.h"
 
-namespace WebCore {
-namespace InlineIterator {
+namespace WebCore::InlineIterator {
 
 static_assert(std::ranges::bidirectional_range<TextBoxRange> && std::ranges::common_range<TextBoxRange> && std::ranges::view<TextBoxRange> && std::ranges::borrowed_range<TextBoxRange>);
 
@@ -57,8 +56,8 @@ TextRun TextBox::textRun(TextRunMode mode) const
         CheckedRef root = formattingContextRoot();
         auto positionRelativeToContentBox = [&] {
             if (style->writingMode().isBidiLTR())
-                return visualRectIgnoringBlockDirection().x() - root->borderAndPaddingStart();
-            return root->contentBoxWidth() - visualRectIgnoringBlockDirection().maxX();
+                return blockStartRelativePhysicalRect().x() - root->borderAndPaddingStart();
+            return root->contentBoxWidth() - blockStartRelativePhysicalRect().maxX();
         }();
         return positionRelativeToContentBox - line().contentLogicalLeft();
     };
@@ -106,5 +105,4 @@ TextBoxRange textBoxesFor(const RenderText& text)
     return { lineLeftmostTextBoxFor(text) };
 }
 
-}
 }

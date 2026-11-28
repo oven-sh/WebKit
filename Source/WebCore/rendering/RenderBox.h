@@ -97,6 +97,8 @@ public:
     inline LayoutRect marginBoxRect() const;
     LayoutRect borderBoxRect() const { return { { }, borderBoxSize() }; }
     LayoutRect paddingBoxRect() const;
+    // The box midway between the padding box and the border box.
+    LayoutRect halfBorderBoxRect() const;
     inline LayoutRect contentBoxRect() const;
     inline LayoutRect paddingBoxRectIncludingScrollbar() const;
 
@@ -117,7 +119,7 @@ public:
 
     // The content area of the box (excludes padding - and intrinsic padding for table cells, etc... - and border).
     LayoutPoint contentBoxLocation() const;
-    inline LayoutRect flippedContentBoxRect() const;
+    inline LayoutRect blockStartRelativeContentBoxRect() const;
 
     // This returns the content area of the box (excluding padding and border). The only difference with contentBoxRect is that computedCSSContentBoxRect
     // does include the intrinsic padding in the content box as this is what some callers expect (like getComputedStyle).
@@ -177,10 +179,10 @@ public:
 
     // Resolve auto margins in the inline direction of the containing block so that objects can be pushed to the start, middle or end
     // of the containing block.
-    void computeInlineDirectionMargins(const RenderBlock& containingBlock, LayoutUnit containerWidth, std::optional<LayoutUnit> availableSpaceAdjustedWithFloats, LayoutUnit childWidth, LayoutUnit& marginStart, LayoutUnit& marginEnd) const;
+    void computeInlineDirectionMargins(const RenderBoxModelObject& containingBlock, LayoutUnit containerWidth, std::optional<LayoutUnit> availableSpaceAdjustedWithFloats, LayoutUnit childWidth, LayoutUnit& marginStart, LayoutUnit& marginEnd) const;
 
     // Used to resolve margins in the containing block's block-flow direction.
-    void computeBlockDirectionMargins(const RenderBlock& containingBlock, LayoutUnit& marginBefore, LayoutUnit& marginAfter) const;
+    void computeBlockDirectionMargins(const RenderBoxModelObject& containingBlock, LayoutUnit& marginBefore, LayoutUnit& marginAfter) const;
     void computeAndSetBlockDirectionMargins(const RenderBlock& containingBlock);
 
     enum class VisualEffectOverflowOption : uint8_t {
@@ -197,14 +199,14 @@ public:
         DoesNotContributeToScrollableOverflow = 1 << 4,
     };
 
-    // Overflow rects are in the coordinate space of the box. This means that they aren't purely physical directions.
+    // Overflow rects are in the coordinate space of the box, which is block-start relative (see blockStartRelativeToPhysical()).
     // For horizontal-tb and vertical-lr they will match physical directions, but for horizontal-bt and vertical-rl, the top/bottom and left/right
-    // respectively are flipped when compared to their physical counterparts. For example minX is on the left in vertical-lr,
+    // respectively are reversed when compared to their physical counterparts. For example minX is on the left in vertical-lr,
     // but it is on the right in vertical-rl.
-    WEBCORE_EXPORT LayoutRect flippedPaddingBoxRect() const;
+    WEBCORE_EXPORT LayoutRect blockStartRelativePaddingBoxRect() const;
     inline const LayoutRect scrollableContentAreaOverflowRect() const;
     inline const LayoutRect scrollablePaddingAreaOverflowRect() const;
-    LayoutRect layoutOverflowRect() const { return m_overflow ? m_overflow->layoutOverflowRect() : flippedPaddingBoxRect(); }
+    LayoutRect layoutOverflowRect() const { return m_overflow ? m_overflow->layoutOverflowRect() : blockStartRelativePaddingBoxRect(); }
     bool hasLayoutOverflow() const;
     inline LayoutUnit logicalLeftLayoutOverflow() const;
     inline LayoutUnit logicalRightLayoutOverflow() const;
@@ -217,7 +219,7 @@ public:
 
     // RenderBox's basic allowedLayoutOverflow() accounts for the writing mode (only).
     virtual LayoutOptionalOutsets allowedLayoutOverflow() const;
-    LayoutRect clampToAllowedLayoutOverflow(const LayoutRect&, const LayoutRect& flippedPaddingBoxRect);
+    LayoutRect clampToAllowedLayoutOverflow(const LayoutRect&, const LayoutRect& blockStartRelativePaddingBoxRect);
     void addLayoutOverflow(const LayoutRect&);
     void addVisualOverflow(const LayoutRect&);
     void clearOverflow();
@@ -402,16 +404,23 @@ public:
     LayoutUnit computeSizingKeywordLogicalWidthUsing(const Style::MinimumSize& logicalWidth, LayoutUnit availableLogicalWidth, LayoutUnit borderAndPadding) const;
     LayoutUnit computeSizingKeywordLogicalWidthUsing(const Style::MaximumSize& logicalWidth, LayoutUnit availableLogicalWidth, LayoutUnit borderAndPadding) const;
     LayoutUnit computeSizingKeywordLogicalWidthUsing(const Style::FlexBasis& logicalWidth, LayoutUnit availableLogicalWidth, LayoutUnit borderAndPadding) const;
+    LayoutUnit computeFitContentFunctionLogicalWidthUsing(const Style::LengthPercentage<CSS::NonnegativeLayoutUnitClamped, float>& argument, LayoutUnit availableLogicalWidth, LayoutUnit borderAndPadding) const;
+    std::optional<LayoutUnit> fitContentFunctionContentLogicalWidthContribution(const Style::LengthPercentage<CSS::NonnegativeLayoutUnitClamped, float>& argument, LayoutUnit minContentLogicalWidth, LayoutUnit maxContentLogicalWidth) const;
 
     LayoutUnit adjustBorderBoxLogicalWidthForBoxSizing(const Style::Length<CSS::NonnegativeLayoutUnitClamped, float>& logicalWidth) const;
     LayoutUnit adjustBorderBoxLogicalWidthForBoxSizing(LayoutUnit computedLogicalWidth) const;
+    template<typename SizeType> LayoutUnit adjustBorderBoxLogicalWidthForBoxSizing(const SizeType& logicalWidth, LayoutUnit computedLogicalWidth, std::optional<LayoutUnit> containingBlockLogicalWidth) const;
     LayoutUnit adjustContentBoxLogicalWidthForBoxSizing(const Style::Length<CSS::NonnegativeLayoutUnitClamped, float>& logicalWidth) const;
     LayoutUnit adjustContentBoxLogicalWidthForBoxSizing(LayoutUnit computedLogicalWidth) const;
+    template<typename SizeType> LayoutUnit adjustContentBoxLogicalWidthForBoxSizing(const SizeType& logicalWidth, LayoutUnit computedLogicalWidth, std::optional<LayoutUnit> containingBlockLogicalWidth) const;
 
     // Overridden by fieldsets to subtract out the intrinsic border.
     virtual LayoutUnit adjustBorderBoxLogicalHeightForBoxSizing(LayoutUnit height) const;
     virtual LayoutUnit adjustContentBoxLogicalHeightForBoxSizing(std::optional<LayoutUnit> height) const;
     virtual LayoutUnit adjustIntrinsicLogicalHeightForBoxSizing(LayoutUnit height) const;
+    template<typename SizeType> LayoutUnit adjustBorderBoxLogicalHeightForBoxSizing(const SizeType& logicalHeight, LayoutUnit computedLogicalHeight, std::optional<LayoutUnit> containingBlockLogicalWidth) const;
+    template<typename SizeType> LayoutUnit adjustContentBoxLogicalHeightForBoxSizing(const SizeType& logicalHeight, LayoutUnit computedLogicalHeight, std::optional<LayoutUnit> containingBlockLogicalWidth) const;
+    template<typename SizeType> std::optional<LayoutUnit> containingBlockLogicalWidthForBoxSizing(const SizeType&) const;
 
     NODELETE std::optional<LayoutUnit> overridingBorderBoxLogicalWidth() const;
     NODELETE std::optional<LayoutUnit> overridingBorderBoxLogicalHeight() const;
@@ -482,9 +491,6 @@ public:
     ControlPart* ensureControlPartForDecorations();
 
     virtual void paintObject(PaintInfo&, const LayoutPoint&) { ASSERT_NOT_REACHED(); }
-    virtual void paintBoxDecorations(PaintInfo&, const LayoutPoint&);
-    virtual void paintMask(PaintInfo&, const LayoutPoint&);
-    virtual void paintClippingMask(PaintInfo&, const LayoutPoint&);
     void imageChanged(WrappedImagePtr, const IntRect* = nullptr) override;
 
     virtual void adjustBorderBoxRectForPainting(LayoutRect&) { };
@@ -506,15 +512,25 @@ public:
     LayoutSize offsetFromContainer(const RenderElement&, const LayoutPoint&, bool* offsetDependsOnPoint = nullptr) const override;
     LayoutRect firstFragmentBorderBoxRect() const override;
 
-    NODELETE LayoutPoint flipForWritingModeForChild(const RenderBox& child, const LayoutPoint&) const;
-    NODELETE LayoutUnit flipForWritingMode(LayoutUnit position) const; // The offset is in the block direction (y for horizontal writing modes, x for vertical writing modes).
-    NODELETE LayoutPoint flipForWritingMode(const LayoutPoint&) const;
-    NODELETE LayoutSize flipForWritingMode(const LayoutSize&) const;
-    NODELETE FloatPoint flipForWritingMode(const FloatPoint&) const;
+    NODELETE LayoutPoint blockStartRelativeToPhysicalForChild(const RenderBox& child, const LayoutPoint&) const final;
 
-    NODELETE void flipForWritingMode(LayoutRect&) const;
-    NODELETE void flipForWritingMode(FloatRect&) const;
-    NODELETE void flipForWritingMode(RepaintRects&) const;
+    // The block axis coordinate (x for vertical, y for horizontal writing modes) of geometry inside this box is measured from its
+    // block-start border edge, while painting, hit testing and layers use physical coordinates. The two differ only in vertical-rl
+    // and horizontal-bt, where block-start is the right or bottom edge. Converting mirrors the coordinate across the border box,
+    // so each direction is the same operation.
+    NODELETE LayoutUnit blockStartRelativeToPhysical(LayoutUnit position) const; // The offset is in the block direction (y for horizontal writing modes, x for vertical writing modes).
+    NODELETE LayoutPoint blockStartRelativeToPhysical(const LayoutPoint&) const;
+    NODELETE LayoutSize blockStartRelativeToPhysical(const LayoutSize&) const;
+    NODELETE FloatPoint blockStartRelativeToPhysical(const FloatPoint&) const;
+
+    NODELETE void blockStartRelativeToPhysical(LayoutRect&) const;
+    NODELETE void blockStartRelativeToPhysical(FloatRect&) const;
+    NODELETE void blockStartRelativeToPhysical(RepaintRects&) const;
+
+    NODELETE LayoutPoint physicalToBlockStartRelative(const LayoutPoint& position) const { return blockStartRelativeToPhysical(position); }
+    NODELETE void physicalToBlockStartRelative(LayoutRect& rect) const { blockStartRelativeToPhysical(rect); }
+    NODELETE void physicalToBlockStartRelative(FloatRect& rect) const { blockStartRelativeToPhysical(rect); }
+    NODELETE void physicalToBlockStartRelative(RepaintRects& rects) const { blockStartRelativeToPhysical(rects); }
 
     // These represent your location relative to your container as a physical offset.
     // In layout related methods you almost always want the logical location (e.g. x() and y()).
@@ -532,7 +548,6 @@ public:
 
     RepaintRects localRectsForRepaint(RepaintOutlineBounds) const override;
     void repaintDuringLayoutIfMoved(const LayoutRect&);
-    virtual void repaintOverhangingFloats(bool paintAllDescendants);
 
     // Returns false if the rect has no intersection with the applied clip rect. When the context specifies edge-inclusive
     // intersection, this return value allows distinguishing between no intersection and zero-area intersection.
@@ -543,7 +558,6 @@ public:
     LayoutUnit containingBlockLogicalWidthForContent() const override;
     LayoutUnit containingBlockLogicalHeightForContent(AvailableLogicalHeightType) const;
     LayoutRange containingBlockRangeForPositioned(const RenderBoxModelObject& containingBlock, BoxAxis physicalAxis) const;
-    LayoutUnit containingBlockAvailableLineWidth() const;
     LayoutUnit perpendicularContainingBlockLogicalHeight() const;
 
     RenderFragmentContainer* clampToStartAndEndFragments(RenderFragmentContainer*) const;
@@ -595,16 +609,14 @@ public:
     void applyTransform(TransformationMatrix&, const Style::ComputedStyle&, const FloatRect& boundingBox, OptionSet<Style::TransformResolverOption>) const override;
     NODELETE bool computeHasTransformRelatedProperty(const Style::ComputedStyle&) const;
 
-    void updateFloatPainterAfterSelfPaintingLayerChange();
-
     ShapeOutsideInfo* shapeOutsideInfo() const LIFETIME_BOUND;
 
     bool requiresLayer() const override;
     NODELETE bool requiresLayerWithScrollableArea() const;
 
 protected:
-    RenderBox(Type, Element&, Style::ComputedStyle&&, OptionSet<TypeFlag> = { }, TypeSpecificFlags = { });
-    RenderBox(Type, Document&, Style::ComputedStyle&&, OptionSet<TypeFlag> = { }, TypeSpecificFlags = { });
+    RenderBox(Type, Element&, UniqueRef<Style::ComputedStyle>&&, OptionSet<TypeFlag> = { }, TypeSpecificFlags = { });
+    RenderBox(Type, Document&, UniqueRef<Style::ComputedStyle>&&, OptionSet<TypeFlag> = { }, TypeSpecificFlags = { });
 
     void styleWillChange(Style::Difference, const Style::ComputedStyle& newStyle) override;
     void styleDidChange(Style::Difference, const Style::ComputedStyle* oldStyle) override;
@@ -620,13 +632,8 @@ protected:
     virtual bool foregroundIsKnownToBeOpaqueInRect(const LayoutRect& localRect, unsigned maxDepthToTest) const;
     virtual bool computeBackgroundIsKnownToBeObscured(const LayoutPoint& paintOffset);
 
-    void paintMaskImages(const PaintInfo&, const LayoutRect&);
-
     void clipToPaddingBoxShape(GraphicsContext&, const LayoutPoint&, float deviceScaleFactor) const;
     void clipToContentBoxShape(GraphicsContext&, const LayoutPoint&, float deviceScaleFactor) const;
-
-    BleedAvoidance determineBleedAvoidance(GraphicsContext&) const;
-    bool backgroundHasOpaqueTopLayer() const;
 
     void computeOutOfFlowPositionedLogicalWidth(LogicalExtentComputedValues&) const;
 
@@ -670,10 +677,11 @@ protected:
     bool overflowChangesMayAffectLayout() const final;
     virtual std::pair<LayoutUnit, LayoutUnit> computeIntrinsicKeywordLogicalWidths() const { return computeIntrinsicLogicalWidths(); }
 
+    void addOverflowWithRendererOffset(const RenderBox&, LayoutSize, OptionSet<ComputeOverflowOptions> = { });
+
 private:
     bool isBlockSizeResolvableForStretch() const;
 
-    void addOverflowWithRendererOffset(const RenderBox&, LayoutSize, OptionSet<ComputeOverflowOptions> = { });
     void addMarginBoxOverflow(const RenderBox&, LayoutSize offsetFromThis, OptionSet<ComputeOverflowOptions>);
 
     void updateShapeOutsideInfoAfterStyleChange(const Style::ComputedStyle&, const Style::ComputedStyle* oldStyle, Style::Difference);
@@ -719,13 +727,14 @@ private:
 
     RepaintRects computeVisibleRectsUsingPaintOffset(const RepaintRects&) const final;
     
-    LayoutPoint topLeftLocationWithFlipping() const;
+    LayoutPoint topLeftLocationFromBlockStartRelative() const;
 
     ShapeOutsideInfo& ensureShapeOutsideInfo();
     void removeShapeOutsideInfo();
 
 private:
-    // Relative to our container.
+    // Relative to our container, with the block axis coordinate measured from the container's block-start border edge.
+    // This differs from the physical position when the container is vertical-rl or horizontal-bt (see topLeftLocation()).
     LayoutRect m_borderBoxRectInContainer;
 
 protected:

@@ -272,7 +272,7 @@ private:
     CellPointer openPossibleRope(const ValueContext&, CellPointer string);
     CharacterView viewOfPossibleRope(ValueID string, BlockID, CellPointer);
     Vector<OpenedRope, 4> m_openedRopes;
-    UncheckedKeyHashMap<LValue, OpenedString> m_openedStrings;
+    HashMap<LValue, OpenedString> m_openedStrings;
     Vector<LValue, 2> m_flagsFoundNarrow;
     Vector<LValue, 2> m_flagsFoundWide;
 };

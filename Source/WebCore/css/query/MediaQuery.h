@@ -25,19 +25,35 @@
 #pragma once
 
 #include <WebCore/GenericMediaQueryTypes.h>
+#include <wtf/Box.h>
+#include <wtf/NeverDestroyed.h>
 
-namespace WebCore {
-namespace MQ {
+namespace WebCore::MQ {
 
-enum class Prefix : bool { Not, Only };
+enum class Prefix : uint8_t { Not, Only };
 
 struct MediaQuery {
-    std::optional<Prefix> prefix;
+    Markable<Prefix> prefix;
     AtomString mediaType;
-    std::optional<Condition> condition { };
+    Markable<Condition, ConditionMarkableTraits> condition { };
 };
 
 using MediaQueryList = Vector<MediaQuery>;
+
+// Use Box<const MediaQueryList> to share immutable lists with multiple owners,
+// copying by handle and treating a null Box as an empty list to reduce allocations.
+inline Box<const MediaQueryList> makeShared(MediaQueryList&& list)
+{
+    if (list.isEmpty())
+        return { };
+    return Box<const MediaQueryList>::create(WTF::move(list));
+}
+
+inline const MediaQueryList& sourceOrEmpty(const Box<const MediaQueryList>& list)
+{
+    static NeverDestroyed<const MediaQueryList> emptyList;
+    return list ? *list : emptyList.get();
+}
 
 struct MediaQueryResult {
     MediaQueryList mediaQueryList;
@@ -58,5 +74,4 @@ void traverseFeatures(const MediaQueryList& list, NOESCAPE const TraverseFunctio
         traverseFeatures(query, function);
 }
 
-}
 }

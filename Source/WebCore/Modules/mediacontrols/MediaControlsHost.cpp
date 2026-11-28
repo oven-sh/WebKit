@@ -79,6 +79,7 @@
 #include "VideoTrackList.h"
 #include "VoidCallback.h"
 #include <JavaScriptCore/JSCJSValueInlines.h>
+#include <wtf/Borrow.h>
 #include <wtf/Function.h>
 #include <wtf/JSONValues.h>
 #include <wtf/Scope.h>
@@ -410,6 +411,12 @@ void MediaControlsHost::spatialCameraDidMove(double yaw, double pitch, double fi
         videoElement->spatialCameraDidMove(yaw, pitch, fieldOfView);
 }
 
+void MediaControlsHost::setSpatialVideoRendererActive(bool active)
+{
+    if (RefPtr videoElement = dynamicDowncast<HTMLVideoElement>(m_mediaElement))
+        videoElement->setSpatialVideoRendererActive(active);
+}
+
 bool MediaControlsHost::isAVExperienceControllerFullscreenEnabled() const
 {
 #if HAVE(AVEXPERIENCECONTROLLER)
@@ -490,11 +497,6 @@ String MediaControlsHost::generateUUID()
     return createVersion4UUIDString();
 }
 
-Vector<String, 2> MediaControlsHost::shadowRootStyleSheets() const
-{
-    return RenderTheme::singleton().mediaControlsStyleSheets(protect(m_mediaElement));
-}
-
 String MediaControlsHost::base64StringForIconNameAndType(const String& iconName, const String& iconType)
 {
     return RenderTheme::singleton().mediaControlsBase64StringForIconNameAndType(iconName, iconType);
@@ -525,7 +527,7 @@ private:
 
     void populateContextMenu(ContextMenu* menu) override
     {
-        for (auto& item : m_items)
+        for (auto& item : borrow(m_items))
             menu->appendItem(item);
     }
 
@@ -730,7 +732,7 @@ auto MediaControlsHost::mediaControlsContextMenuItems(String&& optionsJSONString
                 subtitleMenuItems.append(createSeparator());
 
                 Vector<MenuItem> languages;
-                for (auto& textTrack : sortedTextTracks) {
+                for (auto& textTrack : borrow(sortedTextTracks)) {
                     if (textTrack.ptr() == &TextTrack::captionMenuOffItemSingleton()
                         || textTrack.ptr() == &TextTrack::captionMenuOnItemSingleton()
                         || textTrack.ptr() == &TextTrack::captionMenuAutomaticItemSingleton())

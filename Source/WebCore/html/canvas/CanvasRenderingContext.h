@@ -127,6 +127,7 @@ public:
     virtual void flushDeferredOperations() { }
 
     virtual bool compositingResultsNeedUpdating() const { return false; }
+    virtual bool hasFrameForPlaceholder() const { return true; }
     virtual bool needsPreparationForDisplay() const { return false; }
     // Swaps the current drawing buffer to display buffer.
     virtual void prepareForDisplay() { }
@@ -140,7 +141,7 @@ public:
     virtual std::optional<RenderingMode> renderingModeForTesting() const { return std::nullopt; }
 
 #if ENABLE(PIXEL_FORMAT_RGBA16F)
-    bool isHDR() const { return pixelFormat() == PixelFormat::RGBA16F; }
+    virtual bool isHDR() const { return allowExtendedColorSpace(pixelFormat()) == AllowExtendedColorSpace::Yes; }
     virtual void setDynamicRangeLimit(PlatformDynamicRangeLimit) { };
     virtual RasterDrawingOptions drawingOptionsForDisplay() const { return { }; }
 #endif

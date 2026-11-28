@@ -85,7 +85,7 @@ NetworkDataTask::NetworkDataTask(NetworkSession& session, NetworkDataTaskClient&
     , m_dataTaskIsForMainFrameNavigation(dataTaskIsForMainFrameNavigation)
     , m_isInitiatedByWorker(isInitiatedByWorker)
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
 
     if (!requestWithCredentials.url().isValid()) {
         scheduleFailure(FailureType::InvalidURL);
@@ -97,7 +97,7 @@ NetworkDataTask::NetworkDataTask(NetworkSession& session, NetworkDataTaskClient&
         return;
     }
 
-    if (!session.networkProcess().ftpEnabled()
+    if (!protect(NetworkProcess::singleton())->ftpEnabled()
         && requestWithCredentials.url().protocolIsInFTPFamily()) {
         scheduleFailure(FailureType::FTPDisabled);
         return;
@@ -108,7 +108,7 @@ NetworkDataTask::NetworkDataTask(NetworkSession& session, NetworkDataTaskClient&
 
 NetworkDataTask::~NetworkDataTask()
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
     ASSERT(!m_client);
 
     if (CheckedPtr session = m_session.get())

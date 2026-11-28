@@ -29,6 +29,7 @@
 #include "CalleeBits.h"
 #include "CodeBlock.h"
 #include "CodeBlockSetInlines.h"
+#include "Collector.h"
 #include "HeapUtil.h"
 #include "JITStubRoutineSet.h"
 #include "JSCast.h"
@@ -92,7 +93,6 @@ static ALWAYS_INLINE bool mayBeReferencedByButterflyEndPointer(HeapCell::Kind ce
 template<bool lookForWasmCallees, typename MarkHook>
 inline void ConservativeRoots::genericAddPointer(char* pointer, HeapVersion markingVersion, HeapVersion newlyAllocatedVersion, TinyBloomFilter<uintptr_t> jsGCFilter, TinyBloomFilter<uintptr_t> boxedWasmCalleeFilter, MarkHook& markHook)
 {
-    ASSERT(m_heap.worldIsStopped());
     pointer = removeArrayPtrTag(pointer);
     markHook.mark(pointer);
 
@@ -106,7 +106,7 @@ inline void ConservativeRoots::genericAddPointer(char* pointer, HeapVersion mark
         m_roots[m_size++] = std::bit_cast<HeapCell*>(p);
     };
 
-    const UncheckedKeyHashSet<MarkedBlock*>& set = m_heap.objectSpace().blocks().set();
+    const HashSet<MarkedBlock*>& set = m_heap.objectSpace().blocks().set();
 
     ASSERT(m_heap.objectSpace().isMarking());
     static constexpr bool isMarking = true;

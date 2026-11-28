@@ -995,14 +995,17 @@ static RefPtr<UniquedStringImpl> nameOfExistingKey(JSValue property)
     return RefPtr<UniquedStringImpl>(WTF::move(name));
 }
 
-static uint64_t addressOfReplaceableValue(JSObject* holder, UniquedStringImpl* name)
+enum class HolderMayBecomePrototype : bool { No, Yes };
+
+static uint64_t addressOfReplaceableValue(JSObject* holder, UniquedStringImpl* name, HolderMayBecomePrototype mayBecomePrototype = HolderMayBecomePrototype::Yes)
 {
     constexpr unsigned isNotReplaceable = PropertyAttribute::ReadOnly | PropertyAttribute::AccessorOrCustomAccessorOrValue;
     Structure* structure = holder->structure();
     if (structure->mayBePrototype() || structure->mayHaveImmutableProperties() || structure->isWatchingReplacement())
         return 0;
-    // An operation that only reads, such as Object.keys(), may flatten it, which renumbers its offsets.
-    if (structure->isUncacheableDictionary() && !structure->hasBeenFlattenedBefore())
+    // An operation that only reads, such as Object.keys(), may flatten it, which renumbers its offsets. Having been flattened before rules that out only for
+    // a holder that never becomes a prototype: that transition clears the bit (Structure::nonPropertyTransitionSlow()) and is not always a declared write.
+    if (structure->isUncacheableDictionary() && (mayBecomePrototype == HolderMayBecomePrototype::Yes || !structure->hasBeenFlattenedBefore()))
         return 0;
     unsigned attributes = 0;
     auto offset = structure->getWithoutMaterializing(name, attributes);
@@ -1024,7 +1027,7 @@ static uint64_t addressInCompiledObject(Object& object, UniquedStringImpl* name,
         return std::bit_cast<uint64_t>(object.slotOf(*field));
     }
     JSObject* extra = findsOnlyFields ? nullptr : object.extraProperties();
-    return extra ? addressOfReplaceableValue(extra, name) : 0;
+    return extra ? addressOfReplaceableValue(extra, name, HolderMayBecomePrototype::No) : 0;
 }
 
 static uint64_t placeInStorage(PropertyOffset offset)

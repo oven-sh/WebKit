@@ -29,9 +29,7 @@
 #include <array>
 #include <wtf/StdLibExtras.h>
 
-namespace WebCore {
-
-namespace MIMESniffer {
+namespace WebCore::MIMESniffer {
 
 template<std::size_t N>
 NODELETE constexpr auto span8(const char(&p)[N])
@@ -361,6 +359,47 @@ String getMIMETypeFromContent(std::span<const uint8_t> sequence)
     return emptyString();
 }
 
-} // namespace MIMESniffer
+// Binary STL is an 80-byte header, a little-endian triangle count, then 50 bytes per triangle.
+NODELETE static bool isBinarySTL(std::span<const uint8_t> sequence)
+{
+    constexpr size_t headerSize = 80;
+    constexpr size_t triangleCountSize = 4;
+    constexpr size_t triangleSize = 50;
 
-} // namespace WebCore
+    if (sequence.size() < headerSize + triangleCountSize)
+        return false;
+
+    auto count = sequence.subspan(headerSize, triangleCountSize);
+    uint64_t triangleCount = count[0] | count[1] << 8 | count[2] << 16 | static_cast<uint64_t>(count[3]) << 24;
+    return sequence.size() == headerSize + triangleCountSize + triangleCount * triangleSize;
+}
+
+String getModelMIMETypeFromContent(std::span<const uint8_t> sequence)
+{
+    struct ModelSignature {
+        const std::span<const uint8_t> signature;
+        const ASCIILiteral mimeType;
+    };
+
+    // The signatures and order of USDLib's UsdStage::Open(buffer).
+    static const auto signatures = WTF::toArray<ModelSignature>({
+        { span8("PXR-USDC"), "model/vnd.pixar.usd"_s },
+        { span8("#usda "), "model/vnd.pixar.usd"_s },
+        { span8("PK\x03\x04"), "model/vnd.usdz+zip"_s },
+        { span8("glTF"), "model/gltf-binary"_s },
+        { span8("{"), "model/gltf+json"_s },
+    });
+
+    for (auto& [signature, mimeType] : signatures) {
+        if (spanHasPrefix(sequence, signature))
+            return mimeType;
+    }
+
+    // STL has no signature: recognize binary STL by its size, and ASCII STL by its leading keyword.
+    if (isBinarySTL(sequence) || spanHasPrefix(sequence, span8("solid")))
+        return "model/stl"_s;
+
+    return nullString();
+}
+
+} // namespace WebCore::MIMESniffer

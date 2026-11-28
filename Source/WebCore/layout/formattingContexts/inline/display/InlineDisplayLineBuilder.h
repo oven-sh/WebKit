@@ -30,8 +30,7 @@
 #include "InlineLineBuilder.h"
 #include <WebCore/InlineDisplayLine.h>
 
-namespace WebCore {
-namespace Layout {
+namespace WebCore::Layout {
 
 class InlineLayoutState;
 class LineBox;
@@ -48,7 +47,8 @@ public:
 
 private:
     struct EnclosingLineGeometry {
-        InlineDisplay::Line::EnclosingTopAndBottom enclosingTopAndBottom;
+        InlineDisplay::Line::EnclosingTopAndBottom enclosingBorderBoxTopAndBottom;
+        InlineDisplay::Line::EnclosingTopAndBottom enclosingContentAreaTopAndBottom;
         InlineRect contentOverflowRect;
     };
     EnclosingLineGeometry collectEnclosingLineGeometry(const LineLayoutResult&, const LineBox&, const InlineRect& lineBoxRect) const;
@@ -64,5 +64,3 @@ private:
 };
 
 }
-}
-

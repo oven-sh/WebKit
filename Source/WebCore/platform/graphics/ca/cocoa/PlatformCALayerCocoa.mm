@@ -142,8 +142,7 @@ static MonotonicTime mediaTimeToCurrentTime(CFTimeInterval t)
     RetainPtr layer = owner->platformLayer();
 
     String animationKey;
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL NSString *key in [layer.get() animationKeys]) {
+    for (NSString *key in [layer.get() animationKeys]) {
         if ([layer.get() animationForKey:key] == animation) {
             animationKey = key;
             break;
@@ -168,8 +167,7 @@ static MonotonicTime mediaTimeToCurrentTime(CFTimeInterval t)
     RetainPtr layer = owner->platformLayer();
 
     String animationKey;
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL NSString *key in [layer.get() animationKeys]) {
+    for (NSString *key in [layer.get() animationKeys]) {
         if ([layer.get() animationForKey:key] == animation) {
             animationKey = key;
             break;
@@ -1017,6 +1015,13 @@ void PlatformCALayerCocoa::setShadowPath(const Path& path)
 {
     BEGIN_BLOCK_OBJC_EXCEPTIONS
     [m_layer setShadowPath:protect(path.platformPath())];
+    END_BLOCK_OBJC_EXCEPTIONS
+}
+
+void PlatformCALayerCocoa::setHidesFromScreenCapture(bool hides)
+{
+    BEGIN_BLOCK_OBJC_EXCEPTIONS
+    [m_layer _web_setHidesFromScreenCapture:hides];
     END_BLOCK_OBJC_EXCEPTIONS
 }
 

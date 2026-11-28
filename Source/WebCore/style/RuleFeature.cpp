@@ -39,8 +39,7 @@
 #include "StyleRule.h"
 #include <wtf/MainThread.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 NODELETE static bool isSiblingOrSubject(MatchElement::Relation relation)
 {
@@ -572,8 +571,6 @@ void RuleFeatureSet::collectFeatures(CollectionContext& collectionContext, const
                 scopeSelectorFromSources(scopeSources)
             });
 
-            setUsesRelation(matchElement.relation);
-
             if constexpr (!std::is_same_v<std::nullptr_t, HostAffectingNames>) {
                 if (matchElement.relation == MatchElement::Relation::Host)
                     hostAffectingNames->add(name);
@@ -600,7 +597,6 @@ void RuleFeatureSet::collectFeatures(CollectionContext& collectionContext, const
 
         if (matchElement.relation == MatchElement::Relation::Host)
             attributesAffectingHost.add(selector->attribute().localNameLowercase());
-        setUsesRelation(matchElement.relation);
     }
 
     for (auto& entry : selectorFeatures.pseudoClasses) {
@@ -620,8 +616,6 @@ void RuleFeatureSet::collectFeatures(CollectionContext& collectionContext, const
         if (matchElement.relation == MatchElement::Relation::Host)
             pseudoClassesAffectingHost.add(selector->pseudoClass());
         pseudoClasses.add(selector->pseudoClass());
-
-        setUsesRelation(matchElement.relation);
     }
 
     for (auto& entry : selectorFeatures.hasPseudoClasses) {
@@ -639,7 +633,6 @@ void RuleFeatureSet::collectFeatures(CollectionContext& collectionContext, const
             scopeSources.isEmpty() ? CSSSelectorList { } : CSSSelectorParser::makeHasScopeSelector(scopeSources)
         });
 
-        setUsesRelation(matchElement.relation);
         usesHasPseudoClass = true;
     }
 }
@@ -696,9 +689,6 @@ void RuleFeatureSet::add(const RuleFeatureSet& other)
 
     addMap(hasPseudoClassRules, other.hasPseudoClassRules);
 
-    for (size_t i = 0; i < usedRelations.size(); ++i)
-        usedRelations[i] = usedRelations[i] || other.usedRelations[i];
-
     usesFirstLineRules = usesFirstLineRules || other.usesFirstLineRules;
     usesFirstLetterRules = usesFirstLetterRules || other.usesFirstLetterRules;
     hasStartingStyleRules = hasStartingStyleRules || other.hasStartingStyleRules;
@@ -741,5 +731,4 @@ void RuleFeatureSet::shrinkToFit()
         rules->shrinkToFit();
 }
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

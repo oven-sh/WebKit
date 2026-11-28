@@ -76,6 +76,12 @@ inline WebKit::FrameState* getFrameState(WebKit::WebBackForwardListFrameItem& it
     return &item.frameState();
 }
 
+// Swift cannot call WebFrameProxy::process() because it returns a reference to a foreign reference type (rdar://168057355).
+inline WebKit::EnhancedSecurity frameProcessEnhancedSecurity(const WebKit::WebFrameProxy& frame)
+{
+    return frame.process().enhancedSecurity();
+}
+
 void setFrameStateBackForwardItemIdentifier(WebKit::FrameState&, const WebCore::BackForwardItemIdentifier&);
 
 // Workarounds for rdar://171011011
@@ -88,5 +94,8 @@ WebKit::FrameState* frameStateChildAtIndex(const WebKit::FrameState&, size_t ind
 
 // WebCore::Page is not visible to Swift.
 unsigned maxFrameStateDepthForMessageCheck();
+
+// Message types are not visible to Swift.
+void sendDidAddHistoryItemToBackForwardItem(WebKit::WebProcessProxy&, WebCore::FrameIdentifier, const WebKit::FrameState&, const WebCore::BackForwardItemIdentifier&);
 
 #endif // ENABLE(BACK_FORWARD_LIST_SWIFT)

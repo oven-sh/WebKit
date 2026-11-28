@@ -24,7 +24,9 @@ struct alignas(32) HashedSlot {
     static constexpr uintptr_t accessMask = 3;
     static constexpr unsigned ways = 4;
     static constexpr unsigned sizeShift = 5;
-    static constexpr uint32_t structureMultiplier = 0x9e3779b1;
+    // Found by measurement for the sizes of the cells of Structure (128) and CompiledStructure (176): structures made one after another that share a name
+    // fill a table of every size more than half before they evict one another. 0x9e3779b1 did that for cells of 112 bytes and not for ones of 128.
+    static constexpr uint32_t structureMultiplier = 0x97a77eb1;
     static constexpr unsigned structureHashShift = 16 - sizeShift;
     static constexpr unsigned uidAlignmentShift = 4;
     static constexpr unsigned uidHashShift = sizeShift - uidAlignmentShift;
@@ -122,11 +124,13 @@ struct StructureRowWords {
 };
 
 struct AbsenceFilter {
-    static constexpr unsigned numberOfFilters = 256;
+    static constexpr unsigned numberOfFiltersLog2 = 8;
+    static constexpr unsigned numberOfFilters = 1u << numberOfFiltersLog2;
     static constexpr unsigned sizeShift = 5;
     static constexpr unsigned bitsOfWordShift = 6;
 
-    static constexpr unsigned indexFor(uint32_t structureIDBits) { return (structureIDBits >> StructureRowWords::granuleShift) & (numberOfFilters - 1); }
+    // A product, as the place of a hashed slot: the table has more places than a block of the structure heap has cells, and a shifted ID reaches no more of them than that.
+    static constexpr unsigned indexFor(uint32_t structureIDBits) { return structureIDBits * HashedSlot::structureMultiplier >> (32 - numberOfFiltersLog2); }
     static constexpr unsigned numberOfWordsForStores = 2;
     void addNameThatStopsStores(uint32_t identifierNumber) { namesThatStopStores[(identifierNumber >> bitsOfWordShift) & (numberOfWordsForStores - 1)] |= uint64_t { 1 } << (identifierNumber & 63); }
     bool letsStoresPass(uint32_t identifierNumber) const { return !(namesThatStopStores[(identifierNumber >> bitsOfWordShift) & (numberOfWordsForStores - 1)] >> (identifierNumber & 63) & 1); }
@@ -160,7 +164,7 @@ struct NameShapesOfStructure {
     static constexpr unsigned numberOfEntries = 64;
     static constexpr unsigned sizeShift = 5;
     static constexpr unsigned maxIndexLength = 10;
-    static constexpr unsigned indexFor(StructureID id) { return (id.bits() >> StructureRowWords::granuleShift) & (numberOfEntries - 1); }
+    static constexpr unsigned indexFor(StructureID id) { return (id.bits() >> structureIDPlaceShift) & (numberOfEntries - 1); }
 
     uint32_t structureID;
     uint32_t questionsBeforeListing;
@@ -194,7 +198,7 @@ struct NameOfText {
 struct FirstElementTransition {
     static constexpr unsigned numberOfEntries = 64;
     static constexpr uint32_t maxIndex = 15;
-    static unsigned indexFor(StructureID before, IndexingType shape) { return ((before.bits() >> StructureRowWords::granuleShift) + shape) & (numberOfEntries - 1); }
+    static unsigned indexFor(StructureID before, IndexingType shape) { return ((before.bits() >> structureIDPlaceShift) + shape) & (numberOfEntries - 1); }
 
     uint32_t structureIDBefore;
     uint32_t shape;
@@ -218,6 +222,8 @@ struct KeyedValuePlace {
         return access == SlotAccess::Read ? 0 : numberOfPlacesPerAccess << sizeShift;
     }
 
+    // The ID as it is, and not its number as structureIDPlaceShift gives it: one key has 64 places with it where the number would give it 250, and the shift
+    // is two instructions more in every read under a key on x86-64, which test/aot/perf/everyday-twins.test.ts of Bun counts.
     static uint32_t offsetFor(const JSCell* key, StructureID structureID) { return (static_cast<uint32_t>(std::bit_cast<uintptr_t>(key)) + structureID.bits()) & offsetMask; }
 
     static constexpr uint32_t absenceBit = 1;
@@ -417,13 +423,15 @@ struct ForwardingProxyHandlers {
     static constexpr unsigned size = 4;
     static constexpr unsigned sizeShift = 4;
     static constexpr uint32_t offsetMask = (size - 1) << sizeShift;
+    // What is left of structureIDPlaceShift when the place is an offset: the number of the StructureID, times the size of an entry.
+    static constexpr unsigned shiftOfStructureID = structureIDPlaceShift - sizeShift;
 
     struct Entry {
         uint64_t wordAfterHeader;
         uint32_t structureID;
     };
 
-    static uint32_t offsetFor(uint32_t structureID) { return structureID & offsetMask; }
+    static constexpr uint32_t offsetFor(uint32_t structureID) { return structureID >> shiftOfStructureID & offsetMask; }
 
     Entry entries[size];
 };
@@ -551,11 +559,11 @@ struct PropertyCacheWords {
     SlotHandlers handlers;
 #endif
     uint64_t headersOfPrototypeSlotsOfOrdinaryConstructors[PlaceOfOrdinaryConstructor::numberOfPlaces + 1];
-    static constexpr unsigned shiftOfPlaceOfStructureBelowBuiltinClass = 4;
+    static constexpr unsigned shiftOfPlaceOfStructureBelowBuiltinClass = structureIDPlaceShift;
     static constexpr unsigned numberOfStructuresBelowBuiltinClasses = 64;
     uint32_t structuresBelowBuiltinClasses[numberOfStructuresBelowBuiltinClasses];
 
-    static constexpr unsigned shiftOfErrorWithMessage = 4;
+    static constexpr unsigned shiftOfErrorWithMessage = structureIDPlaceShift;
     static constexpr unsigned numberOfErrorsWithMessage = 64;
     uint32_t errorsWithMessage[numberOfErrorsWithMessage];
 

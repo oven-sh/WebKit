@@ -35,6 +35,7 @@
 #include <WebCore/IntSize.h>
 #include <WebCore/PageIdentifier.h>
 #include <wtf/Deque.h>
+#include <wtf/NativePromise.h>
 #include <wtf/RefCounted.h>
 #include <wtf/WeakHashMap.h>
 
@@ -47,6 +48,7 @@ class RemoteScrollingCoordinatorTransaction;
 struct MainFrameData;
 struct PageData;
 struct RemoteLayerTreeCommitBundle;
+class RemoteLayerTreeMirror;
 
 #if ENABLE(THREADED_ANIMATIONS)
 class RemoteAnimationStack;
@@ -92,7 +94,14 @@ struct ProcessState {
     TransactionID nextLayerTreeTransactionID;
     std::optional<TransactionID> committedLayerTreeTransactionID;
     uint32_t delayedCommits { 0 };
+    bool hasPendingFullStateRequest { false };
 };
+
+struct MirrorLayerTree {
+    const RetainPtr<CALayer> layer;
+    const Ref<GenericPromise> invalidationPromise;
+};
+using MirrorLayerTreePromise = NativePromise<MirrorLayerTree, void, PromiseOption::Default | PromiseOption::WithoutCrossThreadCopy>;
 
 } // namespace WebKit
 
@@ -140,9 +149,15 @@ public:
 
     NODELETE TransactionID nextMainFrameLayerTreeTransactionID() const;
     NODELETE TransactionID lastCommittedMainFrameLayerTreeTransactionID() const;
+    // The first main frame transaction whose DisplayDidRefresh hasn't been sent yet. The web process can only
+    // start that rendering update after it has received every message sent before now.
+    TransactionID nextUnrequestedMainFrameLayerTreeTransactionID() const { return m_webPageProxyProcessState.nextLayerTreeTransactionID; }
 
     virtual void didRefreshDisplay();
     virtual bool displayLinkWantsHighFrameRateForTesting() const { return false; };
+#if ENABLE(THREADED_ANIMATIONS)
+    bool schedulesUpdatesForMonotonicAnimationsForTesting() const;
+#endif
 
     // True while this layer's transform is the page scale owned by the UI process (unified macOS zoom).
     // RemoteLayerTreePropertyApplier has to leave the committed transform alone in that case.
@@ -153,6 +168,11 @@ public:
     virtual bool ownsPositionOfLayer(WebCore::PlatformLayerIdentifier) const { return false; }
 
     bool hasDebugIndicator() const { return !!m_debugIndicatorLayerTreeHost; }
+
+    Ref<MirrorLayerTreePromise> enableMirrorLayerTree();
+    void disableMirrorLayerTree();
+    bool hasMirrorLayerTree() const { return !!m_mirror; }
+    bool isMirrorLayer(CALayer *) const;
 
     RetainPtr<CALayer> layerWithIDForTesting(WebCore::PlatformLayerIdentifier) const;
 
@@ -210,6 +230,10 @@ private:
     float indicatorScale(WebCore::IntSize contentsSize) const;
     void updateDebugIndicator() final;
     void updateDebugIndicator(WebCore::IntSize contentsSize, bool rootLayerChanged, float scale, const WebCore::IntPoint& scrollPosition);
+
+    void didReceiveMirrorFullState(IPC::Connection&, WebPageProxy&, const RemoteLayerTreeFullState&, bool hasMainFrame);
+    void completeMirrorAttachIfReady();
+
     void initializeDebugIndicator();
 
     void initializeSlowFrameIndicator();
@@ -242,7 +266,7 @@ private:
     void notifyPendingCommitLayerTree(IPC::Connection&, std::optional<TransactionID>, WebCore::PageIdentifier);
     void notifyFlushingLayerTree(IPC::Connection&, TransactionID, WebCore::PageIdentifier);
     bool isFromPreviousWebPage(const ProcessState&, WebCore::PageIdentifier, ASCIILiteral messageName) const;
-    void commitLayerTree(IPC::Connection&, const RemoteLayerTreeCommitBundle&, HashMap<ImageBufferSetIdentifier, std::unique_ptr<BufferSetBackendHandle>>&&);
+    void commitLayerTree(IPC::Connection&, const RemoteLayerTreeCommitBundle&, RemoteLayerTreeFullState&&, HashMap<ImageBufferSetIdentifier, std::unique_ptr<BufferSetBackendHandle>>&&);
     void commitLayerTreeTransaction(IPC::Connection&, const RemoteLayerTreeTransaction&, const RemoteScrollingCoordinatorTransaction&, const std::optional<MainFrameData>&, const PageData&, const TransactionID&);
     virtual void didCommitLayerTree(IPC::Connection&, const RemoteLayerTreeTransaction&, const RemoteScrollingCoordinatorTransaction&, const std::optional<MainFrameData>&, const TransactionID&) { }
 
@@ -264,6 +288,9 @@ private:
     WebCore::IntSize m_lastSentSizeToContentAutoSizeMaximumSize;
 
     const std::unique_ptr<RemoteLayerTreeHost> m_debugIndicatorLayerTreeHost;
+    std::unique_ptr<RemoteLayerTreeMirror> m_mirror;
+    std::optional<MirrorLayerTreePromise::AutoRejectProducer> m_mirrorAttachProducer;
+    std::optional<GenericPromise::Producer> m_mirrorInvalidationProducer;
     const RetainPtr<CALayer> m_tileMapHostLayer;
     const RetainPtr<CALayer> m_exposedRectIndicatorLayer;
 

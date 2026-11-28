@@ -178,7 +178,7 @@ static constexpr uint32_t numberOfPlacesOfCopiesWithNames = 512;
 static constexpr uint32_t sizeOfCopiesWithNames = 16 * 1024;
 static constexpr uint32_t offsetOfTakenBytesOfCopiesWithNames = numberOfPlacesOfCopiesWithNames * sizeof(uint32_t);
 static constexpr uint32_t offsetOfFirstCopyWithNames = offsetOfTakenBytesOfCopiesWithNames + sizeof(uint64_t);
-static constexpr unsigned copyWithNamesHashShift = 6;
+static constexpr unsigned copyWithNamesHashShift = structureIDPlaceShift;
 static constexpr uint32_t copiesThatTakeAnOccupiedPlaceMask = 63;
 static constexpr uint32_t placeOfCopyWithNames(uint32_t structureOfSource, uint32_t firstName) { return ((structureOfSource >> copyWithNamesHashShift) + firstName) % numberOfPlacesOfCopiesWithNames; }
 static_assert(sizeof(CopyWithNames) == 24 && sizeof(NameInCopy) == 8 && !(offsetOfFirstCopyWithNames % alignof(CopyWithNames)));

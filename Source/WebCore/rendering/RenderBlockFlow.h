@@ -125,8 +125,8 @@ class RenderBlockFlow : public RenderBlock {
     WTF_MAKE_TZONE_ALLOCATED(RenderBlockFlow);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderBlockFlow);
 public:
-    RenderBlockFlow(Type, Element&, Style::ComputedStyle&&, OptionSet<BlockFlowFlag> = { });
-    RenderBlockFlow(Type, Document&, Style::ComputedStyle&&, OptionSet<BlockFlowFlag> = { });
+    RenderBlockFlow(Type, Element&, UniqueRef<Style::ComputedStyle>&&, OptionSet<BlockFlowFlag> = { });
+    RenderBlockFlow(Type, Document&, UniqueRef<Style::ComputedStyle>&&, OptionSet<BlockFlowFlag> = { });
     virtual ~RenderBlockFlow();
         
     void layoutBlock(RelayoutChildren, LayoutUnit pageLogicalHeight = 0_lu) override;
@@ -160,7 +160,6 @@ protected:
     LayoutUnit collapsedMarginBefore() const final { return maxPositiveMarginBefore() - maxNegativeMarginBefore(); }
     LayoutUnit collapsedMarginAfter() const final { return maxPositiveMarginAfter() - maxNegativeMarginAfter(); }
 
-    void paintColumnRules(PaintInfo&, const LayoutPoint&) override;
 
 public:
     MarginValues marginValuesForChild(RenderBox& child) const;
@@ -306,7 +305,6 @@ public:
     NODELETE LayoutUnit lowestFloatLogicalBottom() const; // Defaults to FloatingObject::FloatLeftRight
     NODELETE LayoutUnit lowestFloatLogicalBottom(FloatingObjectType) const;
 
-    void removeFloatingObjects();
     void markAllDescendantsWithFloatsForLayout(RenderBox* floatToRemove = nullptr, bool inLayout = true);
     void markSiblingsWithFloatsForLayout(RenderBox* floatToRemove = nullptr);
 
@@ -327,8 +325,6 @@ public:
     inline void setLogicalHeightForFloat(FloatingObject&, LayoutUnit logicalHeight); // Defined in RenderBlockFlowInlines.h
     inline void setLogicalWidthForFloat(FloatingObject&, LayoutUnit logicalWidth); // Defined in RenderBlockFlowInlines.h
     inline void setLogicalMarginsForFloat(FloatingObject&, LayoutUnit logicalLeftMargin, LayoutUnit logicalBeforeMargin); // Defined in RenderBlockFlowInlines.h
-
-    NODELETE LayoutPoint flipFloatForWritingModeForChild(const FloatingObject&, const LayoutPoint&) const;
 
     void setChildrenInline(bool) final;
 
@@ -375,7 +371,7 @@ public:
     LayoutUnit pageLogicalHeightForOffset(LayoutUnit offset) const;
     LayoutUnit pageRemainingLogicalHeightForOffset(LayoutUnit offset, PageBoundaryRule = IncludePageBoundary) const;
     NODELETE LayoutUnit logicalHeightForChildForFragmentation(const RenderBox& child) const;
-    bool hasNextPage(LayoutUnit logicalOffset, PageBoundaryRule = ExcludePageBoundary) const;
+    bool hasNextPage(LayoutUnit logicalOffset) const;
 
     void updateColumnProgressionFromStyle(const Style::ComputedStyle&);
     void updateStylesForColumnChildren(const Style::ComputedStyle* oldStyle);
@@ -400,7 +396,6 @@ public:
 
     NODELETE std::optional<LayoutUnit> lowestInitialLetterLogicalBottom() const;
 
-    void paintBlockLevelContentInInline(PaintInfo&, const LayoutPoint& paintOffset);
 
     std::optional<LayoutUnit> firstLineBaseline() const override;
     std::optional<LayoutUnit> lastLineBaseline() const override;
@@ -466,10 +461,7 @@ private:
 
     void checkForPaginationLogicalHeightChange(RelayoutChildren&, LayoutUnit& pageLogicalHeight, bool& pageLogicalHeightChanged);
 
-    void paintInlineChildren(PaintInfo&, const LayoutPoint&) override;
-    void paintFloats(PaintInfo&, const LayoutPoint&, bool preservePhase = false) override;
 
-    void repaintOverhangingFloats(bool paintAllDescendants) final;
     void clipOutFloatingBoxes(RenderBlock&, const PaintInfo*, const LayoutPoint&, const LayoutSize&) override;
 
     void insertFloatingBoxAndMarkForLayout(RenderBox&);
@@ -479,7 +471,6 @@ private:
     // Called from lineWidth, to position the floats added in the last line.
     // Returns true if and only if it has positioned any floats.
     bool positionNewFloats();
-    void clearFloats(UsedClear);
 
     LayoutUnit logicalRightFloatOffsetForLine(LayoutUnit logicalTop, LayoutUnit fixedOffset, LayoutUnit logicalHeight) const override;
     LayoutUnit logicalLeftFloatOffsetForLine(LayoutUnit logicalTop, LayoutUnit fixedOffset, LayoutUnit logicalHeight) const override;
@@ -487,10 +478,9 @@ private:
     LayoutUnit logicalRightOffsetForPositioningFloat(LayoutUnit logicalTop, LayoutUnit fixedOffset, LayoutUnit* heightRemaining) const;
     LayoutUnit logicalLeftOffsetForPositioningFloat(LayoutUnit logicalTop, LayoutUnit fixedOffset, LayoutUnit* heightRemaining) const;
     
-    LayoutUnit nextFloatLogicalBottomBelow(LayoutUnit) const;
     LayoutUnit nextFloatLogicalBottomBelowForBlock(LayoutUnit) const;
     
-    LayoutUnit addOverhangingFloats(RenderBlockFlow& child, bool makeChildPaintOtherFloats);
+    LayoutUnit addOverhangingFloats(RenderBlockFlow& child);
     NODELETE bool hasOverhangingFloat(RenderBox&);
     void addIntrudingFloats(RenderBlockFlow* prev, RenderBlockFlow* container, LayoutUnit xoffset, LayoutUnit yoffset);
     inline bool hasOverhangingFloats() const;
@@ -498,8 +488,6 @@ private:
 
     void determineLogicalLeftPositionForChild(RenderBox& child, ApplyLayoutDeltaMode = DoNotApplyLayoutDelta);
     
-    bool hitTestFloats(const HitTestRequest&, HitTestResult&, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset) override;
-    bool hitTestInlineChildren(const HitTestRequest&, HitTestResult&, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestAction) override;
 
     void addOverflowFromInlineChildren();
 

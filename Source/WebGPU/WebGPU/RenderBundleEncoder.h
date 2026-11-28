@@ -25,6 +25,10 @@
 
 #pragma once
 
+#if !__has_feature(objc_arc)
+#error This header requires ARC. Include it only from files compiled with -fobjc-arc.
+#endif
+
 #import "CommandsMixin.h"
 #import "RenderBundle.h"
 #import <WebGPU/WebGPUCpp.h>
@@ -117,10 +121,11 @@ public:
     void setVertexBuffer(uint32_t slot, WebGPU::Buffer*, uint64_t offset, std::optional<uint64_t> size) final;
     void setBindGroup(uint32_t groupIndex, const WebGPU::BindGroup*, std::optional<std::span<const uint32_t>> dynamicOffsets) final;
     void makeInvalid(NSString* = nil);
+    void makeInvalid(String&& error) final;
     void setLabel(String&&) final;
 
     NODELETE bool isValid() const final;
-    void replayCommands(RenderPassEncoder&);
+    void replayCommands(RenderPassEncoder&, float minDepth, float maxDepth);
     void releaseDestroyedResources();
 
     static constexpr auto startIndexForFragmentDynamicOffsets = 3;
@@ -172,7 +177,7 @@ private:
     RefPtr<const RenderPipeline> m_pipeline;
     uint32_t m_maxVertexBufferSlot { 0 };
     uint32_t m_maxBindGroupSlot { 0 };
-    using UtilizedBufferIndicesContainer = HashMap<uint32_t, uint64_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+    using UtilizedBufferIndicesContainer = HashMap<uint32_t, uint64_t>;
     UtilizedBufferIndicesContainer m_utilizedBufferIndices;
 
     id<MTLIndirectCommandBuffer> m_indirectCommandBuffer { nil };
@@ -202,9 +207,9 @@ private:
     };
     Vector<BufferAndOffset> m_vertexBuffers;
     Vector<BufferAndOffset> m_fragmentBuffers;
-    using BindGroupDynamicOffsetsContainer = HashMap<uint32_t, Vector<uint32_t>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+    using BindGroupDynamicOffsetsContainer = HashMap<uint32_t, Vector<uint32_t>>;
     std::optional<BindGroupDynamicOffsetsContainer> m_bindGroupDynamicOffsets;
-    HashMap<uint32_t, Ref<const BindGroup>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_bindGroups;
+    HashMap<uint32_t, Ref<const BindGroup>> m_bindGroups;
     HashSet<RefPtr<const BindGroup>> m_allBindGroups;
     RenderBundle::MinVertexCountsContainer m_minVertexCountForDrawCommand;
     IndirectDrawForSlotContainer m_indirectDrawsForSlot;
@@ -226,6 +231,8 @@ private:
     bool m_requiresCommandReplay { false };
     bool m_finished { false };
     uint32_t m_sampleMask { defaultSampleMask };
+    float m_minDepth { 0.f };
+    float m_maxDepth { 1.f };
     bool m_makeSubmitInvalid { false };
 };
 

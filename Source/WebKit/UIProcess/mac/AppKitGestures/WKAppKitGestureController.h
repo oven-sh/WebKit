@@ -35,6 +35,10 @@
 #import <wtf/ObjectIdentifier.h>
 #import <wtf/Vector.h>
 
+#if !__has_feature(modules)
+#import "IdentifierTypes.h"
+#endif
+
 namespace WebCore {
 class Color;
 class CornerRadii;
@@ -49,10 +53,6 @@ struct InteractionInformationAtPosition;
 OBJC_CLASS NSPanGestureRecognizer;
 OBJC_CLASS WKClickHighlightController;
 OBJC_CLASS WKWebView;
-
-#if __has_include(<WebKitAdditions/WKAppKitGestureControllerAdditionsBefore.mm>) && !__has_feature(modules)
-#import <WebKitAdditions/WKAppKitGestureControllerAdditionsBefore.mm>
-#endif
 
 NS_HEADER_AUDIT_BEGIN(nullability, sendability)
 
@@ -80,16 +80,16 @@ NS_SWIFT_UI_ACTOR
 
 #if ENABLE(TWO_PHASE_CLICKS)
 
-@property (nonatomic, readonly, getter=isPotentialClickInProgress) BOOL potentialClickInProgress;
+@property (nonatomic, readonly, getter=isPotentialTapInProgress) BOOL potentialTapInProgress;
 
 #if !__has_feature(modules)
 @property (nonatomic, readonly) WKClickHighlightController *clickHighlightController;
-- (void)didGetClickHighlightForRequest:(WebKit::ClickIdentifier)requestID color:(const WebCore::Color&)color quads:(const Vector<WebCore::FloatQuad>&)highlightedQuads cornerRadii:(WebCore::CornerRadii&&)cornerRadii nodeHasBuiltInClickHandling:(BOOL)nodeHasBuiltInClickHandling;
-- (void)disableDoubleClickGesturesDuringClickIfNecessary:(WebKit::ClickIdentifier)requestID;
-- (void)commitPotentialClickFailed;
+- (void)didGetTapHighlightForRequest:(WebKit::TapIdentifier)requestID color:(const WebCore::Color&)color quads:(const Vector<WebCore::FloatQuad>&)highlightedQuads cornerRadii:(WebCore::CornerRadii&&)cornerRadii nodeHasBuiltInClickHandling:(BOOL)nodeHasBuiltInClickHandling;
+- (void)disableDoubleTapGesturesDuringTapIfNecessary:(WebKit::TapIdentifier)requestID;
+- (void)commitPotentialTapFailed;
 - (void)didCompleteSyntheticClick;
-- (void)didHandleClickAsHover;
-- (void)didNotHandleClickAsClick:(const WebCore::IntPoint&)point;
+- (void)didHandleTapAsHover;
+- (void)didNotHandleTapAsClick:(const WebCore::IntPoint&)point;
 #endif // !__has_feature(modules)
 
 #endif // ENABLE(TWO_PHASE_CLICKS)

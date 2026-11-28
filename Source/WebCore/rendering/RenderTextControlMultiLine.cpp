@@ -37,7 +37,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderTextControlMultiLine);
 
-RenderTextControlMultiLine::RenderTextControlMultiLine(HTMLTextAreaElement& element, Style::ComputedStyle&& style)
+RenderTextControlMultiLine::RenderTextControlMultiLine(HTMLTextAreaElement& element, UniqueRef<Style::ComputedStyle>&& style)
     : RenderTextControl(Type::TextControlMultiLine, element, WTF::move(style))
 {
     ASSERT(isRenderTextControlMultiLine());
@@ -105,7 +105,8 @@ void RenderTextControlMultiLine::layoutExcludedChildren(RelayoutChildren relayou
     if (!placeholderRenderer)
         return;
     if (CheckedPtr placeholderBox = dynamicDowncast<RenderBox>(placeholderRenderer.get())) {
-        placeholderBox->mutableStyle().setLogicalWidth(Style::PreferredSize::Fixed { contentBoxLogicalWidth() - placeholderBox->borderAndPaddingLogicalWidth() });
+        auto usedZoomForLength = placeholderBox->style().usedZoomForLength().value;
+        protect(placeholderBox->mutableStyle())->setLogicalWidth(Style::PreferredSize::Fixed { (contentBoxLogicalWidth() - placeholderBox->borderAndPaddingLogicalWidth()) / usedZoomForLength });
         placeholderBox->layoutIfNeeded();
         placeholderBox->setX(borderLeft() + paddingLeft());
         placeholderBox->setY(borderTop() + paddingTop());

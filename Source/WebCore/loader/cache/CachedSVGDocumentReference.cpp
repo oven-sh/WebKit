@@ -27,11 +27,12 @@
 #include "config.h"
 #include "CachedSVGDocumentReference.h"
 
+#include "CSSStyleResource.h"
 #include "CachedResourceHandle.h"
 #include "CachedResourceLoader.h"
 #include "CachedResourceRequest.h"
-#include "CachedResourceRequestInitiatorTypes.h"
 #include "CachedSVGDocument.h"
+#include "Document.h"
 
 namespace WebCore {
 
@@ -56,10 +57,8 @@ void CachedSVGDocumentReference::load(CachedResourceLoader& loader, const Resour
     if (m_loadRequested)
         return;
 
-    auto fetchOptions = options;
-    fetchOptions.mode = FetchOptions::Mode::SameOrigin;
-    CachedResourceRequest request(ResourceRequest(URL { m_location.resolved }), fetchOptions);
-    request.setInitiatorType(cachedResourceRequestInitiatorTypes().css);
+    // FIXME: Filter Effects says to fetch filters in "cors" mode. https://drafts.csswg.org/filter-effects-1/#origin-restrictions
+    auto request = CSS::createStyleResourceRequest(*protect(loader.document()), m_location.resolved, m_location.modifiers, m_location.provenance, FetchOptions::Mode::SameOrigin, options);
     if (auto result = loader.requestSVGDocument(WTF::move(request)))
         m_document = WTF::move(result.value());
     else

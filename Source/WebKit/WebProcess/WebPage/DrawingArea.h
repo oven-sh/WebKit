@@ -109,6 +109,8 @@ public:
     virtual void acceleratedAnimationDidEnd(WebCore::PlatformLayerIdentifier, const String& /*key*/) { }
     virtual void addFence(const WTF::MachSendRight&) { }
 
+    virtual void buildFullLayerTreeState() { }
+
     virtual WebCore::FloatRect exposedContentRect() const = 0;
     virtual void setExposedContentRect(const WebCore::FloatRect&) = 0;
 #endif
@@ -179,7 +181,7 @@ public:
     virtual void preferredBufferFormatsDidChange() { }
 #endif
 
-#if PLATFORM(GTK) || PLATFORM(WPE)
+#if USE(ACCELERATED_SURFACE)
     virtual void dispatchPendingCallbacksAfterEnsuringDrawing() = 0;
 #endif
 
@@ -239,7 +241,7 @@ private:
     virtual void setColorSpace(std::optional<WebCore::ColorSpace>) { }
 #endif
 
-#if PLATFORM(COCOA) || PLATFORM(GTK) || PLATFORM(WPE)
+#if PLATFORM(COCOA) || USE(ACCELERATED_SURFACE)
     virtual void dispatchAfterEnsuringDrawing(IPC::AsyncReplyID) = 0;
 #endif
 

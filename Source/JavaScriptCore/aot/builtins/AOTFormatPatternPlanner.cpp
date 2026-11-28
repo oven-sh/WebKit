@@ -34,7 +34,7 @@ static std::optional<WTF::Vector<uint8_t>> serializedArgumentsOfFormatter(const 
     WTF::Vector<uint8_t> bytes;
     bool isValid = request.options.size() <= 0xff;
     auto appendText = [&](const String& text) {
-        auto utf8 = text.utf8();
+        auto utf8 = makeUTF8CString(text);
         isValid &= utf8.length() <= 0xffff;
         bytes.append(static_cast<uint8_t>(utf8.length()));
         bytes.append(static_cast<uint8_t>(utf8.length() >> 8));

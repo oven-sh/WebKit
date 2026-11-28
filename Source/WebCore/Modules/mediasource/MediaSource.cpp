@@ -1066,10 +1066,12 @@ void MediaSource::detachFromElement()
     if (detachable())
         m_readyStateBeforeDetached = readyState();
 
+    // Queue endstreaming ahead of sourceclose.
+    elementDetached();
+
     // 1. Set the readyState attribute to "closed".
     // 7. Queue a task to fire a simple event named sourceclose at the MediaSource.
     setReadyState(ReadyState::Closed);
-    elementDetached();
 
     // 2. Update duration to NaN.
     // Step is done in duration() method which will now always return invalidTime() if MediaSource is not detachable.
@@ -1388,7 +1390,7 @@ void MediaSource::failedToCreateRenderer(RendererType type)
     ERROR_LOG(LOGIDENTIFIER, type == RendererType::Video ? "video"_s : "audio"_s);
 
     if (RefPtr context = scriptExecutionContext())
-        context->addConsoleMessage(MessageSource::JS, MessageLevel::Error, makeString("MediaSource "_s, type == RendererType::Video ? "video"_s : "audio"_s, " renderer creation failed."_s));
+        context->addConsoleMessage(MessageSource::MediaSource, MessageLevel::Error, makeString("MediaSource "_s, type == RendererType::Video ? "video"_s : "audio"_s, " renderer creation failed."_s));
 
     ensureWeakOnHTMLMediaElementContext([](auto& mediaElement) {
         mediaElement.mediaLoadingFailedFatally(MediaPlayer::NetworkState::DecodeError);

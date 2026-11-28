@@ -25,6 +25,10 @@
 
 #pragma once
 
+#if !__has_feature(objc_arc)
+#error This header requires ARC. Include it only from files compiled with -fobjc-arc.
+#endif
+
 #import "BindableResource.h"
 #import "Device.h"
 #import "Instance.h"
@@ -86,13 +90,11 @@ public:
     // The mapped range as a span, for the C API. The C++ API has getMappedRange() instead,
     // because a proxy cannot return a pointer into the mapping.
     std::span<uint8_t> getMappedRangeSpan(uint64_t offset, std::optional<uint64_t> size);
-    // The mapped range for the C API, which, unlike the JavaScript API, lets the ranges that it hands
-    // out overlap: they are pointers into the mapping, not ArrayBuffers that are detached on unmap.
-    std::span<uint8_t> mappedRangeForCAPI(uint64_t offset, std::optional<uint64_t> size);
+    // Unlike getMappedRange(), lets the ranges that it hands out overlap: they are pointers into the
+    // mapping, not ArrayBuffers that are detached on unmap.
+    std::span<uint8_t> persistentMappedRange(uint64_t offset, std::optional<uint64_t> size) final;
     void unmap() final;
     void setLabel(String&&) final;
-    void generateAValidationError() final;
-    void generateAValidationError(String&&);
 
     NODELETE bool isValid() const final;
 
@@ -109,10 +111,13 @@ public:
 
     NODELETE uint64_t initialSize() const;
     uint64_t currentSize() const;
-    OptionSet<WebGPU::BufferUsage> usage() const { return m_usage; }
+    NODELETE OptionSet<WebGPU::BufferUsage> usage() const final { return m_usage; }
     State state() const { return m_state; }
+    // The size of the C++ API is the creation size; currentSize() is a detail of the Metal buffer.
+    uint64_t size() const final { return initialSize(); }
+    WebGPU::BufferMapState mapState() const final;
 
-    Device& device() const { return m_device; }
+    NODELETE Device& device() const final { return m_device; }
     bool isDestroyed() const { return state() == State::Destroyed; }
 
     void setCommandEncoder(CommandEncoder&, bool mayModifyBuffer = false) const;
@@ -190,9 +195,9 @@ private:
     const Ref<Device> m_device;
     mutable ThreadSafeWeakHashSet<BindGroup> m_bindGroups;
     mutable ThreadSafeWeakHashSet<RenderBundle> m_renderBundles;
-    mutable HashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_gpuResourceMap;
-    HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_skippedValidationCommandEncoders;
-    mutable HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_pendingIndexWriteCommandEncoders; // NOLINT
+    mutable HashMap<uint64_t, uint32_t> m_gpuResourceMap;
+    HashSet<uint64_t> m_skippedValidationCommandEncoders;
+    mutable HashSet<uint64_t> m_pendingIndexWriteCommandEncoders; // NOLINT
     bool m_mustTakeSlowIndexValidationPath { false };
     // Identity of the command buffer this buffer was last cleared for, so that several failed validations
     // sharing one command buffer do not each capture a "prior" copy and queue a restore of it.
@@ -204,7 +209,7 @@ private:
 #if CPU(X86_64) && (PLATFORM(MAC) || PLATFORM(MACCATALYST))
     bool m_mappedAtCreation { false };
 #endif
-    HashMap<uint64_t, bool, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_didReadOOB;
+    HashMap<uint64_t, bool> m_didReadOOB;
 } SWIFT_SHARED_REFERENCE(refBuffer, derefBuffer) SWIFT_PRIVATE_FILEID("WebGPU/Buffer.swift") SWIFT_RETURNED_AS_UNRETAINED_BY_DEFAULT;
 
 } // namespace WebGPU::Metal

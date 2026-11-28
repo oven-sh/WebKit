@@ -74,7 +74,7 @@ CSSSelector::CSSSelector(const QualifiedName& tagQName, bool tagIsForNamespaceRu
 
 void CSSSelector::createRareData()
 {
-    ASSERT(match() != Match::Tag);
+    ASSERT_WITH_SECURITY_IMPLICATION(match() != Match::Tag);
     if (m_hasRareData)
         return;
     // Move the value to the rare data stucture.
@@ -358,7 +358,7 @@ std::optional<CSSSelector::PseudoElement> CSSSelector::parsePseudoElementName(St
 
     auto type = findPseudoElementName(name);
     if (!type) {
-        ASSERT_WITH_MESSAGE(!isUASheetBehavior(context.mode), "Unknown pseudo-element %s in user-agent stylesheet", name.toString().utf8());
+        ASSERT_WITH_MESSAGE(!isUASheetBehavior(context.mode), "Unknown pseudo-element %s in user-agent stylesheet", makeUTF8CString(name.toString()));
         if (name.startsWithIgnoringASCIICase("-webkit-"_s))
             return PseudoElement::WebKitUnknown;
         return type;
@@ -800,19 +800,19 @@ void CSSSelector::setNth(int a, int b)
 
 bool CSSSelector::matchNth(int count) const
 {
-    ASSERT(m_hasRareData);
+    ASSERT_WITH_SECURITY_IMPLICATION(m_hasRareData);
     return m_data.rareData->matchNth(count);
 }
 
 int CSSSelector::nthA() const
 {
-    ASSERT(m_hasRareData);
+    ASSERT_WITH_SECURITY_IMPLICATION(m_hasRareData);
     return m_data.rareData->a;
 }
 
 int CSSSelector::nthB() const
 {
-    ASSERT(m_hasRareData);
+    ASSERT_WITH_SECURITY_IMPLICATION(m_hasRareData);
     return m_data.rareData->b;
 }
 

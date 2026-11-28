@@ -48,8 +48,8 @@ class RenderTable : public RenderBlock {
     WTF_MAKE_TZONE_ALLOCATED(RenderTable);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderTable);
 public:
-    RenderTable(Type, Element&, Style::ComputedStyle&&);
-    RenderTable(Type, Document&, Style::ComputedStyle&&);
+    RenderTable(Type, Element&, UniqueRef<Style::ComputedStyle>&&);
+    RenderTable(Type, Document&, UniqueRef<Style::ComputedStyle>&&);
     virtual ~RenderTable();
 
     // Per CSS 3 writing-mode: "The first and second values of the 'border-spacing' property represent spacing between columns
@@ -180,6 +180,9 @@ public:
     void invalidateCollapsedBorders(RenderTableCell* cellWithStyleChange = nullptr);
     void invalidateCollapsedBordersAfterStyleChangeIfNeeded(const Style::ComputedStyle& oldStyle, const Style::ComputedStyle& newStyle, RenderTableCell* cellWithStyleChange = nullptr);
     void collapsedEmptyBorderIsPresent() { m_collapsedEmptyBorderIsPresent = true; }
+
+    LayoutUnit maxCollapsedInnerBorderHalfForFirstColumn() { recalcCollapsedBorders(); return m_maxCollapsedInnerBorderHalfFirstColumn; }
+    LayoutUnit maxCollapsedInnerBorderHalfForLastColumn() { recalcCollapsedBorders(); return m_maxCollapsedInnerBorderHalfLastColumn; }
     const CollapsedBorderValue* currentBorderValue() const LIFETIME_BOUND { return m_currentBorder; }
     void paintCollapsedBordersForRow(PaintInfo&, RenderTableRow&, const LayoutPoint& paintOffset);
     
@@ -220,8 +223,6 @@ protected:
 
     void paint(PaintInfo&, const LayoutPoint&) final;
     void paintObject(PaintInfo&, const LayoutPoint&) final;
-    void paintBoxDecorations(PaintInfo&, const LayoutPoint&) final;
-    void paintMask(PaintInfo&, const LayoutPoint&) final;
 
     template<typename Function> void paintCollapsedBorderPasses(const PaintInfo&, NOESCAPE const Function& paintPass);
     void layout() final;
@@ -267,8 +268,13 @@ protected:
     mutable Vector<SingleThreadWeakPtr<RenderTableCaption>> m_captions;
     mutable Vector<SingleThreadWeakPtr<RenderTableCol>> m_columnRenderers;
 
+    struct EffectiveColumnRange {
+        unsigned firstEffectiveColumnIndex;
+        unsigned lastEffectiveColumnIndex;
+    };
+    EffectiveColumnRange effectiveColumnRange(const RenderTableCol&) const;
     unsigned effectiveIndexOfColumn(const RenderTableCol&) const;
-    using EffectiveColumnIndexMap = HashMap<SingleThreadWeakRef<const RenderTableCol>, unsigned>;
+    using EffectiveColumnIndexMap = HashMap<SingleThreadWeakRef<const RenderTableCol>, EffectiveColumnRange>;
     mutable EffectiveColumnIndexMap m_effectiveColumnIndexMap;
 
     mutable SingleThreadWeakPtr<RenderTableSection> m_head;
@@ -279,6 +285,8 @@ protected:
 
     CollapsedBorderValues m_collapsedBorders;
     const CollapsedBorderValue* m_currentBorder { nullptr };
+    LayoutUnit m_maxCollapsedInnerBorderHalfFirstColumn;
+    LayoutUnit m_maxCollapsedInnerBorderHalfLastColumn;
     bool m_collapsedBordersValid : 1 { false };
     bool m_collapsedEmptyBorderIsPresent : 1 { false };
 

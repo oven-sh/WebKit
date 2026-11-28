@@ -60,7 +60,7 @@ private:
     template<UseKind useKind>
     bool convertValueRepsToUnboxed()
     {
-        UncheckedKeyHashSet<Node*> candidates;
+        HashSet<Node*> candidates;
         for (BasicBlock* block : m_graph.blocksInNaturalOrder()) {
             for (Node* node : *block) {
                 switch (node->op()) {
@@ -92,7 +92,7 @@ private:
                             MultiGetByOffsetData& data = node->child1()->multiGetByOffsetData();
                             for (unsigned i = 0; i < data.cases.size(); ++i) {
                                 GetByOffsetMethod& method = data.cases[i].method();
-                                if (method.kind() == GetByOffsetMethod::Constant && !method.constant()->value().toNumberFromPrimitive()) {
+                                if (method.kind() == GetByOffsetMethod::Constant && !method.constant()->value().isNumber()) {
                                     isCandidate = false;
                                     break;
                                 }
@@ -209,7 +209,7 @@ private:
         if (candidates.isEmpty())
             return false;
 
-        UncheckedKeyHashMap<Node*, Vector<Node*>> usersOf;
+        HashMap<Node*, Vector<Node*>> usersOf;
         auto getUsersOf = [&] (Node* candidate) {
             auto iter = usersOf.find(candidate);
             RELEASE_ASSERT(iter != usersOf.end());
@@ -279,7 +279,7 @@ private:
         // - Any Phi-1 that forwards into another Phi-2, where Phi-2 is a candidate,
         //   makes Phi-1 a candidate too.
         do {
-            UncheckedKeyHashSet<Node*> eligiblePhis;
+            HashSet<Node*> eligiblePhis;
             for (auto* candidate : candidates) {
                 if (candidate->op() == Phi) {
                     phiChildren.forAllIncomingValues(candidate, [&] (Node* incoming) {
@@ -303,7 +303,7 @@ private:
         } while (true);
 
         do {
-            UncheckedKeyHashSet<Node*> toRemove;
+            HashSet<Node*> toRemove;
 
             auto isEscaped = [&] (Node* node) {
                 return !candidates.contains(node) || toRemove.contains(node);
@@ -528,7 +528,7 @@ private:
             return false;
 
         NodeOrigin originForConstant = m_graph.block(0)->at(0)->origin;
-        UncheckedKeyHashSet<Node*> doubleRepRealCheckLocations;
+        HashSet<Node*> doubleRepRealCheckLocations;
 
         for (auto* candidate : candidates) {
             dataLogLnIf(verbose, "Optimized: ", candidate, " with ", useKind);
@@ -622,13 +622,8 @@ private:
                 MultiGetByOffsetData& data = candidate->multiGetByOffsetData();
                 for (unsigned i = 0; i < data.cases.size(); ++i) {
                     GetByOffsetMethod& method = data.cases[i].method();
-                    if (method.kind() == GetByOffsetMethod::Constant) {
-                        // It's possible there are non-Number constants that still predict NumberUse, e.g. undefined.
-                        // They stay as they are, so that they fail the number check that this node now does for its uses.
-                        JSValue constant = method.constant()->value();
-                        if (constant.isNumber())
-                            method.setConstantValue(m_graph.freeze(jsDoubleNumber(constant.asNumber())));
-                    }
+                    if (method.kind() == GetByOffsetMethod::Constant)
+                        method.setConstantValue(m_graph.freeze(jsDoubleNumber(method.constant()->value().asNumber())));
                 }
                 candidate->setResult(NodeResultDouble);
                 resultNode = candidate;

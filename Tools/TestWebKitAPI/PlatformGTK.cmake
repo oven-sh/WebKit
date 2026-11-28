@@ -45,6 +45,8 @@ list(APPEND TestWebCore_SOURCES
     Tests/WebCore/ImageDecoderTests.cpp
 
     Tests/WebCore/glib/BitmapTexturePool.cpp
+    Tests/WebCore/glib/CoordinatedPlatformLayerRenderingUpdate.cpp
+    Tests/WebCore/glib/CoordinatedPlatformLayerScrollingPosition.cpp
     Tests/WebCore/glib/CoordinatedTileBuffer.cpp
     Tests/WebCore/glib/Damage.cpp
     Tests/WebCore/glib/GraphicsContextGLCoordinated.cpp
@@ -72,6 +74,8 @@ list(APPEND TestWebCore_LIBRARIES
 
 # TestWebKit
 list(APPEND TestWebKit_SOURCES
+    Tests/WebKit/WKPage/glib/PendingTouchAndWheelEventCallbacks.cpp
+
     gtk/PlatformUtilitiesGtk.cpp
     gtk/PlatformWebViewGtk.cpp
     gtk/main.cpp

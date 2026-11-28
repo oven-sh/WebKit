@@ -32,9 +32,7 @@
 #include <ranges>
 #include <wtf/DataLog.h>
 
-namespace WebCore {
-
-namespace ContentExtensions {
+namespace WebCore::ContentExtensions {
 
 DFA DFA::empty()
 {
@@ -91,7 +89,7 @@ static void printTransitions(const DFA& dfa, unsigned sourceNodeId)
     if (transitions.begin() == transitions.end())
         return;
 
-    HashMap<unsigned, Vector<uint16_t>, DefaultHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> transitionsPerTarget;
+    HashMap<unsigned, Vector<uint16_t>> transitionsPerTarget;
 
     // First, we build the list of transitions coming to each target node.
     for (const auto& transition : transitions) {
@@ -166,8 +164,6 @@ void DFA::debugPrintDot() const
 }
 #endif
 
-} // namespace ContentExtensions
-
-} // namespace WebCore
+} // namespace WebCore::ContentExtensions
 
 #endif // ENABLE(CONTENT_EXTENSIONS)

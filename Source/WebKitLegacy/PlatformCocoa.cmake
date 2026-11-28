@@ -50,11 +50,11 @@ list(APPEND WebKitLegacy_PRIVATE_INCLUDE_DIRECTORIES
 
 list(APPEND WebKitLegacy_UNIFIED_SOURCE_LIST_FILES
     SourcesCocoa.txt
+    SourcesCMakeCocoa.txt
 )
-# FIXME: Test building on iOS and then enable on iOS.
-if (NOT WEBKIT_SDK_IS_IOS_FAMILY)
+if (WEBKIT_PLATFORM_MAC)
     list(APPEND WebKitLegacy_UNIFIED_SOURCE_LIST_FILES
-        SourcesCMakeCocoa.txt
+        SourcesCMakeMac.txt
     )
 endif ()
 WEBKIT_COMPUTE_SOURCES(WebKitLegacy)
@@ -147,86 +147,6 @@ list(APPEND WebKitLegacy_SOURCES
     ios/WebView/WebPDFViewIOS.mm
     ios/WebView/WebPDFViewPlaceholder.mm
     ios/WebView/WebPlainWhiteView.mm
-
-    mac/DefaultDelegates/WebDefaultPolicyDelegate.mm
-    mac/DefaultDelegates/WebDefaultUIDelegate.mm
-
-    mac/WebView/WebPDFDocumentExtras.mm
-
-    mac/History/BackForwardList.mm
-    mac/History/BinaryPropertyList.cpp
-    mac/History/HistoryPropertyList.mm
-    mac/History/WebHistory.mm
-    mac/History/WebHistoryItem.mm
-
-    mac/Misc/WebCache.mm
-    mac/Misc/WebCoreStatistics.mm
-    mac/Misc/WebDownload.mm
-    mac/Misc/WebElementDictionary.mm
-    mac/Misc/WebKitLogInitialization.mm
-    mac/Misc/WebKitNSStringExtras.mm
-    mac/Misc/WebKitVersionChecks.mm
-    mac/Misc/WebLocalizableStrings.mm
-    mac/Misc/WebLocalizableStringsInternal.mm
-    mac/Misc/WebNSDataExtras.mm
-    mac/Misc/WebNSFileManagerExtras.mm
-    mac/Misc/WebNSObjectExtras.mm
-    mac/Misc/WebNSURLExtras.mm
-    mac/Misc/WebNSUserDefaultsExtras.mm
-    mac/Misc/WebUserContentURLPattern.mm
-
-    mac/Plugins/WebPluginPackage.mm
-
-    mac/Storage/WebDatabaseManager.mm
-    mac/Storage/WebDatabaseManagerClient.mm
-    mac/Storage/WebDatabaseProvider.mm
-    mac/Storage/WebDatabaseQuotaManager.mm
-    mac/Storage/WebStorageManager.mm
-    mac/Storage/WebStorageTrackerClient.mm
-
-    mac/WebCoreSupport/LegacyHistoryItemClient.mm
-    mac/WebCoreSupport/WebAlternativeTextClient.mm
-    mac/WebCoreSupport/WebChromeClient.mm
-    mac/WebCoreSupport/WebContextMenuClient.mm
-    mac/WebCoreSupport/WebDragClient.mm
-    mac/WebCoreSupport/WebEditorClient.mm
-    mac/WebCoreSupport/WebFrameNetworkingContext.mm
-    mac/WebCoreSupport/WebGeolocationClient.mm
-    mac/WebCoreSupport/WebKitFullScreenListener.mm
-    mac/WebCoreSupport/WebMediaKeySystemClient.mm
-    mac/WebCoreSupport/WebNotificationClient.mm
-    mac/WebCoreSupport/WebOpenPanelResultListener.mm
-    mac/WebCoreSupport/WebPaymentCoordinatorClient.mm
-    mac/WebCoreSupport/WebPlatformStrategies.mm
-    mac/WebCoreSupport/WebPluginInfoProvider.mm
-    mac/WebCoreSupport/WebProgressTrackerClient.mm
-    mac/WebCoreSupport/WebSecurityOrigin.mm
-    mac/WebCoreSupport/WebSelectionServiceController.mm
-    mac/WebCoreSupport/WebValidationMessageClient.mm
-    mac/WebCoreSupport/WebVisitedLinkStore.mm
-
-    mac/WebInspector/WebInspectorFrontend.mm
-    mac/WebInspector/WebNodeHighlight.mm
-    mac/WebInspector/WebNodeHighlightView.mm
-    mac/WebInspector/WebNodeHighlighter.mm
-
-    mac/WebView/WebArchive.mm
-    mac/WebView/WebDelegateImplementationCaching.mm
-    mac/WebView/WebDeviceOrientation.mm
-    mac/WebView/WebDeviceOrientationProviderMock.mm
-    mac/WebView/WebDocumentLoaderMac.mm
-    mac/WebView/WebGeolocationPosition.mm
-    mac/WebView/WebHTMLRepresentation.mm
-    mac/WebView/WebIndicateLayer.mm
-    mac/WebView/WebMediaPlaybackTargetPicker.mm
-    mac/WebView/WebNavigationData.mm
-    mac/WebView/WebNotification.mm
-    mac/WebView/WebPolicyDelegate.mm
-    mac/WebView/WebPreferences.mm
-    mac/WebView/WebPreferencesDefaultValues.mm
-    mac/WebView/WebResource.mm
-    mac/WebView/WebTextIterator.mm
-    mac/WebView/WebViewData.mm
 )
 endif ()
 
@@ -260,8 +180,15 @@ set_target_properties(WebKitLegacy PROPERTIES
 )
 
 target_link_options(WebKitLegacy PRIVATE
-    -exported_symbols_list ${WEBKITLEGACY_DIR}/WebKitLegacy-iOS.exp
+    "LINKER:-exported_symbols_list,${WEBKITLEGACY_DIR}/WebKitLegacy-iOS.exp"
 )
+# WebEventRegion.mm is compiled only with ENABLE(IOS_TOUCH_EVENTS), which
+# requires the internal SDK.
+if (ENABLE_IOS_TOUCH_EVENTS)
+    target_link_options(WebKitLegacy PRIVATE
+        "LINKER:-exported_symbols_list,${WEBKITLEGACY_DIR}/WebKitLegacy-iOS-touch-events.exp"
+    )
+endif ()
 
 # FIXME: Generate this list dynamically (from `tapi reexport` against the
 # migrated WebCore headers + ios/WebKit.iOS.exp + mac/WebKit.exp) instead of
@@ -1101,10 +1028,15 @@ file(MAKE_DIRECTORY "${_wkl_migrate_tmp_dir}")
 
 # unifdef flags mirror Source/WebKitLegacy/scripts/postprocess-header-rule.
 # WK_PLATFORM_NAME = iphonesimulator | iphoneos. CMAKE_OSX_SYSROOT distinguishes.
-if (CMAKE_OSX_SYSROOT MATCHES "[Ss]imulator")
-    set(_wkl_unifdef_args -B -DTARGET_OS_IPHONE=1 -DTARGET_OS_SIMULATOR=1 -DUSE_APPLE_INTERNAL_SDK=1)
+if (USE_APPLE_INTERNAL_SDK)
+    set(_wkl_use_apple_internal_sdk 1)
 else ()
-    set(_wkl_unifdef_args -B -DTARGET_OS_IPHONE=1 -DTARGET_OS_SIMULATOR=0 -DUSE_APPLE_INTERNAL_SDK=1)
+    set(_wkl_use_apple_internal_sdk 0)
+endif ()
+if (CMAKE_OSX_SYSROOT MATCHES "[Ss]imulator")
+    set(_wkl_unifdef_args -B -DTARGET_OS_IPHONE=1 -DTARGET_OS_SIMULATOR=1 -DUSE_APPLE_INTERNAL_SDK=${_wkl_use_apple_internal_sdk})
+else ()
+    set(_wkl_unifdef_args -B -DTARGET_OS_IPHONE=1 -DTARGET_OS_SIMULATOR=0 -DUSE_APPLE_INTERNAL_SDK=${_wkl_use_apple_internal_sdk})
 endif ()
 # ENABLE_TOUCH_EVENTS / ENABLE_IOS_GESTURE_EVENTS: postprocess uses 0 / 1
 # depending on the env value being non-empty. Mirror via cmake variable check.

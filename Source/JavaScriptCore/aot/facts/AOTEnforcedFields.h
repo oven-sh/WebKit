@@ -66,7 +66,7 @@ private:
     const Families& m_families;
     TypeArena& m_types;
     BitVector m_isListed;
-    UncheckedKeyHashMap<uint64_t, WrittenTypes, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_writtenTypes;
+    HashMap<uint64_t, WrittenTypes, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_writtenTypes;
 };
 
 JS_EXPORT_PRIVATE EnforcedField enforcedTypeOfField(const Program&, const LinkTables& linked, const LinkTables& held, const Families&, const FamiliesOfInstances&, WrittenTypesOfFamilies&, TypeArena&, FieldReference);

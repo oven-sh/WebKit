@@ -56,7 +56,7 @@ class WebDriverW3CWebServer(object):
         # FIXME: We use the runtime path for now for log output, since we don't have a results directory yet.
         self._output_log_path = os.path.join(self._runtime_path, '%s_process_log.out.txt' % (self._name))
 
-    def _wait_for_server(self, wait_secs=20, sleep_secs=1):
+    def _wait_for_server(self, wait_secs=20, sleep_secs=0.1):
         def check_port(host, port):
             s = socket.socket()
             try:
@@ -78,7 +78,8 @@ class WebDriverW3CWebServer(object):
             time.sleep(sleep_secs)
         return False
 
-    def start(self):
+    def start(self, wait=True):
+        # Without wait, call wait_until_started() before using the server.
         assert not self._pid, '%s server is already running' % self._name
 
         # Stop any stale servers left over from previous instances.
@@ -99,6 +100,7 @@ class WebDriverW3CWebServer(object):
         self._wpt_certs_dir = os.path.join(self._runtime_path, '_wpt_certs')
         self._wpt_certs_cacert_pem = os.path.join(self._wpt_certs_dir, 'cacert.pem')
         config['ssl']['openssl']['base_path'] = self._wpt_certs_dir
+        self._serve_file_aliases_from_runtime_path(config)
         self._port.host.filesystem.write_text_file(os.path.join(self._layout_doc_root, 'config.json'), json.dumps(config))
         self._server_host = config['browser_host']
         self._server_http_port = config['ports']['http'][0]
@@ -110,13 +112,36 @@ class WebDriverW3CWebServer(object):
         self._process = self._port._executive.popen(cmd, cwd=self._layout_doc_root, shell=False, stdin=self._port._executive.PIPE, stdout=self._wsout, stderr=self._wsout)
         self._pid = self._process.pid
         self._port.host.filesystem.write_text_file(self._pid_file, str(self._pid))
+        if wait:
+            self.wait_until_started()
 
+    def wait_until_started(self):
         if not self._wait_for_server():
             _log.error('WPT Server process exited prematurely with status code %s' % self._process.returncode)
             self.stop()
             raise RuntimeError
 
         _log.info('WebDriver WPT server listening at http://%s:%s/ and https://%s:%s/' % (self._server_host, self._server_http_port, self._server_host, self._server_https_port))
+
+    def _serve_file_aliases_from_runtime_path(self, config):
+        # wptrunner serves its static routes, such as the pdf.js scripts the print tests load, with
+        # Cache-Control: max-age=3600. Aliases can't set headers, and wptserve reads them from a
+        # .headers file next to the served path, so serve each file alias from a symlink in the
+        # runtime directory with a .headers file beside it, keeping the source tree untouched.
+        filesystem = self._port.host.filesystem
+        aliases_dir = os.path.join(self._runtime_path, '_aliases')
+        if filesystem.exists(aliases_dir):
+            filesystem.rmtree(aliases_dir)
+        filesystem.maybe_make_directory(aliases_dir)
+        for alias in config.get('aliases', []):
+            url_path = alias['url-path']
+            if url_path.endswith('/'):
+                continue
+            file_name = url_path.rsplit('/', 1)[-1]
+            source = os.path.normpath(os.path.join(self._layout_doc_root, alias['local-dir'], file_name))
+            filesystem.symlink(source, os.path.join(aliases_dir, file_name))
+            filesystem.write_text_file(os.path.join(aliases_dir, file_name + '.headers'), 'Cache-Control: max-age=3600\n')
+            alias['local-dir'] = aliases_dir
 
     def stop(self):
         _log.debug('Cleaning WebDriver WPT server config.json')
