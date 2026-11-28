@@ -24,9 +24,9 @@
  */
 
 #import "config.h"
-#import "Helpers/DeprecatedGlobalValues.h"
 #import "Helpers/PlatformUtilities.h"
 #import "Helpers/Test.h"
+#import "Helpers/cocoa/PrintingTestUtilities.h"
 #import "Helpers/cocoa/TestPDFDocument.h"
 #import <WebKit/WebFrame.h>
 #import <WebKit/WebFrameView.h>
@@ -35,12 +35,22 @@
 #import <wtf/RetainPtr.h>
 
 @interface EmbeddedPrintPaginationLoadDelegate : NSObject <WebFrameLoadDelegate>
+- (void)waitForDidFinishLoad;
 @end
 
-@implementation EmbeddedPrintPaginationLoadDelegate
+@implementation EmbeddedPrintPaginationLoadDelegate {
+    bool _didFinishLoad;
+}
+
 - (void)webView:(WebView *)sender didFinishLoadForFrame:(WebFrame *)frame
 {
-    didFinishLoad = true;
+    _didFinishLoad = true;
+}
+
+- (void)waitForDidFinishLoad
+{
+    EXPECT_FALSE(_didFinishLoad);
+    TestWebKitAPI::Util::run(&_didFinishLoad);
 }
 @end
 
@@ -63,18 +73,17 @@ TEST(WebKitLegacy, EmbeddedPrintPaginationWithZeroPageSize)
     RetainPtr loadDelegate = adoptNS([[EmbeddedPrintPaginationLoadDelegate alloc] init]);
     [webView setFrameLoadDelegate:loadDelegate.get()];
 
-    didFinishLoad = false;
     [[webView mainFrame] loadHTMLString:@"<html><body><p>Hello, printing world.</p></body></html>" baseURL:nil];
-    Util::run(&didFinishLoad);
+    [loadDelegate waitForDidFinishLoad];
 
     // This is the AppKit-driven call path used when a WebHTMLView is a
     // subview of a larger view hierarchy being printed. Before the fix
     // this asserted in debug (LocalFrame.cpp:resizePageRectsKeepingRatio)
     // and silently dropped text runs in release; reaching the
-    // EXPECT_GT below without crashing is the pass condition.
+    // check below without crashing is the pass condition.
     CGFloat newBottom = 0;
     [webHTMLView adjustPageHeightNew:&newBottom top:0 bottom:400 limit:400];
-    EXPECT_GT(newBottom, 0);
+    EXPECT_EQ(newBottom, 400);
 }
 
 #if HAVE(PDFKIT)
@@ -84,46 +93,25 @@ static RetainPtr<TestPDFDocument> printWebViewToPDF(NSString *styleSheet)
     RetainPtr loadDelegate = adoptNS([[EmbeddedPrintPaginationLoadDelegate alloc] init]);
     [webView setFrameLoadDelegate:loadDelegate.get()];
 
-    didFinishLoad = false;
     [[webView mainFrame] loadHTMLString:[NSString stringWithFormat:@"<style>%@ body { margin: 0 }</style><div>Hello</div>", styleSheet] baseURL:nil];
-    Util::run(&didFinishLoad);
+    [loadDelegate waitForDidFinishLoad];
 
-    RetainPtr printInfo = adoptNS([[NSPrintInfo alloc] init]);
-    [printInfo setPaperSize:NSMakeSize(612, 792)];
-    [printInfo setTopMargin:0];
-    [printInfo setBottomMargin:0];
-    [printInfo setLeftMargin:0];
-    [printInfo setRightMargin:0];
-    // AppKit centers the page in the printer's imageable area, which is off center when the
-    // printer's top and bottom margins differ, and can move text near the top off the paper.
-    [printInfo setHorizontallyCentered:NO];
-    [printInfo setVerticallyCentered:NO];
-
-    RetainPtr pdfURL = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.pdf", NSUUID.UUID.UUIDString]] isDirectory:NO];
-    [printInfo setJobDisposition:NSPrintSaveJob];
-    [printInfo dictionary][NSPrintJobSavingURL] = pdfURL.get();
-
-    RetainPtr operation = [[[webView mainFrame] frameView] printOperationWithPrintInfo:printInfo.get()];
-    [operation setShowsPrintPanel:NO];
-    [operation setShowsProgressPanel:NO];
-    EXPECT_TRUE([operation runOperation]);
-
-    RetainPtr data = adoptNS([[NSData alloc] initWithContentsOfURL:pdfURL.get()]);
-    [NSFileManager.defaultManager removeItemAtURL:pdfURL.get() error:nil];
-    EXPECT_NOT_NULL(data.get());
-    if (!data)
-        return nil;
-    return adoptNS([[TestPDFDocument alloc] initFromData:data.get()]);
+    return printToPDF(^(NSPrintInfo *printInfo) {
+        [printInfo setTopMargin:0];
+        [printInfo setBottomMargin:0];
+        [printInfo setLeftMargin:0];
+        [printInfo setRightMargin:0];
+        // AppKit centers the page in the printer's imageable area, which is off center when the
+        // printer's top and bottom margins differ, and can move text near the top off the paper.
+        [printInfo setHorizontallyCentered:NO];
+        [printInfo setVerticallyCentered:NO];
+        return [[[webView mainFrame] frameView] printOperationWithPrintInfo:printInfo];
+    }, nil);
 }
 
-// Measured from the top left of the paper.
 static CGPoint firstCharacterPositionInPrintedWebView(NSString *styleSheet)
 {
-    RetainPtr document = printWebViewToPDF(styleSheet);
-    EXPECT_EQ([document pageCount], 1);
-    RetainPtr page = [document pageAtIndex:0];
-    CGRect characterRect = [page rectForCharacterAtIndex:0];
-    return CGPointMake(CGRectGetMinX(characterRect), CGRectGetMaxY([page bounds]) - CGRectGetMaxY(characterRect));
+    return firstCharacterPosition(printWebViewToPDF(styleSheet).get());
 }
 
 TEST(WebKitLegacy, PrintedContentUsesCSSUnits)
@@ -131,8 +119,9 @@ TEST(WebKitLegacy, PrintedContentUsesCSSUnits)
     // 1in = 96px = 72pt.
     auto position = firstCharacterPositionInPrintedWebView(@"div { margin-left: 1in; padding-top: 1in }");
     auto referencePosition = firstCharacterPositionInPrintedWebView(@"");
-    EXPECT_NEAR(position.x - referencePosition.x, 72, 0.05);
-    EXPECT_NEAR(position.y - referencePosition.y, 72, 0.05);
+    auto oneInch = pointsFromCSSPixels(96);
+    EXPECT_NEAR(position.x - referencePosition.x, oneInch, 0.05);
+    EXPECT_NEAR(position.y - referencePosition.y, oneInch, 0.05);
 }
 #endif // HAVE(PDFKIT)
 

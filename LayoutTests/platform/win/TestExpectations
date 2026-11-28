@@ -111,6 +111,7 @@ fast/webcodecs/audio-data-copy-to-crash.html [ Skip ]
 fast/webcodecs/audio-data-copy-to-zero-frames-crash.html [ Skip ]
 fast/webcodecs/audio-data-copy-to-planar-frame-offset.html [ Skip ]
 fast/canvas/canvas-drawImage-video-frame-composite.html [ Skip ]
+fast/canvas/canvas-drawImage-video-frame-noninvertible-transform.html [ Skip ]
 
 # WebGPU is disabled
 http/tests/webgpu [ Skip ]
@@ -183,7 +184,7 @@ http/tests/security/contentSecurityPolicy/userAgentShadowDOM/allow-video.html [ 
 http/tests/security/contentSecurityPolicy/video-redirect-allowed.html [ Skip ]
 http/tests/security/contentSecurityPolicy/video-redirect-allowed2.html [ Skip ]
 http/tests/security/contentSecurityPolicy/video-redirect-blocked.html [ Skip ]
-http/tests/security/contentSecurityPolicy/video-with-http-url-allowed-by-csp-media-src-star.html
+http/tests/security/contentSecurityPolicy/video-with-http-url-allowed-by-csp-media-src-star.html [ Skip ]
 http/tests/security/mixedContent/insecure-audio-video-in-main-frame-UpgradeMixedContent.html [ Skip ]
 http/wpt/service-workers/media-range-request.html [ Skip ]
 imported/w3c/web-platform-tests/css/selectors/invalidation/media-pseudo-classes-in-has.html [ Skip ]
@@ -354,6 +355,12 @@ fast/forms/validation-message-on-textarea.html [ Skip ]
 # TODO Impossible to test text-only-zoom from DRT on Windows
 webkit.org/b/35013 svg/zoom/text/ [ Skip ]
 
+# Pattern-filled and pattern-stroked text under a scaling transform does not match the
+# shapes reference on Skia.
+webkit.org/b/291897 svg/transforms/transformed-text-decoration-fill-pattern.html [ ImageOnlyFailure ]
+webkit.org/b/291897 svg/transforms/transformed-text-fill-pattern-tile-origin.html [ ImageOnlyFailure ]
+webkit.org/b/291897 svg/transforms/transformed-text-stroke-pattern.html [ ImageOnlyFailure ]
+
 # These are Mac specific for now.
 fast/url/user-visible [ Skip ]
 
@@ -408,6 +415,8 @@ fast/harness/platform-layer-tree-as-text.html [ Skip ]
 fast/text/font-face/font-face-loaded-resolution-deferred-in-worker.html [ Skip ]
 fast/canvas/canvas-font-attributes-state.html [ Skip ]
 fast/canvas/canvas-reset-after-noninvertible-transform-offscreen.html [ Skip ]
+fast/canvas/canvas-style-change-after-assign-no-gpu-process.html [ Skip ]
+fast/canvas/canvas-style-change-after-assign.html [ Skip ]
 fast/canvas/offscreen-backing-store-attached.html [ Skip ]
 fast/canvas/offscreen-border.html [ Skip ]
 fast/canvas/offscreen-clipped.html [ Skip ]
@@ -560,11 +569,11 @@ http/tests/scroll-to-text-fragment/no-scroll-after-stylesheet-load.html [ Skip ]
 # Mix of errors related to the harness:
 # Unhandled Promise Rejection: TypeError: Load failed
 # Harness Error (TIMEOUT), message = null
-imported/w3c/web-platform-tests/scroll-to-text-fragment/redirects.html
-imported/w3c/web-platform-tests/scroll-to-text-fragment/scroll-to-text-fragment-after-DOMContentLoaded.html
-imported/w3c/web-platform-tests/scroll-to-text-fragment/scroll-to-text-fragment-scroll-to-center.html
-imported/w3c/web-platform-tests/scroll-to-text-fragment/scroll-to-text-fragment-security.sub.html
-imported/w3c/web-platform-tests/scroll-to-text-fragment/scroll-to-text-fragment.html
+imported/w3c/web-platform-tests/scroll-to-text-fragment/redirects.html [ Skip ]
+imported/w3c/web-platform-tests/scroll-to-text-fragment/scroll-to-text-fragment-after-DOMContentLoaded.html [ Skip ]
+imported/w3c/web-platform-tests/scroll-to-text-fragment/scroll-to-text-fragment-scroll-to-center.html [ Skip ]
+imported/w3c/web-platform-tests/scroll-to-text-fragment/scroll-to-text-fragment-security.sub.html [ Skip ]
+imported/w3c/web-platform-tests/scroll-to-text-fragment/scroll-to-text-fragment.html [ Skip ]
 
 # WebKitTestRunner: test fonts are not available in GPU process
 webkit.org/b/278895 fast/canvas/canvas-blending-text.html [ Skip ]
@@ -1552,6 +1561,9 @@ imported/w3c/web-platform-tests/html/canvas/element/drawing-images-to-the-canvas
 imported/w3c/web-platform-tests/html/canvas/element/drawing-images-to-the-canvas/2d.drawImage.self.2.html [ Skip ] # Failure
 imported/w3c/web-platform-tests/html/canvas/historical.any.html [ Failure ]
 imported/w3c/web-platform-tests/html/canvas/historical.any.worker.html [ Failure ]
+imported/w3c/web-platform-tests/html/canvas/element/global-hdr-headroom/attribute.html [ Failure ]
+imported/w3c/web-platform-tests/html/canvas/element/global-hdr-headroom/clli-mdcv-png.html [ Failure ]
+imported/w3c/web-platform-tests/html/canvas/element/global-hdr-headroom/iso21496-1-jpg.html [ Failure ]
 
 imported/w3c/web-platform-tests/html/semantics/rellist-feature-detection.html [ Skip ] # Failure
 
@@ -1991,7 +2003,7 @@ webkit.org/b/238644 fast/events/mouse-click-events.html [ Skip ]
 webkit.org/b/238644 fast/events/mouse-event-buttons.html [ Skip ]
 
 # Makes a subsequent test an assertion failure crash
-webkit.org/b/277121 [ Debug ] fast/events/event-handler-detached-document.html
+webkit.org/b/277121 [ Debug ] fast/events/event-handler-detached-document.html [ Skip ]
 
 webkit.org/b/168136 performance-api/performance-observer-periodic.html [ Pass Failure ]
 
@@ -2367,10 +2379,10 @@ imported/w3c/web-platform-tests/geolocation [ Skip ]
 imported/w3c/web-platform-tests/hr-time [ Skip ]
 imported/w3c/web-platform-tests/html/anonymous-iframe [ Skip ]
 imported/w3c/web-platform-tests/html/browsers [ Skip ]
+imported/w3c/web-platform-tests/html/canvas/element/color-type [ Skip ]
 imported/w3c/web-platform-tests/html/canvas/element/compositing [ Skip ]
 imported/w3c/web-platform-tests/html/canvas/element/conformance-requirements [ Skip ]
 imported/w3c/web-platform-tests/html/canvas/element/drawing-rectangles-to-the-canvas [ Skip ]
-imported/w3c/web-platform-tests/html/canvas/element/drawing-text-to-the-canvas [ Skip ]
 imported/w3c/web-platform-tests/html/canvas/element/fill-and-stroke-styles [ Skip ]
 imported/w3c/web-platform-tests/html/canvas/element/filters [ Skip ]
 imported/w3c/web-platform-tests/html/canvas/element/layers [ Skip ]
@@ -2379,10 +2391,8 @@ imported/w3c/web-platform-tests/html/canvas/element/manual [ Skip ]
 imported/w3c/web-platform-tests/html/canvas/element/path-objects [ Skip ]
 imported/w3c/web-platform-tests/html/canvas/element/pixel-manipulation [ Skip ]
 imported/w3c/web-platform-tests/html/canvas/element/reset [ Skip ]
-imported/w3c/web-platform-tests/html/canvas/element/scroll [ Skip ]
 imported/w3c/web-platform-tests/html/canvas/element/shadows [ Skip ]
 imported/w3c/web-platform-tests/html/canvas/element/text [ Skip ]
-imported/w3c/web-platform-tests/html/canvas/element/text-styles [ Skip ]
 imported/w3c/web-platform-tests/html/canvas/element/the-canvas-state [ Skip ]
 imported/w3c/web-platform-tests/html/canvas/element/transformations [ Skip ]
 imported/w3c/web-platform-tests/html/canvas/element/video [ Skip ]
@@ -2615,6 +2625,10 @@ fast/text/multiple-codeunit-vertical-upright.html [ ImageOnlyFailure ]
 fast/text/multiple-feature-properties.html [ ImageOnlyFailure ]
 fast/text/svg-font-face-with-kerning.html [ Failure ]
 fast/text/synthetic-bold-transformed.html [ ImageOnlyFailure ]
+
+# Synthetic bold is drawn as the glyphs painted twice, offset by the synthetic bold offset, only with
+# Core Text. Skia emboldens the glyph outline instead.
+webkit.org/b/330430 fast/text/synthetic-bold [ Skip ]
 fast/text/system-font-fallback-emoji.html [ Failure ]
 fast/text/system-font-weight.html [ Failure ]
 fast/text/trak-optimizeLegibility.html [ ImageOnlyFailure ]
@@ -2643,7 +2657,6 @@ animations/remove-syncing-animation.html [ Pass Failure ]
 editing/execCommand/indent-input-in-image-crash.html [ Failure ]
 
 fast/box-shadow/hidpi-box-shadow-inset-on-subpixel-position.html [ ImageOnlyFailure ]
-fast/text/otsvg-canvas.html [ ImageOnlyFailure ]
 
 fast/js-promise/js-promise-invalid-context-access.html [ Failure ]
 
@@ -4694,10 +4707,11 @@ imported/w3c/web-platform-tests/speculation-rules/speculation-tags/valid-tags.ht
 imported/w3c/web-platform-tests/speculation-rules/speculation-tags/valid-tags.https.html?tag-level=ruleset&type=prefetch [ Failure ]
 imported/w3c/web-platform-tests/speculation-rules/prefetch/no-http-cache-interference-slow-error.https.html [ Skip ] # timeout
 
-# Lockdown Mode does not apply
+# Lockdown Mode and Enhanced Security do not apply
 dom/xsl/lockdown-mode [ Skip ]
 fast/speechsynthesis/lockdown-mode [ Skip ]
 http/tests/lockdown-mode [ Skip ]
+http/tests/enhanced-security [ Skip ]
 js/dom/lockdown-mode [ Skip ]
 
 imported/w3c/web-platform-tests/pointerevents/pointerevent_fractional_coordinates.html?mouse [ Pass ]
@@ -4855,16 +4869,11 @@ imported/w3c/web-platform-tests/largest-contentful-paint/repeated-image.html [ P
 compositing/corner-shape-ancestor-clip.html [ ImageOnlyFailure ]
 compositing/corner-shape-ancestor-clip-nested-rect-clip.html [ ImageOnlyFailure ]
 compositing/corner-shape-mask-layer-offset.html [ ImageOnlyFailure ]
+compositing/corner-shape-box-shadow-composited.html [ ImageOnlyFailure ]
 http/tests/canvas/canvas-tainted-image-capture-video-frame.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-borders/corner-shape/corner-shape-bevel-overflow-composite.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-borders/corner-shape/corner-shape-notch-mixed.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-borders/corner-shape/corner-shape-superellipse-negative-100.html [ ImageOnlyFailure ]
-
-# Windows WK2 release crashes while parsing some invalid corner shorthand declarations.
-# Skip until the shared parser is corrected in 326108.
-webkit.org/b/327293 imported/w3c/web-platform-tests/css/css-borders/corner-shape/corner-invalid.html [ Skip ]
-webkit.org/b/327293 imported/w3c/web-platform-tests/css/css-borders/corner-shape/corner-top-invalid.html [ Skip ]
-webkit.org/b/327293 imported/w3c/web-platform-tests/css/css-borders/corner-shape/corner-top-left-invalid.html [ Skip ]
 
 # Consistent text failures, in every run
 compositing/geometry/composited-bounds-single-axis-clip-taller-than-document.html [ Failure ]
@@ -4891,8 +4900,6 @@ compositing/layer-creation/no-compositing-for-overlapping-negative-z-siblings.ht
 fast/forms/select/base/select-multiple-picker-keyboard.html [ Failure ]
 http/tests/resourceLoadStatistics/operating-dates-all-but-cookies-removed-short-frequency-with-user-interaction-7-days-ago.html [ Failure ]
 http/tests/resourceLoadStatistics/operating-dates-all-but-cookies-removed-with-user-interaction-30-days-ago.html [ Failure ]
-http/tests/websocket/tests/hybi/websocket-samesite-lax-not-sent-cross-site.html [ Failure ]
-http/tests/websocket/tests/hybi/websocket-samesite-strict-not-sent-cross-site.html [ Failure ]
 http/wpt/fetch/local-network-access/address-space-overrides-apply-to-both-host-forms.html [ Failure ]
 http/wpt/fetch/local-network-access/document-address-space.html [ Failure ]
 imported/w3c/web-platform-tests/audio-session/audiosession-default-values.https.html [ Failure ]
@@ -5008,6 +5015,15 @@ webkit.org/b/328270 http/tests/IndexedDB/transaction-abort-pending-requests-stop
 webkit.org/b/328270 http/tests/IndexedDB/transaction-commit-pending-requests-stop.html [ Failure ]
 webkit.org/b/328271 fast/events/suspend-timers.html [ Skip ] # Timeout
 
+# Cookie blocking for an empty firstPartyForCookies domain is only implemented for Cocoa.
+webkit.org/b/331011 http/tests/security/cookies-from-empty-origin-and-detached-opener-fetch.html [ Failure ]
+webkit.org/b/331011 http/tests/security/cookies-from-empty-origin-and-detached-opener-redirect.html [ Failure ]
+webkit.org/b/331011 http/tests/security/cookies-from-empty-origin-and-detached-opener-syncxhr.html [ Failure ]
+webkit.org/b/331011 http/tests/security/cookies-from-empty-origin-and-detached-opener-websocket-with-blocked-third-party-cookies.html [ Failure ]
+webkit.org/b/331011 http/tests/security/cookies-from-empty-origin-and-detached-opener-websocket.html [ Failure ]
+webkit.org/b/331011 http/tests/security/ipc-cookie-access-from-file-url.html [ Failure ]
+webkit.org/b/331011 http/tests/security/redirect-to-allow-cookies-request.html [ Failure ]
+
 # GPU process crashes in WebGL tests. A webgl directory entry here overrides
 # the webgl entries of LayoutTests/TestExpectations, so these are restated below with Crash.
 webkit.org/b/326176 webgl [ Pass Crash ]
@@ -5039,3 +5055,9 @@ webkit.org/b/320901 webgl/2.0.y/conformance2/rendering/blitframebuffer-test.html
 
 # Requires the GPU process to host the video layer.
 media/media-source/media-source-real-video-layer-size-after-leaving-viewport.html [ Skip ]
+
+imported/w3c/web-platform-tests/event-timing/keydown-without-paint.tentative.html [ Skip ]
+
+imported/w3c/web-platform-tests/css/css-borders/corner-shape/corner-shape-outline-auto-001.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-borders/corner-shape/corner-shape-outline-auto-002.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-borders/corner-shape/corner-shape-outline-auto-003.html [ ImageOnlyFailure ]

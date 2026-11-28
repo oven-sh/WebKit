@@ -27,6 +27,7 @@
 
 #include "ArrayBuffer.h"
 #include "TypedArrayType.h"
+#include <JavaScriptCore/Weak.h>
 #include <algorithm>
 #include <limits.h>
 #include <wtf/CheckedArithmetic.h>
@@ -209,12 +210,15 @@ protected:
     // This is the address of the ArrayBuffer's storage, plus the byte offset.
     BaseAddress m_baseAddress;
 
+public:
+    Weak<JSArrayBufferView> m_wrapper;
+
 private:
     friend class ArrayBuffer;
     template<typename Visitor> constexpr decltype(auto) visitDerived(NOESCAPE const Visitor&);
     template<typename Visitor> constexpr decltype(auto) visitDerived(NOESCAPE const Visitor&) const;
 
-    RefPtr<ArrayBuffer> m_buffer;
+    const RefPtr<ArrayBuffer> m_buffer;
 };
 
 ArrayBufferView::~ArrayBufferView()

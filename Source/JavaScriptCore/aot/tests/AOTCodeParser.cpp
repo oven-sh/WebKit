@@ -1808,7 +1808,7 @@ String parseCode(const CodeTextContext& context, StringView text, Code& code)
 {
     if (text.is8Bit())
         return CodeTextParser(context, byteCast<uint8_t>(text.span8()), code).run();
-    CString utf8 = text.utf8();
+    CString utf8 = makeUTF8CString(text);
     return CodeTextParser(context, byteCast<uint8_t>(utf8.span()), code).run();
 }
 

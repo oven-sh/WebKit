@@ -69,11 +69,15 @@ private:
     void requestFrame(std::optional<PlatformXR::RequestData>&&, PlatformXR::Device::RequestFrameCallback&&) final;
     std::optional<PlatformXR::LayerInfo> createLayerProjection(uint32_t, uint32_t, bool) final;
 #if ENABLE(WEBXR_LAYERS)
-    std::optional<PlatformXR::LayerInfo> createCompositionLayer(PlatformXR::CompositionLayerType, WebCore::IntSize, PlatformXR::LayerLayout) final;
+    std::optional<PlatformXR::LayerInfo> createCompositionLayer(PlatformXR::CompositionLayerType, WebCore::IntSize, PlatformXR::LayerLayout, PlatformXR::LayerUpdateMode) final;
 #endif
     void deleteLayer(PlatformXR::LayerHandle) final;
     void submitFrame(Vector<PlatformXR::DeviceLayer>&&) final;
 
+#if ENABLE(WEBXR_ANCHORS)
+    void createAnchor(const PlatformXR::Pose&, CompletionHandler<void(WebCore::ExceptionOr<PlatformXR::AnchorIdentifier>)>&&) final;
+    void deleteAnchor(PlatformXR::AnchorIdentifier) final;
+#endif
 #if ENABLE(WEBXR_HIT_TEST)
     void requestHitTestSource(const PlatformXR::HitTestOptions&, CompletionHandler<void(WebCore::ExceptionOr<PlatformXR::HitTestSource>)>&&) final;
     void deleteHitTestSource(PlatformXR::HitTestSource) final;

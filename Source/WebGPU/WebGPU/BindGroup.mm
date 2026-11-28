@@ -36,6 +36,7 @@
 #import "Sampler.h"
 #import "TextureView.h"
 #import <ranges>
+#import <wtf/Borrow.h>
 #import <wtf/EnumeratedArray.h>
 #import <wtf/TZoneMallocInlines.h>
 #import <wtf/spi/cocoa/IOSurfaceSPI.h>
@@ -779,7 +780,7 @@ Device::ExternalTextureData Device::createExternalTextureFromPixelBuffer(CVPixel
             mtlTexture1 = [mtlTexture1 newTextureViewWithPixelFormat:mtlTexture1.pixelFormat textureType:mtlTexture1.textureType levels:NSMakeRange(0, mtlTexture1.mipmapLevelCount) slices:NSMakeRange(0, mtlTexture1.arrayLength) swizzle:*secondPlaneSwizzle];
     }
 
-    protect(m_defaultQueue)->onSubmittedWorkDone(CompletionHandler<void()> { [plane0 = adoptCF(plane0), plane1 = adoptCF(plane1)] { } });
+    protect(m_defaultQueue)->onSubmittedWorkDone(CompletionHandler<void(bool)> { [plane0 = adoptCF(plane0), plane1 = adoptCF(plane1)](bool) { } });
 
     float Ax = 1.f / (upperRight[0] - lowerLeft[0]);
     float Bx = -Ax * lowerLeft[0];
@@ -1207,7 +1208,7 @@ static std::optional<Ref<BindGroup>> validateTextureOrBindGroup(WebGPU::Metal::D
         }
         auto textureUsage = apiTextureView->usage();
         if ((textureEntry && !textureUsage.contains(WebGPU::TextureUsage::TextureBinding)) || (storageTextureEntry && !textureUsage.contains(WebGPU::TextureUsage::StorageBinding))) {
-            VALIDATION_ERROR([NSString stringWithFormat:@"Storage texture usage(%llu) did not have storage usage or storage texture entry did not have storage binding", toAPI(textureUsage)]);
+            VALIDATION_ERROR([NSString stringWithFormat:@"Storage texture usage(%llu) did not have storage usage or storage texture entry did not have storage binding", static_cast<unsigned long long>(textureUsage.toRaw())]);
             return BindGroup::createInvalid(object);
         }
         if (textureEntry && (3 * (textureEntry->multisampled ? 1 : 0) + 1 != apiTextureView->sampleCount())) {
@@ -1344,8 +1345,8 @@ static void addResourceHolder(const BindGroupEntryUsageData::Resource& resource,
 template<typename Holder>
 static void registerResourceHolderImpl(const Vector<BindableResources>& resources, const Holder& holder)
 {
-    for (const auto& bindableResources : resources) {
-        for (const auto& resourceUsage : bindableResources.resourceUsages)
+    for (const auto& bindableResources : borrow(resources)) {
+        for (const auto& resourceUsage : borrow(bindableResources.resourceUsages))
             addResourceHolder(resourceUsage.resource, holder);
     }
 }
@@ -1380,7 +1381,7 @@ id<MTLResource> placeholderForDestroyedResource(const BindGroupEntryUsageData::R
 bool replaceDestroyedResourcesWithPlaceholders(Vector<BindableResources>& resources)
 {
     bool replacedAnything = false;
-    for (auto& bindableResources : resources) {
+    for (auto& bindableResources : borrow(resources)) {
         auto resourceCount = std::min(bindableResources.mtlResources.size(), bindableResources.resourceUsages.size());
         for (size_t i = 0; i < resourceCount; ++i) {
             id<MTLResource> placeholder = placeholderForDestroyedResource(bindableResources.resourceUsages[i].resource);
@@ -1424,7 +1425,7 @@ RefPtr<WebGPU::BindGroup> Device::createBindGroup(const WebGPU::BindGroupDescrip
     auto& bindGroupLayoutEntries = bindGroupLayout->entries();
     BindGroup::DynamicBuffersContainer dynamicBuffers;
     BindGroup::SamplersContainer samplersSet;
-    HashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> usedBindingSlots;
+    HashSet<uint32_t> usedBindingSlots;
 
     for (auto& entry : descriptor.entries) {
         auto* bufferBinding = std::get_if<WebGPU::BufferBinding>(&entry.resource);
@@ -1490,7 +1491,7 @@ RefPtr<WebGPU::BindGroup> Device::createBindGroup(const WebGPU::BindGroupDescrip
                     }
 
                     if (!hasProperUsageFlags(layoutBinding->type, apiBuffer->usage())) {
-                        VALIDATION_ERROR([NSString stringWithFormat:@"Unexpected type(%u), buffer.usage(%llu)", layoutBinding->type, toAPI(apiBuffer->usage())]);
+                        VALIDATION_ERROR([NSString stringWithFormat:@"Unexpected type(%u), buffer.usage(%llu)", layoutBinding->type, static_cast<unsigned long long>(apiBuffer->usage().toRaw())]);
                         return BindGroup::createInvalid(*this);
                     }
 
@@ -1824,8 +1825,8 @@ bool BindGroup::updateExternalTextures(WebGPU::ExternalTexture& apiExternalTextu
         return false;
 
     bool foundBoundExternalTexture = false;
-    for (auto& resource : m_resources) {
-        for (auto& resourceUsage : resource.resourceUsages) {
+    for (auto& resource : borrow(m_resources)) {
+        for (auto& resourceUsage : borrow(resource.resourceUsages)) {
             auto* boundExternalTexture = std::get_if<RefPtr<const ExternalTexture>>(&resourceUsage.resource);
             if (!boundExternalTexture || !*boundExternalTexture)
                 continue;
@@ -1930,24 +1931,3 @@ bool BindGroup::previouslyValidatedBindGroup(uint32_t groupIndex, uint64_t pipel
 }
 
 } // namespace WebGPU::Metal
-
-#pragma mark WGPU Stubs
-
-NODELETE void wgpuBindGroupAddRef(WGPUBindGroup bindGroup)
-{
-    WebGPU::Metal::fromAPI(bindGroup).ref();
-}
-
-void wgpuBindGroupRelease(WGPUBindGroup bindGroup)
-{
-    @autoreleasepool {
-        WebGPU::Metal::fromAPI(bindGroup).deref();
-    }
-}
-
-void wgpuBindGroupSetLabel(WGPUBindGroup bindGroup, WGPUStringView label)
-{
-    @autoreleasepool {
-        protect(WebGPU::Metal::fromAPI(bindGroup))->setLabel(WebGPU::Metal::fromAPI(label));
-    }
-}

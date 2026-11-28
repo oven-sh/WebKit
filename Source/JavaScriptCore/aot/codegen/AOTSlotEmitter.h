@@ -100,7 +100,7 @@ private:
     void storeBits(TypedPointer, SlotRepresentation, LValue);
     LValue constantWithBits(LType, uint64_t bits);
 
-    UncheckedKeyHashMap<LValue, LValue> m_wordsOfSlots;
+    HashMap<LValue, LValue> m_wordsOfSlots;
 };
 
 } } } // namespace JSC::AOT::Typed

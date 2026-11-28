@@ -700,7 +700,11 @@ constexpr Effects constantEffectsForOpcode(Opcode opcode)
     case Store16:
     case Store:
     case MemoryMove:
-    case MemoryFill:
+    case MemoryFill8:
+    case MemoryFill16:
+    case MemoryFill32:
+    case MemoryFill64:
+    case MemoryFill128:
     case AtomicWeakCAS:
     case AtomicStrongCAS:
     case AtomicXchgAdd:
@@ -830,7 +834,11 @@ Effects Value::effectsSlow() const
         result.controlDependent = true;
         break;
     }
-    case MemoryFill: {
+    case MemoryFill8:
+    case MemoryFill16:
+    case MemoryFill32:
+    case MemoryFill64:
+    case MemoryFill128: {
         const auto* memory = as<BulkMemoryValue>();
         result.writes = memory->writeRange();
         result.controlDependent = true;
@@ -1170,7 +1178,11 @@ ValueKey Value::key() const
     case WasmArraySet:
     case WasmArrayNew:
     case MemoryMove:
-    case MemoryFill:
+    case MemoryFill8:
+    case MemoryFill16:
+    case MemoryFill32:
+    case MemoryFill64:
+    case MemoryFill128:
     case Fence:
     case CCall:
     case Patchpoint:

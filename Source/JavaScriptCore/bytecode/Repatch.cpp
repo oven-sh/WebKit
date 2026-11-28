@@ -628,7 +628,7 @@ static InlineCacheAction tryCacheGetBy(JSGlobalObject* globalObject, CodeBlock* 
                     return GiveUpOnCache;
 
                 if (structure->isDictionary()) {
-                    if (structure->hasBeenFlattenedBefore())
+                    if (!structure->canFlattenForCaching())
                         return GiveUpOnCache;
                     structure->flattenDictionaryStructure(vm, uncheckedDowncast<JSObject>(baseCell));
                     return RetryCacheLater; // We may have changed property offsets.
@@ -680,8 +680,8 @@ static InlineCacheAction tryCacheGetBy(JSGlobalObject* globalObject, CodeBlock* 
                 }
             }
 
-            // Fresh dictionaries were flattened above, but one that has already been flattened once is not
-            // re-flattened and stays a dictionary. A custom with no backing property in the slot base's structure
+            // Dictionaries were flattened above, except one that canFlattenForCaching() rejects, which stays a
+            // dictionary. A custom with no backing property in the slot base's structure
             // (invalidOffset, such as one served from a static property table) is shadowed by adding that
             // property, which on a dictionary happens in place with no structure transition, leaving the
             // constant custom getter recorded here stale.
@@ -784,6 +784,12 @@ void repatchGetBy(JSGlobalObject* globalObject, CodeBlock* codeBlock, JSValue ba
             break;
         case GetByKind::ByValWithThis:
             repatchSlowPathCall(codeBlock, propertyCache, operationGetByValWithThisMegamorphic);
+            break;
+        case GetByKind::PrivateName:
+            repatchSlowPathCall(codeBlock, propertyCache, operationGetPrivateNameMegamorphic);
+            break;
+        case GetByKind::PrivateNameById:
+            repatchSlowPathCall(codeBlock, propertyCache, operationGetPrivateNameByIdMegamorphic);
             break;
         default:
             RELEASE_ASSERT_NOT_REACHED();
@@ -1207,6 +1213,8 @@ static InlineCacheAction tryCachePutBy(JSGlobalObject* globalObject, CodeBlock* 
                 case PutByKind::DefinePrivateNameById:
                 case PutByKind::DefinePrivateNameByVal:
                     ASSERT(ident.isPrivateName());
+                    if (!oldStructure->privateElementAdditionsAreCacheable())
+                        return RetryCacheLater;
                     break;
                 case PutByKind::ByIdDirectStrict:
                 case PutByKind::ByIdDirectSloppy:
@@ -1231,7 +1239,7 @@ static InlineCacheAction tryCachePutBy(JSGlobalObject* globalObject, CodeBlock* 
                 if (!cacheStatus)
                     return GiveUpOnCache;
 
-                // prepareChainForCaching leaves a dictionary that has already been flattened once as a dictionary.
+                // prepareChainForCaching leaves a dictionary that canFlattenForCaching() rejects as a dictionary.
                 // A custom with no backing property in the base's structure (invalidOffset, such as one served from
                 // a static property table) is shadowed by adding that property, which on a dictionary happens in
                 // place with no structure transition, leaving this cache stale.
@@ -1780,8 +1788,8 @@ void repatchInBy(JSGlobalObject* globalObject, CodeBlock* codeBlock, JSObject* b
         case InByKind::ByVal:
             repatchSlowPathCall(codeBlock, propertyCache, operationInByValMegamorphic);
             break;
-        default:
-            RELEASE_ASSERT_NOT_REACHED();
+        case InByKind::PrivateName:
+            repatchSlowPathCall(codeBlock, propertyCache, operationHasPrivateNameMegamorphic);
             break;
         }
         break;
@@ -1896,6 +1904,9 @@ static InlineCacheAction tryCacheSetPrivateBrand(
         if (oldStructure->isDictionary())
             return RetryCacheLater;
 
+        if (!oldStructure->privateElementAdditionsAreCacheable())
+            return RetryCacheLater;
+
         InlineCacheAction action = actionForCell(vm, base);
         if (action != AttemptToCache)
             return action;
@@ -1904,6 +1915,8 @@ static InlineCacheAction tryCacheSetPrivateBrand(
         if (!newStructure)
             return RetryCacheLater;
         if (newStructure->isDictionary())
+            return GiveUpOnCache;
+        if (base->structureID() != newStructure->id())
             return GiveUpOnCache;
         ASSERT(newStructure->previousID() == oldStructure);
         ASSERT(newStructure->transitionKind() == TransitionKind::SetBrand);

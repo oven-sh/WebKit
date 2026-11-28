@@ -47,6 +47,7 @@
 #include "ContentSecurityPolicy.h"
 #include "CookieJar.h"
 #include "CrossOriginAccessControl.h"
+#include "CrossOriginEmbedderPolicy.h"
 #include "CrossOriginMode.h"
 #include "CrossOriginOpenerPolicy.h"
 #include "CustomHeaderFields.h"
@@ -91,10 +92,12 @@
 #include "ServiceWorker.h"
 #include "Settings.h"
 #include "StyleSheetContents.h"
+#include "SubresourceIntegrity.h"
 #include "SubresourceLoader.h"
 #include "UserContentController.h"
 #include "UserStyleSheet.h"
 #include <pal/SessionID.h>
+#include <wtf/Borrow.h>
 #include <wtf/RuntimeApplicationChecks.h>
 #include <wtf/Scope.h>
 #include <wtf/text/CString.h>
@@ -1025,8 +1028,8 @@ NODELETE static bool requiresCORP(const Document& document)
 {
     auto& embedderPolicy = document.crossOriginEmbedderPolicy();
     auto& documentIsolationPolicy = document.documentIsolationPolicy();
-    return embedderPolicy.value == CrossOriginEmbedderPolicyValue::RequireCORP || embedderPolicy.reportOnlyValue == CrossOriginEmbedderPolicyValue::RequireCORP
-        || documentIsolationPolicy.value == DocumentIsolationPolicyValue::IsolateAndRequireCORP || documentIsolationPolicy.reportOnlyValue == DocumentIsolationPolicyValue::IsolateAndRequireCORP;
+    return embedderPolicy.value != CrossOriginEmbedderPolicyValue::UnsafeNone || embedderPolicy.reportOnlyValue != CrossOriginEmbedderPolicyValue::UnsafeNone
+        || documentIsolationPolicy.value != DocumentIsolationPolicyValue::None || documentIsolationPolicy.reportOnlyValue != DocumentIsolationPolicyValue::None;
 }
 
 Ref<CachedResource> CachedResourceLoader::updateCachedResourceWithCurrentRequest(const CachedResource& resource, CachedResourceRequest&& request, PAL::SessionID sessionID, const CookieJar& cookieJar, const Settings& settings)
@@ -1061,6 +1064,15 @@ void CachedResourceLoader::prepareFetch(CachedResource::Type type, CachedResourc
     // FIXME: Decide whether to support client hints
 }
 
+// https://fetch.spec.whatwg.org/#main-fetch, step 12.
+static ResourceResponse::Tainting responseTainting(const CachedResourceRequest& request, const SecurityOrigin& origin)
+{
+    auto& url = request.resourceRequest().url();
+    if (origin.canRequest(url, OriginAccessPatternsForWebProcess::singleton()) || url.protocolIsData() || request.options().mode == FetchOptions::Mode::Navigate)
+        return ResourceResponse::Tainting::Basic;
+    return request.options().mode == FetchOptions::Mode::Cors ? ResourceResponse::Tainting::Cors : ResourceResponse::Tainting::Opaque;
+}
+
 static bool shouldReuseExistingFetchMetadata(const LocalFrame& frame, const ResourceRequest& request, CachedResource::Type type, FetchOptions::Mode mode)
 {
     if (mode != FetchOptions::Mode::Navigate || type != CachedResource::Type::MainResource)
@@ -1086,13 +1098,83 @@ static bool shouldUpdateFetchMetadata(const LocalFrame& frame, const ResourceReq
         && !shouldReuseExistingFetchMetadata(frame, request, type, mode);
 }
 
-void CachedResourceLoader::updateHTTPRequestHeaders(FrameLoader& frameLoader, CachedResource::Type type, CachedResourceRequest& request)
+// https://fetch.spec.whatwg.org/#cross-origin-embedder-policy-allows-credentials
+// https://wicg.github.io/document-isolation-policy/#document-isolation-policy-allows-credentials
+static bool crossOriginEmbedderPolicyAllowsCredentials(const Document& document, const CachedResourceRequest& request)
 {
-    // Implementing steps 11 to 19 of https://fetch.spec.whatwg.org/#http-network-or-cache-fetch as of 22 Feb 2022.
+    if (request.options().mode != FetchOptions::Mode::NoCors)
+        return true;
+    auto embedderPolicyValue = request.options().crossOriginEmbedderPolicy.value_or(document.crossOriginEmbedderPolicy()).value;
+    if (embedderPolicyValue != CrossOriginEmbedderPolicyValue::Credentialless && document.documentIsolationPolicy().value != DocumentIsolationPolicyValue::IsolateAndCredentialless)
+        return true;
+    return request.origin() && protect(request.origin())->canRequest(request.resourceRequest().url(), OriginAccessPatternsForWebProcess::singleton());
+}
+
+void CachedResourceLoader::prepareHTTPNetworkOrCacheFetch(FrameLoader& frameLoader, CachedResource::Type type, CachedResourceRequest& request)
+{
+    // https://fetch.spec.whatwg.org/#http-network-or-cache-fetch
+    //
+    // This implements the parts of step 8 that happen before the request is handed to the network layer. Comments that
+    // begin with a step number quote the spec; "[...]" marks text left out.
+
+    // 8.1. If request's traversable for user prompts is "no-traversable" and request's redirect mode is "error", then
+    //      set httpFetchParams to fetchParams and httpRequest to request.
+    // 8.2. Otherwise: [...] Set httpRequest to a clone of request.
+    //
+    // `request` is used as httpRequest.
+
+    // 8.3. Let includeCredentials be true if one of
+    //       - request's credentials mode is "include"
+    //       - request's credentials mode is "same-origin" and request's response tainting is "basic"
+    //      is true; otherwise false.
+    // 8.4. If Cross-Origin-Embedder-Policy allows credentials with request returns false, then set includeCredentials
+    //      to false.
+    //
+    // includeCredentials only ever restricts the stored credentials policy the caller chose.
+    RefPtr origin = request.origin();
+    auto tainting = origin ? responseTainting(request, *origin) : ResourceResponse::Tainting::Basic;
+    if (origin && request.options().storedCredentialsPolicy == StoredCredentialsPolicy::Use) {
+        if (storedCredentialsPolicyForCredentialsMode(request.options().credentials, tainting) == StoredCredentialsPolicy::DoNotUse) {
+            auto options = request.options();
+            options.storedCredentialsPolicy = StoredCredentialsPolicy::DoNotUse;
+            request.setOptions(options);
+            request.resourceRequest().setAllowCookies(false);
+        }
+    }
+
+    // The network process decides step 8.4 again for each redirect. Deciding here too keeps the memory cache from using
+    // a response to a request with credentials.
+    if (RefPtr document = this->document(); document && !crossOriginEmbedderPolicyAllowsCredentials(*document, request))
+        request.resourceRequest().setAllowCookies(false);
+
+    // 8.5. Let contentLength be httpRequest's body's length, if httpRequest's body is non-null; otherwise null.
+    // [...]
+    // 8.9. If contentLengthHeaderValue is non-null, then append (`Content-Length`, contentLengthHeaderValue) to
+    //      httpRequest's header list.
+    //
+    // The network layer adds `Content-Length`.
+
+    // 8.10. If contentLength is non-null and httpRequest's keepalive is true, then: [...]
+    //
+    // KeepaliveRequestTracker enforces the keepalive limit.
+
+    // 8.11. If httpRequest's referrer is a URL, then: [...] Append (`Referer`, referrerValue) to httpRequest's header
+    //       list.
+    // 8.12. Append a request `Origin` header for httpRequest.
+    //
+    // From https://fetch.spec.whatwg.org/#append-a-request-origin-header:
+    //
+    // 3. If request's response tainting is "cors" or request's mode is either "websocket" or "webtransport", then
+    //    append (`Origin`, serializedOrigin) to request's header list.
+    if (origin && tainting == ResourceResponse::Tainting::Cors && request.resourceRequest().httpOrigin().isEmpty())
+        request.resourceRequest().setHTTPOrigin(origin->toString());
 
     // FIXME: We should reconcile handling of MainResource with other resources.
     if (type != CachedResource::Type::MainResource && request.options().cachingPolicy != CachingPolicy::AllowCachingMainResourcePrefetch)
         request.updateReferrerAndOriginHeaders(frameLoader);
+
+    // 8.13. Append the Fetch metadata headers for httpRequest.
+    //
     // FetchMetadata depends on PSL to determine same-site relationships and without this
     // ability it is best to not set any FetchMetadata headers as sites generally expect
     // all of them or none.
@@ -1101,12 +1183,40 @@ void CachedResourceLoader::updateHTTPRequestHeaders(FrameLoader& frameLoader, Ca
         auto site = computeFetchMetadataSite(request.resourceRequest(), type, request.options().mode, frame, frame->isMainFrame() && m_documentLoader && m_documentLoader->isRequestFromClientOrUserInput(), protect(m_documentLoader));
         updateRequestFetchMetadataHeaders(request.resourceRequest(), request.options(), site);
     }
+
+    // 8.14. If httpRequest's initiator is "prefetch", then set a structured field value given (`Sec-Purpose`, the
+    //       token prefetch) in httpRequest's header list.
+    //
+    // CachedResource sets `Sec-Purpose` for link prefetches.
+
+    // 8.15. If httpRequest's header list does not contain `User-Agent`, then user agents should: [...] Append
+    //       (`User-Agent`, userAgent) to httpRequest's header list.
     request.updateUserAgentHeader(frameLoader);
 
+    // 8.16. If httpRequest's cache mode is "default" and httpRequest's header list contains `If-Modified-Since`,
+    //       `If-None-Match`, `If-Unmodified-Since`, `If-Match`, or `If-Range`, then set httpRequest's cache mode to
+    //       "no-store".
+    // 8.17. If httpRequest's cache mode is "no-cache", httpRequest's prevent no-cache cache-control header modification
+    //       flag is unset, and httpRequest's header list does not contain `Cache-Control`, then append
+    //       (`Cache-Control`, `max-age=0`) to httpRequest's header list.
+    // 8.18. If httpRequest's cache mode is "no-store" or "reload", then: [...] append (`Pragma`, `no-cache`) [...]
+    //       append (`Cache-Control`, `no-cache`) to httpRequest's header list.
     if (frame->loader().loadType() == FrameLoadType::ReloadFromOrigin)
         request.updateCacheModeIfNeeded(cachePolicy(type, request.resourceRequest().url()));
     request.updateAccordingCacheMode();
+
+    // 8.19. If httpRequest's header list contains `Range`, then append (`Accept-Encoding`, `identity`) to httpRequest's
+    //       header list.
     request.updateAcceptEncodingHeader();
+
+    // 8.20. Modify httpRequest's header list per HTTP. [...]
+    // 8.21. If includeCredentials is true, then: [...] Append a request `Cookie` header for httpRequest. [...]
+    // 8.22. If there's a proxy-authentication entry, use it as appropriate.
+    // 8.23. Run the WebDriver BiDi before request sent steps with request.
+    // 8.24. Set httpCache to the result of determining the HTTP cache partition, given httpRequest.
+    // [...]
+    //
+    // The network layer does these, using the stored credentials policy and allowCookies set for step 8.3.
 }
 
 NODELETE static FetchOptions::Destination destinationForType(CachedResource::Type type, LocalFrame& frame)
@@ -1167,7 +1277,7 @@ NODELETE static bool computeMayAddToMemoryCache(const CachedResourceRequest& new
 static Vector<String> blockingContentRuleListIdentifiers(const ContentRuleListResults& results)
 {
     Vector<String> identifiers;
-    for (auto& pair : results.results) {
+    for (auto& pair : borrow(results.results)) {
         if (pair.second.blockedLoad)
             identifiers.append(pair.first);
     }
@@ -1197,9 +1307,16 @@ ResourceErrorOr<Ref<CachedResource>> CachedResourceLoader::requestResource(Cache
         return makeUnexpected(ResourceError { errorDomainWebKitInternal, 0, url, "URL is invalid"_s });
     }
 
-    LOG(ResourceLoading, "CachedResourceLoader::requestResource '%.255s', charset '%s', priority=%d, forPreload=%u", url.stringCenterEllipsizedToLength().utf8(), request.charset().utf8(), request.priority() ? static_cast<int>(request.priority().value()) : -1, forPreload == ForPreload::Yes);
+    LOG(ResourceLoading, "CachedResourceLoader::requestResource '%.255s', charset '%s', priority=%d, forPreload=%u", makeUTF8CString(url.stringCenterEllipsizedToLength()), makeUTF8CString(request.charset()), request.priority() ? static_cast<int>(request.priority().value()) : -1, forPreload == ForPreload::Yes);
 
     request.setDestinationIfNotSet(destinationForType(type, frame));
+
+    // The loader checks integrity metadata against the fully read body (step 23 of https://fetch.spec.whatwg.org/#main-fetch).
+    if (!request.options().integrity.isEmpty() && request.options().dataBufferingPolicy == DataBufferingPolicy::DoNotBufferData) {
+        auto options = request.options();
+        options.dataBufferingPolicy = DataBufferingPolicy::BufferData;
+        request.setOptions(options);
+    }
 
     // Entry point to https://fetch.spec.whatwg.org/#main-fetch.
     std::unique_ptr<ResourceRequest> originalRequest;
@@ -1328,7 +1445,7 @@ ResourceErrorOr<Ref<CachedResource>> CachedResourceLoader::requestResource(Cache
             }
             for (auto& fields : m_documentLoader->customHeaderFields()) {
                 if (sameOriginRequest || fields.thirdPartyDomainsMatch(url)) {
-                    for (auto& field : fields.fields)
+                    for (auto& field : borrow(fields.fields))
                         request.resourceRequest().setHTTPHeaderField(field.name(), field.value());
                 }
             }
@@ -1340,7 +1457,7 @@ ResourceErrorOr<Ref<CachedResource>> CachedResourceLoader::requestResource(Cache
     InitiatorContext initiatorContext = request.options().initiatorContext;
 
     if (request.resourceRequest().url().protocolIsInHTTPFamily())
-        updateHTTPRequestHeaders(frame->loader(), type, request);
+        prepareHTTPNetworkOrCacheFetch(frame->loader(), type, request);
     request.disableCachingIfNeeded();
 
     Ref memoryCache = MemoryCache::singleton();
@@ -1588,6 +1705,11 @@ CachedResourceLoader::RevalidationPolicy CachedResourceLoader::determineRevalida
     if (!existingResource)
         return Load;
 
+    if (type == CachedResource::Type::MainResource && platformStrategies()->loaderStrategy()->hasExistingNetworkLoadToResume()) {
+        LOG(ResourceLoading, "CachedResourceLoader::determineRevalidationPolicy reloading because the navigation continues a network load from another process.");
+        return Reload;
+    }
+
     if (request.cachePolicy() == ResourceRequestCachePolicy::DoNotUseAnyCache || request.cachePolicy() == ResourceRequestCachePolicy::ReloadIgnoringCacheData)
         return Load;
 
@@ -1623,6 +1745,15 @@ CachedResourceLoader::RevalidationPolicy CachedResourceLoader::determineRevalida
 
     if (!existingResource->varyHeaderValuesMatch(request))
         return Reload;
+
+    // A resource is only checked against the integrity metadata of the request that loaded it, so reusing it
+    // for a request with other metadata needs its bytes to match that metadata too.
+    if (auto& integrity = cachedResourceRequest.options().integrity; !integrity.isEmpty() && integrity != existingResource->options().integrity) {
+        if (existingResource->isLoading() || !matchIntegrityMetadataWithoutReportingHashes(*existingResource, integrity)) {
+            LOG(ResourceLoading, "CachedResourceLoader::determineRevalidationPolicy reloading due to integrity metadata mismatch.");
+            return Reload;
+        }
+    }
 
     RefPtr textDecoder = existingResource->textResourceDecoder();
     if (textDecoder && textDecoder->charsetWouldChangeEncoding(cachedResourceRequest.charset())) {
@@ -1739,13 +1870,13 @@ CachedResourceLoader::RevalidationPolicy CachedResourceLoader::determineRevalida
             // Do not revalidate responses with the COOP header since they may cause a process-swap
             // and we could not make the swap work if the server responded with a 304.
             if (cachedResourceRequest.options().mode == FetchOptions::Mode::Navigate
-                && obtainCrossOriginOpenerPolicy(existingResource->response()).value != CrossOriginOpenerPolicyValue::UnsafeNone) {
+                && obtainCrossOriginOpenerPolicy(existingResource->response(), CredentiallessSupport::No).value != CrossOriginOpenerPolicyValue::UnsafeNone) {
                 return Reload;
             }
             // The same goes for navigations that may move to or from a process for documents with a Document-Isolation-Policy.
             if (cachedResourceRequest.options().mode == FetchOptions::Mode::Navigate && frame()
                 && frame()->settings().documentIsolationPolicyEnabled() && frame()->settings().siteIsolationEnabled()
-                && (ScriptExecutionContext::crossOriginMode() == CrossOriginMode::Isolated || obtainDocumentIsolationPolicy(existingResource->response(), IsSecureContext::Yes).value != DocumentIsolationPolicyValue::None)) {
+                && (ScriptExecutionContext::crossOriginMode() == CrossOriginMode::Isolated || obtainDocumentIsolationPolicy(existingResource->response(), IsSecureContext::Yes, credentiallessSupport(frame()->settings().values())).value != DocumentIsolationPolicyValue::None)) {
                 return Reload;
             }
             return Revalidate;
@@ -1985,7 +2116,7 @@ void CachedResourceLoader::warnUnusedPreloads()
 
     for (const auto& resource : *m_preloads) {
         if (resource->isLinkPreload() && resource->preloadResult() == CachedResource::PreloadResult::PreloadNotReferenced) {
-            document->addConsoleMessage(MessageSource::Other, MessageLevel::Warning,
+            document->addConsoleMessage(MessageSource::Network, MessageLevel::Warning,
                 makeString("The resource "_s, resource->url().string(),
                 " was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it wasn't preloaded for nothing."_s));
         }

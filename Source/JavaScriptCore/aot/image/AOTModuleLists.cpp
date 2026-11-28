@@ -40,7 +40,7 @@ struct ImportTargetsOfModuleLists {
     ModuleID operator[](size_t index) const { return requests[index].kind == Typed::ModuleRequestKind::Require ? importer : requests[index].target; }
 };
 
-using DirectoryNumbersOfModuleLists = UncheckedKeyHashMap<uint64_t, uint32_t>;
+using DirectoryNumbersOfModuleLists = HashMap<uint64_t, uint32_t>;
 using PiecesOfModulePath = Vector<StringID, 16>;
 
 struct ModuleListsOfChunk : ModuleLists {
@@ -926,7 +926,7 @@ static uint32_t countReexports(const TableInputs& inputs, ModuleID module)
 static void appendModuleInstances(const TableInputs& inputs, const NumbersOfImageForModuleLists& numbers, ModuleLists& lists)
 {
     const Typed::Program& program = inputs.program;
-    UncheckedKeyHashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> firstSteps;
+    HashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> firstSteps;
     auto keyOf = [](ModuleID module, uint32_t field) {
         return static_cast<uint64_t>(module.index()) << 32 | field;
     };

@@ -121,6 +121,9 @@ public:
     virtual void didReceiveData(const SharedBuffer&, long long encodedDataLength, DataPayloadType);
     virtual void didReceiveBuffer(const FragmentedSharedBuffer&, long long encodedDataLength, DataPayloadType);
     virtual void didFinishLoading(const NetworkLoadMetrics&);
+#if USE(QUICK_LOOK)
+    virtual void didFinishQuickLookLoading(URL&& temporaryQuickLookFileURL);
+#endif
     virtual void didFail(const ResourceError&);
 
     WEBCORE_EXPORT void didBlockAuthenticationChallenge();
@@ -183,6 +186,7 @@ protected:
     bool wasCancelled() const { return m_cancellationStatus >= Cancelled; }
 
     void setReferrerPolicy(ReferrerPolicy referrerPolicy) { m_options.referrerPolicy = referrerPolicy; }
+    void setStoredCredentialsPolicy(StoredCredentialsPolicy storedCredentialsPolicy) { m_options.storedCredentialsPolicy = storedCredentialsPolicy; }
     ReferrerPolicy referrerPolicy() const { return m_options.referrerPolicy; }
 
 #if PLATFORM(COCOA)

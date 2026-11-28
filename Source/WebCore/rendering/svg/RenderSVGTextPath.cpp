@@ -45,7 +45,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderSVGTextPath);
 
-RenderSVGTextPath::RenderSVGTextPath(SVGTextPathElement& element, Style::ComputedStyle&& style)
+RenderSVGTextPath::RenderSVGTextPath(SVGTextPathElement& element, UniqueRef<Style::ComputedStyle>&& style)
     : RenderSVGInline(Type::SVGTextPath, element, WTF::move(style))
 {
     ASSERT(isRenderSVGTextPath());
@@ -90,8 +90,7 @@ Path RenderSVGTextPath::layoutPath() const
     // system due to a possible transform attribute on the current 'text' element.
     // http://www.w3.org/TR/SVG/text.html#TextPathElement
     if (CheckedPtr shapeRenderer = dynamicDowncast<RenderSVGShape>(element->renderer())) {
-        auto transform = shapeRenderer->computeRendererTransform();
-        if (!transform.isIdentity())
+        if (auto transform = shapeRenderer->computeUserSpaceTransform(); !transform.isIdentity())
             path.transform(transform);
         return path;
     }

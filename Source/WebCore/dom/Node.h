@@ -137,7 +137,7 @@ public:
 
     // DOM methods & attributes for Node
 
-    bool hasTagName(const HTMLQualifiedName&) const;
+    NODELETE bool hasTagName(const HTMLQualifiedName&) const;
     bool hasTagName(const MathMLQualifiedName&) const;
     inline bool hasTagName(const SVGQualifiedName&) const;
     virtual String nodeName() const = 0;
@@ -285,13 +285,30 @@ public:
     void setIsInCustomElementReactionQueue() { setStateFlag(StateFlag::IsInCustomElementReactionQueue); }
     void clearIsInCustomElementReactionQueue() { clearStateFlag(StateFlag::IsInCustomElementReactionQueue); }
 
-    bool usesNullCustomElementRegistry() const { return hasStateFlag(StateFlag::UsesNullCustomElementRegistry); }
-    void setUsesNullCustomElementRegistry() const { setStateFlag(StateFlag::UsesNullCustomElementRegistry); }
-    void clearUsesNullCustomElementRegistry() const { clearStateFlag(StateFlag::UsesNullCustomElementRegistry); }
+    bool usesNullCustomElementRegistry() const { return customElementRegistryType() == CustomElementRegistryType::Null; }
+    void setUsesNullCustomElementRegistry() { setCustomElementRegistryType(CustomElementRegistryType::Null); }
 
-    bool usesScopedCustomElementRegistryMap() const { return hasStateFlag(StateFlag::UsesScopedCustomElementRegistryMap); }
-    void setUsesScopedCustomElementRegistryMap() { setStateFlag(StateFlag::UsesScopedCustomElementRegistryMap); }
-    void clearUsesScopedCustomElementRegistryMap() { clearStateFlag(StateFlag::UsesScopedCustomElementRegistryMap); }
+    bool usesScopedCustomElementRegistryMap() const { return customElementRegistryType() == CustomElementRegistryType::ScopedMap; }
+    void setUsesScopedCustomElementRegistryMap()
+    {
+        ASSERT(isElementNode());
+        setCustomElementRegistryType(CustomElementRegistryType::ScopedMap);
+    }
+
+    bool usesGlobalCustomElementRegistry() const { return customElementRegistryType() == CustomElementRegistryType::Global; }
+    void setUsesGlobalCustomElementRegistry()
+    {
+        ASSERT(isElementNode());
+        setCustomElementRegistryType(CustomElementRegistryType::Global);
+    }
+
+    void resetCustomElementRegistryType()
+    {
+        auto bitfields = rareDataBitfields();
+        bitfields.customElementRegistryType = std::to_underlying(CustomElementRegistryType::TreeScope);
+        setRareDataBitfields(bitfields);
+        clearStateFlag(StateFlag::KeepsCustomElementRegistryNull);
+    }
 
     // Returns null, a child of ShadowRoot, or a legacy shadow root.
     NODELETE Node* nonBoundaryShadowTreeRootNode();
@@ -326,10 +343,10 @@ public:
     void setSelfOrPrecedingNodesAffectDirAuto(bool flag) { setStateFlag(StateFlag::SelfOrPrecedingNodesAffectDirAuto, flag); }
 
     NODELETE TextDirection effectiveTextDirection() const;
-    NODELETE void setEffectiveTextDirection(TextDirection);
+    void setEffectiveTextDirection(TextDirection direction) { setStateFlag(StateFlag::EffectiveTextDirectionIsRTL, std::to_underlying(direction)); }
 
-    bool usesEffectiveTextDirection() const { return rareDataBitfields().usesEffectiveTextDirection; }
-    NODELETE void setUsesEffectiveTextDirection(bool);
+    bool usesEffectiveTextDirection() const { return hasStateFlag(StateFlag::UsesEffectiveTextDirection); }
+    void setUsesEffectiveTextDirection(bool value) { setStateFlag(StateFlag::UsesEffectiveTextDirection, value); }
 
     // Returns the enclosing event parent Element (or self) that, when clicked, would trigger a navigation.
     NODELETE WEBCORE_EXPORT Element* enclosingLinkEventParentOrSelf();
@@ -483,7 +500,7 @@ public:
     // -----------------------------------------------------------------------------
     // Integration with rendering tree
 
-    RenderObject* renderer() const { return m_renderer; }
+    RenderObject* renderer() const { return m_renderer.get(); }
     void setRenderer(RenderObject*); // Defined in NodeInlines.h
 
     // Use these two methods with caution.
@@ -618,7 +635,7 @@ public:
     static auto flagIsParsingChildren() { return std::to_underlying(StateFlag::IsParsingChildren); }
 #endif // ENABLE(JIT)
 
-#if ASSERT_ENABLED
+#if ASSERT_ENABLED || ENABLE(SECURITY_ASSERTIONS)
     bool deletionHasBegun() const { return m_deletionHasBegun; }
 #endif
 
@@ -665,8 +682,8 @@ protected:
         HasNodeIdentifier = 1 << 11,
         IsUserActionElement = 1 << 12,
         IsInCustomElementReactionQueue = 1 << 13,
-        UsesNullCustomElementRegistry = 1 << 14,
-        UsesScopedCustomElementRegistryMap = 1 << 15,
+        UsesEffectiveTextDirection = 1 << 14,
+        EffectiveTextDirectionIsRTL = 1 << 15,
         NeedsSVGRendererUpdate = 1 << 16,
         NeedsUpdateQueryContainerDependentStyle = 1 << 17,
         EverHadSmoothScroll = 1 << 18,
@@ -680,7 +697,8 @@ protected:
         DescendantNeedsStyleResolution = 1 << 24,
         DirectChildNeedsStyleResolution = 1 << 25,
         IsInSelectOrDataListSubtree = 1 << 26, // Only used on Element.
-        // 5 bits free.
+        KeepsCustomElementRegistryNull = 1 << 27, // Only used on Element.
+        // 4 bits free.
     };
 
     enum class TabIndexState : uint8_t {
@@ -697,12 +715,13 @@ protected:
         FailedOrPrecustomized = 3,
     };
 
+    enum class CustomElementRegistryType : uint8_t { TreeScope, Null, ScopedMap, Global };
+
     struct RareDataBitFields {
         uint16_t connectedSubframeCount : 10;
         uint16_t tabIndexState : 2;
         uint16_t customElementState : 2;
-        uint16_t usesEffectiveTextDirection : 1;
-        uint16_t effectiveTextDirection : 1;
+        uint16_t customElementRegistryType : 2;
     };
 
     bool hasStateFlag(StateFlag flag) const { return m_stateFlags.contains(flag); }
@@ -718,11 +737,20 @@ protected:
     CustomElementState customElementState() const { return static_cast<CustomElementState>(rareDataBitfields().customElementState); }
     void setCustomElementState(CustomElementState);
 
+    CustomElementRegistryType customElementRegistryType() const { return static_cast<CustomElementRegistryType>(rareDataBitfields().customElementRegistryType); }
+    void setCustomElementRegistryType(CustomElementRegistryType type)
+    {
+        ASSERT(customElementRegistryType() == CustomElementRegistryType::TreeScope || customElementRegistryType() == type);
+        auto bitfields = rareDataBitfields();
+        bitfields.customElementRegistryType = std::to_underlying(type);
+        setRareDataBitfields(bitfields);
+    }
+
     bool isParsingChildrenFinished() const { return !hasStateFlag(StateFlag::IsParsingChildren); }
     void setIsParsingChildrenFinished() { clearStateFlag(StateFlag::IsParsingChildren); }
     void clearIsParsingChildrenFinished() { setStateFlag(StateFlag::IsParsingChildren); }
 
-    Node(Document&, NodeType, OptionSet<TypeFlag>);
+    NODELETE Node(Document&, NodeType, OptionSet<TypeFlag>);
 
     static constexpr uint32_t s_refCountIncrement = 2;
     static constexpr uint32_t s_refCountMask = ~static_cast<uint32_t>(1);
@@ -792,7 +820,7 @@ protected:
     ExceptionOr<NodeVector> convertNodesOrStringsIntoNodeVector(FixedVector<NodeOrString>&&);
 
 private:
-    Node(ClangVTableWorkaroundTag, Document&);
+    NODELETE Node(ClangVTableWorkaroundTag, Document&);
 
     WEBCORE_EXPORT void removedLastRef();
 
@@ -819,13 +847,12 @@ private:
     static unsigned moveShadowTreeToNewDocumentFastCase(ShadowRoot&, Document& oldDocument, Document& newDocument);
     static void moveShadowTreeToNewDocumentSlowCase(ShadowRoot&, Document& oldDocument, Document& newDocument);
     static void moveTreeToNewScope(Node&, TreeScope& oldScope, TreeScope& newScope);
-    void moveNodeToNewDocumentFastCase(Document& oldDocument, Document& newDocument);
-    void moveNodeToNewDocumentSlowCase(Document& oldDocument, Document& newDocument);
-    NODELETE void adoptCustomElementRegistryIntoScopedRegistryDocument();
+    void moveNodeToNewDocumentFastCase(Document& oldDocument, Document& newDocument, CustomElementRegistry* scopedRegistryOfOldTreeScope);
+    void moveNodeToNewDocumentSlowCase(Document& oldDocument, Document& newDocument, CustomElementRegistry* scopedRegistryOfOldTreeScope);
 
     WEBCORE_EXPORT void notifyInspectorOfRendererChange();
 
-#if ASSERT_ENABLED
+#if ASSERT_ENABLED || ENABLE(SECURITY_ASSERTIONS)
     mutable bool m_inRemovedLastRefFunction { false };
     bool m_deletionHasBegun { false };
 #endif
@@ -840,7 +867,7 @@ private:
     CheckedPtr<Node> m_shadowIncludingRoot;
     CheckedPtr<Node> m_previousSibling;
     CheckedPtr<Node> m_next;
-    RenderObject* m_renderer { nullptr };
+    CheckedPtr<RenderObject> m_renderer;
     CompactUniquePtrTuple<NodeRareData, uint16_t> m_rareDataWithBitfields;
 };
 
@@ -857,14 +884,14 @@ NODELETE bool isTouchRelatedEventType(const EventTypeInfo&, const EventTarget&);
 
 ALWAYS_INLINE void Node::ref() const
 {
-    ASSERT(isMainThread());
+    ASSERT_WITH_SECURITY_IMPLICATION(isMainThread());
     applyRefDuringDestructionCheck();
     m_refCountAndParentBit += s_refCountIncrement;
 }
 
 inline void Node::applyRefDuringDestructionCheck() const
 {
-#if ASSERT_ENABLED
+#if ASSERT_ENABLED || ENABLE(SECURITY_ASSERTIONS)
     if (!deletionHasBegun())
         return;
     WTF::RefCountDebuggerBase::logRefDuringDestruction(this);
@@ -873,13 +900,13 @@ inline void Node::applyRefDuringDestructionCheck() const
 
 ALWAYS_INLINE void Node::deref() const
 {
-    ASSERT(isMainThread());
+    ASSERT_WITH_SECURITY_IMPLICATION(isMainThread());
 
     ASSERT_WITH_SECURITY_IMPLICATION(refCount());
     auto updatedRefCount = m_refCountAndParentBit - s_refCountIncrement;
     if (!updatedRefCount) {
-        ASSERT(!deletionHasBegun());
-#if ASSERT_ENABLED
+        ASSERT_WITH_SECURITY_IMPLICATION(!deletionHasBegun());
+#if ASSERT_ENABLED || ENABLE(SECURITY_ASSERTIONS)
         m_inRemovedLastRefFunction = true;
 #endif
         const_cast<Node&>(*this).removedLastRef();
@@ -895,7 +922,7 @@ ALWAYS_INLINE unsigned Node::refCount() const
 
 inline ContainerNode* Node::parentNode() const
 {
-    ASSERT(isMainThreadOrGCThread());
+    ASSERT_WITH_SECURITY_IMPLICATION(isMainThreadOrGCThread());
     return m_parentNode.get();
 }
 

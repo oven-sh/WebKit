@@ -136,7 +136,7 @@ private:
     };
 
     class NamedCaptureGroups {
-        typedef UncheckedKeyHashSet<String> GroupNameHashSet;
+        typedef HashSet<String> GroupNameHashSet;
 
     public:
         NamedCaptureGroups()
@@ -2322,7 +2322,7 @@ private:
     bool m_kIdentityEscapeSeen { false };
     Vector<ParenthesesType, 16> m_parenthesesStack;
     NamedCaptureGroups m_namedCaptureGroups;
-    UncheckedKeyHashSet<String> m_forwardReferenceNames;
+    HashSet<String> m_forwardReferenceNames;
 
     static constexpr unsigned maxPatternSize = 1024 * 1024; // Derived by empirical testing of compile time in PCRE and WREC.
     static constexpr unsigned maxPatternSizeWithCharacterClasses = 4 * maxPatternSize;

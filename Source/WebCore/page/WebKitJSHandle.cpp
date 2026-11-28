@@ -48,7 +48,7 @@ NODELETE static HandleToGlobalMap& handleToGlobalMap(JSC::VM& vm)
 // belongs to the common VM.
 NODELETE static HandleToGlobalMap* handleToGlobalMapIfExists()
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     auto* vm = commonVMOrNull();
     return vm ? &handleToGlobalMap(*vm) : nullptr;
 }

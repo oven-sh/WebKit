@@ -56,7 +56,7 @@ RemoteScrollingCoordinatorTransaction::RemoteScrollingCoordinatorTransaction(std
     , m_rootFrameID(frameID)
 {
     if (!m_scrollingStateTree)
-        m_scrollingStateTree = makeUnique<WebCore::ScrollingStateTree>();
+        m_scrollingStateTree = WebCore::ScrollingStateTree::create().moveToUniquePtr();
     if (fromDeserialization == FromDeserialization::Yes)
         CheckedRef { *m_scrollingStateTree }->attachDeserializedNodes();
 }
@@ -321,7 +321,7 @@ String RemoteScrollingCoordinatorTransaction::description() const
 
 void RemoteScrollingCoordinatorTransaction::dump() const
 {
-    SAFE_WTFLOGALWAYS("%s", description().utf8());
+    SAFE_WTFLOGALWAYS("%s", makeUTF8CString(description()));
 }
 #endif // !defined(NDEBUG) || !LOG_DISABLED
 

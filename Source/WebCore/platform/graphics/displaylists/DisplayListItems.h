@@ -32,12 +32,14 @@
 #include <WebCore/Filter.h>
 #include <WebCore/FloatRoundedRect.h>
 #include <WebCore/Font.h>
+#include <WebCore/FreeformGradient.h>
 #include <WebCore/GlyphBuffer.h>
 #include <WebCore/Gradient.h>
 #include <WebCore/GraphicsContext.h>
 #include <WebCore/MeshGradient.h>
 #include <WebCore/NativeImage.h>
 #include <WebCore/SharedBuffer.h>
+#include <WebCore/SharedPDFDocument.h>
 #include <WebCore/SystemImage.h>
 #include <WebCore/TextFlags.h>
 #include <wtf/ArgumentCoder.h>
@@ -56,6 +58,37 @@ struct RasterDrawingOptions;
 namespace DisplayList {
 class DisplayList;
 
+template<typename ImageType>
+class ResolvableImage {
+public:
+    template<typename T> requires std::constructible_from<Variant<Ref<ImageType>, RenderingResourceIdentifier>, T&&>
+    ResolvableImage(T&& image)
+        : m_image(std::forward<T>(image))
+    {
+    }
+
+    const Ref<ImageType>& image() const LIFETIME_BOUND
+    {
+        RELEASE_ASSERT(isResolved());
+        return std::get<Ref<ImageType>>(m_image);
+    }
+    void setImage(Ref<ImageType>&& image) { m_image = WTF::move(image); }
+    bool isResolved() const { return std::holds_alternative<Ref<ImageType>>(m_image); }
+
+    RenderingResourceIdentifier identifier() const
+    {
+        if (auto* identifier = std::get_if<RenderingResourceIdentifier>(&m_image))
+            return *identifier;
+        return image()->renderingResourceIdentifier();
+    }
+
+private:
+    Variant<Ref<ImageType>, RenderingResourceIdentifier> m_image;
+};
+
+using SourceImageBuffer = ResolvableImage<ImageBuffer>;
+using SourceNativeImage = ResolvableImage<const NativeImage>;
+
 class Save {
 public:
     static constexpr ASCIILiteral name = "save"_s;
@@ -67,6 +100,22 @@ public:
 class Restore {
 public:
     static constexpr ASCIILiteral name = "restore"_s;
+
+    WEBCORE_EXPORT void apply(GraphicsContext&) const;
+    void dump(TextStream&, OptionSet<AsTextFlag>) const { }
+};
+
+class SaveTransform {
+public:
+    static constexpr ASCIILiteral name = "save-transform"_s;
+
+    WEBCORE_EXPORT void apply(GraphicsContext&) const;
+    void dump(TextStream&, OptionSet<AsTextFlag>) const { }
+};
+
+class RestoreTransform {
+public:
+    static constexpr ASCIILiteral name = "restore-transform"_s;
 
     WEBCORE_EXPORT void apply(GraphicsContext&) const;
     void dump(TextStream&, OptionSet<AsTextFlag>) const { }
@@ -231,6 +280,8 @@ public:
     GraphicsContextState& state() LIFETIME_BOUND { return m_state; }
     const GraphicsContextState& state() const LIFETIME_BOUND { return m_state; }
 
+    bool isResolved() const;
+
     WEBCORE_EXPORT void apply(GraphicsContext&) const;
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
 
@@ -385,24 +436,28 @@ private:
     FloatRoundedRect m_rect;
 };
 
-class ClipToImageBuffer {
+class ClipToNativeImage {
 public:
-    static constexpr ASCIILiteral name = "clip-to-image-buffer"_s;
+    static constexpr ASCIILiteral name = "clip-to-native-image"_s;
 
-    ClipToImageBuffer(Ref<ImageBuffer>&& imageBuffer, const FloatRect& destinationRect)
-        : m_imageBuffer(WTF::move(imageBuffer))
+    ClipToNativeImage(SourceNativeImage&& image, const FloatRect& destinationRect)
+        : m_image(WTF::move(image))
         , m_destinationRect(destinationRect)
     {
     }
 
-    ImageBuffer& imageBuffer() const { return m_imageBuffer; }
-    FloatRect destinationRect() const { return m_destinationRect; }
+    const NativeImage& nativeImage() const { return m_image.image(); }
+    void setNativeImage(Ref<const NativeImage>&& image) { m_image.setImage(WTF::move(image)); }
+    bool isResolved() const { return m_image.isResolved(); }
+    RenderingResourceIdentifier imageIdentifier() const { return m_image.identifier(); }
+
+    const FloatRect& destinationRect() const LIFETIME_BOUND { return m_destinationRect; }
 
     void apply(GraphicsContext&) const;
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
 
 private:
-    const Ref<ImageBuffer> m_imageBuffer;
+    SourceNativeImage m_image;
     FloatRect m_destinationRect;
 };
 
@@ -503,20 +558,26 @@ class DrawFilteredImageBuffer {
 public:
     static constexpr ASCIILiteral name = "draw-filtered-image-buffer"_s;
 
-    DrawFilteredImageBuffer(RefPtr<ImageBuffer>&& sourceImage, const FloatRect& sourceImageRect, Filter& filter)
+    DrawFilteredImageBuffer(std::optional<SourceImageBuffer>&& sourceImage, const FloatRect& sourceImageRect, Ref<Filter>&& filter)
         : m_sourceImage(WTF::move(sourceImage))
         , m_sourceImageRect(sourceImageRect)
-        , m_filter(filter)
-    {
-    }
-
-    DrawFilteredImageBuffer(const FloatRect& sourceImageRect, Ref<Filter>&& filter)
-        : m_sourceImageRect(sourceImageRect)
         , m_filter(WTF::move(filter))
     {
     }
 
-    ImageBuffer* sourceImage() const { return m_sourceImage.get(); }
+    ImageBuffer* sourceImage() const { return m_sourceImage ? m_sourceImage->image().ptr() : nullptr; }
+    void setSourceImage(Ref<ImageBuffer>&& sourceImage) { m_sourceImage = SourceImageBuffer { WTF::move(sourceImage) }; }
+    bool isSourceImageResolved() const { return !m_sourceImage || m_sourceImage->isResolved(); }
+
+    std::optional<RenderingResourceIdentifier> sourceImageIdentifier() const
+    {
+        if (!m_sourceImage)
+            return std::nullopt;
+        return m_sourceImage->identifier();
+    }
+
+    bool isResolved() const;
+
     FloatRect sourceImageRect() const { return m_sourceImageRect; }
     Filter& filter() const { return m_filter; }
 
@@ -526,7 +587,7 @@ public:
 private:
     friend struct IPC::ArgumentCoder<DrawFilteredImageBuffer>;
 
-    const RefPtr<ImageBuffer> m_sourceImage;
+    std::optional<SourceImageBuffer> m_sourceImage;
     FloatRect m_sourceImageRect;
     const Ref<Filter> m_filter;
 };
@@ -673,15 +734,19 @@ class DrawImageBuffer {
 public:
     static constexpr ASCIILiteral name = "draw-image-buffer"_s;
 
-    DrawImageBuffer(ImageBuffer& imageBuffer, const FloatRect& destRect, const FloatRect& srcRect, RasterDrawingOptions options)
-        : m_imageBuffer(imageBuffer)
+    DrawImageBuffer(SourceImageBuffer&& imageBuffer, const FloatRect& destRect, const FloatRect& srcRect, RasterDrawingOptions options)
+        : m_imageBuffer(WTF::move(imageBuffer))
         , m_destinationRect(destRect)
         , m_srcRect(srcRect)
         , m_options(options)
     {
     }
 
-    ImageBuffer& imageBuffer() const { return m_imageBuffer; }
+    ImageBuffer& imageBuffer() const { return m_imageBuffer.image(); }
+    void setImageBuffer(Ref<ImageBuffer>&& imageBuffer) { m_imageBuffer.setImage(WTF::move(imageBuffer)); }
+    bool isResolved() const { return m_imageBuffer.isResolved(); }
+    RenderingResourceIdentifier imageIdentifier() const { return m_imageBuffer.identifier(); }
+
     FloatRect source() const { return m_srcRect; }
     FloatRect destinationRect() const { return m_destinationRect; }
     RasterDrawingOptions options() const { return m_options; }
@@ -690,7 +755,7 @@ public:
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
 
 private:
-    const Ref<ImageBuffer> m_imageBuffer;
+    SourceImageBuffer m_imageBuffer;
     FloatRect m_destinationRect;
     FloatRect m_srcRect;
     RasterDrawingOptions m_options;
@@ -700,15 +765,19 @@ class DrawNativeImage {
 public:
     static constexpr ASCIILiteral name = "draw-native-image"_s;
 
-    DrawNativeImage(const NativeImage& image, const FloatRect& destRect, const FloatRect& srcRect, RasterDrawingOptions options)
-        : m_image(image)
+    DrawNativeImage(SourceNativeImage&& image, const FloatRect& destRect, const FloatRect& srcRect, RasterDrawingOptions options)
+        : m_image(WTF::move(image))
         , m_destinationRect(destRect)
         , m_srcRect(srcRect)
         , m_options(options)
     {
     }
 
-    const NativeImage& nativeImage() const { return m_image; }
+    const NativeImage& nativeImage() const { return m_image.image(); }
+    void setNativeImage(Ref<const NativeImage>&& image) { m_image.setImage(WTF::move(image)); }
+    bool isResolved() const { return m_image.isResolved(); }
+    RenderingResourceIdentifier imageIdentifier() const { return m_image.identifier(); }
+
     const FloatRect& destinationRect() const LIFETIME_BOUND { return m_destinationRect; }
     const FloatRect& source() const LIFETIME_BOUND { return m_srcRect; }
     RasterDrawingOptions options() const { return m_options; }
@@ -717,7 +786,7 @@ public:
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
 
 private:
-    const Ref<const NativeImage> m_image;
+    SourceNativeImage m_image;
     FloatRect m_destinationRect;
     FloatRect m_srcRect;
     RasterDrawingOptions m_options;
@@ -748,8 +817,8 @@ class DrawPatternNativeImage {
 public:
     static constexpr ASCIILiteral name = "draw-pattern-nativeimage"_s;
 
-    DrawPatternNativeImage(const NativeImage& image, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, RasterDrawingOptions options)
-        : m_image(image)
+    DrawPatternNativeImage(SourceNativeImage&& image, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, RasterDrawingOptions options)
+        : m_image(WTF::move(image))
         , m_destination(destRect)
         , m_tileRect(tileRect)
         , m_patternTransform(patternTransform)
@@ -758,7 +827,12 @@ public:
         , m_options(options)
     {
     }
-    const NativeImage& nativeImage() const { return m_image; }
+
+    const NativeImage& nativeImage() const { return m_image.image(); }
+    void setNativeImage(Ref<const NativeImage>&& image) { m_image.setImage(WTF::move(image)); }
+    bool isResolved() const { return m_image.isResolved(); }
+    RenderingResourceIdentifier imageIdentifier() const { return m_image.identifier(); }
+
     FloatRect destRect() const { return m_destination; }
     FloatRect tileRect() const { return m_tileRect; }
     const AffineTransform& patternTransform() const LIFETIME_BOUND { return m_patternTransform; }
@@ -770,7 +844,7 @@ public:
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
 
 private:
-    const Ref<const NativeImage> m_image;
+    SourceNativeImage m_image;
     FloatRect m_destination;
     FloatRect m_tileRect;
     AffineTransform m_patternTransform;
@@ -783,8 +857,8 @@ class DrawPatternImageBuffer {
 public:
     static constexpr ASCIILiteral name = "draw-pattern-imagebuffer"_s;
 
-    DrawPatternImageBuffer(ImageBuffer& image, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, RasterDrawingOptions options)
-        : m_imageBuffer(image)
+    DrawPatternImageBuffer(SourceImageBuffer&& imageBuffer, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, RasterDrawingOptions options)
+        : m_imageBuffer(WTF::move(imageBuffer))
         , m_destination(destRect)
         , m_tileRect(tileRect)
         , m_patternTransform(patternTransform)
@@ -793,7 +867,12 @@ public:
         , m_options(options)
     {
     }
-    ImageBuffer& imageBuffer() const { return m_imageBuffer; }
+
+    ImageBuffer& imageBuffer() const { return m_imageBuffer.image(); }
+    void setImageBuffer(Ref<ImageBuffer>&& imageBuffer) { m_imageBuffer.setImage(WTF::move(imageBuffer)); }
+    bool isResolved() const { return m_imageBuffer.isResolved(); }
+    RenderingResourceIdentifier imageIdentifier() const { return m_imageBuffer.identifier(); }
+
     FloatRect destRect() const { return m_destination; }
     FloatRect tileRect() const { return m_tileRect; }
     const AffineTransform& patternTransform() const LIFETIME_BOUND { return m_patternTransform; }
@@ -805,7 +884,7 @@ public:
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
 
 private:
-    const Ref<ImageBuffer> m_imageBuffer;
+    SourceImageBuffer m_imageBuffer;
     FloatRect m_destination;
     FloatRect m_tileRect;
     AffineTransform m_patternTransform;
@@ -856,6 +935,48 @@ public:
 
     WEBCORE_EXPORT void apply(GraphicsContext&) const;
     void dump(TextStream&, OptionSet<AsTextFlag>) const { }
+};
+
+using SourcePDFDocument = Variant<Ref<SharedPDFDocument>, RenderingResourceIdentifier>;
+
+class DrawPDFPage {
+public:
+    static constexpr ASCIILiteral name = "draw-pdf-page"_s;
+
+    DrawPDFPage(SourcePDFDocument&& document, unsigned pageIndex, const FloatRect& pageRect, std::optional<SourceNativeImage>&& fallbackImage = std::nullopt)
+        : m_document(WTF::move(document))
+        , m_pageIndex(pageIndex)
+        , m_pageRect(pageRect)
+        , m_fallbackImage(WTF::move(fallbackImage))
+    {
+    }
+
+    SharedPDFDocument& document() const
+    {
+        RELEASE_ASSERT(std::holds_alternative<Ref<SharedPDFDocument>>(m_document));
+        return std::get<Ref<SharedPDFDocument>>(m_document);
+    }
+    void setDocument(Ref<SharedPDFDocument>&& document) { m_document = WTF::move(document); }
+    bool isResolved() const;
+
+    RenderingResourceIdentifier documentIdentifier() const
+    {
+        if (auto* identifier = std::get_if<RenderingResourceIdentifier>(&m_document))
+            return *identifier;
+        return document().renderingResourceIdentifier();
+    }
+
+    unsigned pageIndex() const { return m_pageIndex; }
+    const FloatRect& pageRect() const LIFETIME_BOUND { return m_pageRect; }
+
+    WEBCORE_EXPORT void apply(GraphicsContext&) const;
+    void dump(TextStream&, OptionSet<AsTextFlag>) const;
+
+private:
+    SourcePDFDocument m_document;
+    unsigned m_pageIndex { 0 };
+    FloatRect m_pageRect;
+    std::optional<SourceNativeImage> m_fallbackImage;
 };
 
 class DrawRect {
@@ -925,12 +1046,35 @@ private:
     StrokeStyle m_style;
 };
 
+class DrawFreeformGradient {
+public:
+    static constexpr ASCIILiteral name = "draw-freeform-gradient"_s;
+
+    DrawFreeformGradient(Ref<FreeformGradient>&& gradient, const FloatRect& destination)
+        : m_gradient(WTF::move(gradient))
+        , m_destination(destination)
+    {
+    }
+
+    const FreeformGradient& gradient() const { return m_gradient; }
+    const FloatRect& destination() const LIFETIME_BOUND { return m_destination; }
+
+    WEBCORE_EXPORT void apply(GraphicsContext&) const;
+    void dump(TextStream&, OptionSet<AsTextFlag>) const;
+
+private:
+    friend struct IPC::ArgumentCoder<DrawFreeformGradient>;
+
+    const Ref<FreeformGradient> m_gradient;
+    FloatRect m_destination;
+};
+
 class DrawMeshGradient {
 public:
     static constexpr ASCIILiteral name = "draw-mesh-gradient"_s;
 
-    DrawMeshGradient(MeshGradient& gradient, const FloatRect& destination)
-        : m_gradient(gradient)
+    DrawMeshGradient(Ref<MeshGradient>&& gradient, const FloatRect& destination)
+        : m_gradient(WTF::move(gradient))
         , m_destination(destination)
     {
     }
@@ -942,6 +1086,8 @@ public:
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
 
 private:
+    friend struct IPC::ArgumentCoder<DrawMeshGradient>;
+
     const Ref<MeshGradient> m_gradient;
     FloatRect m_destination;
 };
@@ -1124,8 +1270,8 @@ class FillRectWithGradient {
 public:
     static constexpr ASCIILiteral name = "fill-rect-with-gradient"_s;
 
-    WEBCORE_EXPORT FillRectWithGradient(const FloatRect&, Gradient&);
-    WEBCORE_EXPORT FillRectWithGradient(FloatRect&&, Ref<Gradient>&&);
+    WEBCORE_EXPORT FillRectWithGradient(const FloatRect&, const Gradient&);
+    WEBCORE_EXPORT FillRectWithGradient(FloatRect&&, Ref<const Gradient>&&);
 
     const FloatRect& rect() const LIFETIME_BOUND { return m_rect; }
     const Gradient& gradient() const { return m_gradient; }
@@ -1137,15 +1283,15 @@ private:
     friend struct IPC::ArgumentCoder<FillRectWithGradient>;
 
     FloatRect m_rect;
-    const Ref<Gradient> m_gradient;
+    const Ref<const Gradient> m_gradient;
 };
 
 class FillRectWithGradientAndSpaceTransform {
 public:
     static constexpr ASCIILiteral name = "fill-rect-with-gradient-and-space-transform"_s;
 
-    WEBCORE_EXPORT FillRectWithGradientAndSpaceTransform(const FloatRect&, Gradient&, const AffineTransform&, GraphicsContext::RequiresClipToRect);
-    WEBCORE_EXPORT FillRectWithGradientAndSpaceTransform(FloatRect&&, Ref<Gradient>&&, AffineTransform&&, GraphicsContext::RequiresClipToRect);
+    WEBCORE_EXPORT FillRectWithGradientAndSpaceTransform(const FloatRect&, const Gradient&, const AffineTransform&, GraphicsContext::RequiresClipToRect);
+    WEBCORE_EXPORT FillRectWithGradientAndSpaceTransform(FloatRect&&, Ref<const Gradient>&&, AffineTransform&&, GraphicsContext::RequiresClipToRect);
 
     const FloatRect& rect() const LIFETIME_BOUND { return m_rect; }
     const Gradient& gradient() const { return m_gradient; }
@@ -1159,7 +1305,7 @@ private:
     friend struct IPC::ArgumentCoder<FillRectWithGradientAndSpaceTransform>;
 
     FloatRect m_rect;
-    const Ref<Gradient> m_gradient;
+    const Ref<const Gradient> m_gradient;
     AffineTransform m_gradientSpaceTransform;
     GraphicsContext::RequiresClipToRect m_requiresClipToRect;
 };
@@ -1381,26 +1527,6 @@ private:
     float m_deviceScaleFactor;
     ControlStyle m_style;
 };
-
-#if USE(CG)
-
-class ApplyStrokePattern {
-public:
-    static constexpr ASCIILiteral name = "apply-stroke-pattern"_s;
-
-    WEBCORE_EXPORT void apply(GraphicsContext&) const;
-    void dump(TextStream&, OptionSet<AsTextFlag>) const { }
-};
-
-class ApplyFillPattern {
-public:
-    static constexpr ASCIILiteral name = "apply-fill-pattern"_s;
-
-    WEBCORE_EXPORT void apply(GraphicsContext&) const;
-    void dump(TextStream&, OptionSet<AsTextFlag>) const { }
-};
-
-#endif
 
 class ApplyDeviceScaleFactor {
 public:

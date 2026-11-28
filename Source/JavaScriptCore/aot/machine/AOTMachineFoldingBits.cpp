@@ -400,7 +400,7 @@ static unsigned bitFoldNumberOfLowWordsRead(const Operation* wide)
 }
 
 template<typename Answer, typename IsAskedAbout, typename AnswerFor>
-static Answer bitFoldAnswerOperandsFirst(Operation* root, UncheckedKeyHashMap<Operation*, Answer>& answers, const IsAskedAbout& isAskedAbout, const AnswerFor& answerFor)
+static Answer bitFoldAnswerOperandsFirst(Operation* root, HashMap<Operation*, Answer>& answers, const IsAskedAbout& isAskedAbout, const AnswerFor& answerFor)
 {
     Vector<Operation*, 16> pending;
     pending.append(root);
@@ -459,7 +459,7 @@ Operation* foldLowWord(Builder& builder, Operation* root)
         costs.add(root, costOfRoot);
     }
 
-    UncheckedKeyHashMap<Operation*, Operation*> lowWords;
+    HashMap<Operation*, Operation*> lowWords;
     auto isMadeOfLowWords = [&](Operation* wide) {
         if (!readsLowWords(wide) || lowWords.contains(wide))
             return readsLowWords(wide);

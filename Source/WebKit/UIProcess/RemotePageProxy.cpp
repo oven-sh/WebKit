@@ -179,9 +179,7 @@ void RemotePageProxy::disconnect(ShouldSendCloseMessage shouldSendCloseMessage)
         m_isReceivingXRMessages = false;
     }
 #endif
-#if ASSERT_ENABLED
     m_disconnected = true;
-#endif
 }
 
 void RemotePageProxy::injectPageIntoNewProcess()
@@ -241,26 +239,18 @@ void RemotePageProxy::injectPageIntoNewProcess()
         ), 0
     );
 
+    page->sendPageLevelStorageAccessToProcess(m_process, m_webPageID);
+
     // frameTreeCreationParameters above contains the main frame's current frameViewportInfo.
     m_lastSentMainFrameViewportInfo = protect(page->mainFrame())->frameViewportInfo();
 
     WebPageInspectorController::pageWasAddedToProcess(protect(page->browsingContextGroup()), m_process, m_webPageID);
 }
 
-void RemotePageProxy::processDidTerminate(WebProcessProxy& process, ProcessTerminationReason reason)
+void RemotePageProxy::processDidTerminate()
 {
     m_processActivityState->reset();
     m_processActivityState->dropNetworkActivity();
-
-    RefPtr page = m_page.get();
-    if (!page)
-        return;
-    page->stopAllURLSchemeTasks(&process);
-    if (RefPtr drawingArea = page->drawingArea())
-        drawingArea->remotePageProcessDidTerminate(process.coreProcessIdentifier());
-    if (RefPtr mainFrame = page->mainFrame())
-        mainFrame->remoteProcessDidTerminate(process, WebFrameProxy::ClearFrameTreeSyncData::Yes);
-    page->dispatchProcessDidTerminate(process, reason);
 }
 
 RemotePageProxy::~RemotePageProxy()

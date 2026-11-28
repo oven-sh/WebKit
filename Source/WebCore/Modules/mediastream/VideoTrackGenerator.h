@@ -26,10 +26,12 @@
 
 #if ENABLE(MEDIA_STREAM) && ENABLE(WEB_CODECS)
 
+#include "FrameRateMonitor.h"
 #include "RealtimeMediaSource.h"
 #include "ScriptExecutionContextIdentifier.h"
 #include "WritableStreamSink.h"
 #include <wtf/RefCounted.h>
+#include <wtf/ThreadAssertions.h>
 
 namespace WebCore {
 
@@ -57,6 +59,7 @@ private:
     class Source final : public RealtimeMediaSource, public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<Source, WTF::DestructionThread::MainRunLoop> {
     public:
         static Ref<Source> create(ScriptExecutionContextIdentifier identifier) { return adoptRef(*new Source(identifier)); }
+        ~Source();
 
         WTF_ABSTRACT_THREAD_SAFE_REF_COUNTED_AND_CAN_MAKE_WEAK_PTR_IMPL;
 
@@ -70,6 +73,7 @@ private:
         const RealtimeMediaSourceCapabilities& capabilities() LIFETIME_BOUND final { return m_capabilities; }
         const RealtimeMediaSourceSettings& settings() LIFETIME_BOUND final { return m_settings; }
         void endProducingData() final;
+        double observedFrameRate() const final { return m_frameRateMonitor.observedFrameRate(); }
 
         ScriptExecutionContextIdentifier m_contextIdentifier;
         WeakPtr<WritableStream> m_writable;
@@ -78,6 +82,8 @@ private:
         RealtimeMediaSourceSettings m_settings;
         IntSize m_videoFrameSize;
         IntSize m_maxVideoFrameSize;
+        FrameRateMonitor m_frameRateMonitor { [](auto) { } };
+        NO_UNIQUE_ADDRESS ThreadLikeAssertion m_workerThread;
     };
 
     class Sink final : public WritableStreamSink {

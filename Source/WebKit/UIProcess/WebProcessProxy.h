@@ -49,6 +49,7 @@
 #include "WebPageProxyIdentifier.h"
 #include "WebPermissionControllerProxy.h"
 #include "WebProcessCreationParameters.h"
+#include <WebCore/CertificateInfo.h>
 #include <WebCore/CrossOriginMode.h>
 #include <WebCore/FrameIdentifier.h>
 #include <WebCore/MediaProducer.h>
@@ -162,6 +163,7 @@ class WebsiteDataStore;
 struct CoreIPCAuditToken;
 struct GPUProcessConnectionParameters;
 struct ModelProcessConnectionParameters;
+struct PageProcessTermination;
 struct ScriptMessageHandlerIdentifierType;
 struct UserContentControllerIdentifierType;
 struct UserMessage;
@@ -194,6 +196,7 @@ enum WebProcessWithMediaStreamingCounterType { };
 using WebProcessWithMediaStreamingCounter = RefCounter<WebProcessWithMediaStreamingCounterType>;
 using WebProcessWithMediaStreamingToken = WebProcessWithMediaStreamingCounter::Token;
 enum class CheckBackForwardList : bool { No, Yes };
+enum class LockdownMode : bool { Disabled, Enabled };
 
 class WebProcessProxy final : public AuxiliaryProcessProxy {
     WTF_MAKE_TZONE_ALLOCATED(WebProcessProxy);
@@ -206,7 +209,7 @@ public:
     enum class IsPrewarmed : bool { No, Yes };
 
     enum class ShouldLaunchProcess : bool { No, Yes };
-    enum class LockdownMode : bool { Disabled, Enabled };
+    using LockdownMode = WebKit::LockdownMode;
     enum class EnableWebAssemblyDebugger : bool { No, Yes };
     enum class CreateSandboxExtensionForNetworkingProcess : bool { No, Yes };
 
@@ -224,8 +227,8 @@ public:
     ~WebProcessProxy();
 
     static void forWebPagesWithOrigin(PAL::SessionID, const WebCore::SecurityOriginData&, NOESCAPE const Function<void(WebPageProxy&)>&);
-    void addAllowedFirstPartyForCookies(const WebCore::RegistrableDomain&, LoadedWebArchive);
-    const std::pair<LoadedWebArchive, HashSet<WebCore::RegistrableDomain>>& allowedFirstPartiesForCookiesData() const { return m_allowedFirstPartiesForCookies; }
+    void addAllowedFirstPartyForCookies(const WebCore::Site&, LoadedWebArchive);
+    const std::pair<LoadedWebArchive, HashSet<WebCore::Site>>& allowedFirstPartiesForCookiesData() const { return m_allowedFirstPartiesForCookies; }
     bool hasCommittedWebArchive() const { return m_hasCommittedWebArchive; }
     void setHasCommittedWebArchive() { m_hasCommittedWebArchive = true; }
 
@@ -271,6 +274,9 @@ public:
     enum class WillShutDown : bool { No, Yes };
     void setIsInProcessCache(bool, WillShutDown = WillShutDown::No);
     bool isInProcessCache() const { return m_isInProcessCache; }
+
+    WebCore::CertificateInfo certificateInfoForHostAndPort(const String&) const;
+    void setCertificateInfoForHostAndPort(String&&, WebCore::CertificateInfo&&);
 
     void enableRemoteWorkers(RemoteWorkerType, const WebUserContentControllerProxy&);
     void disableRemoteWorkers(OptionSet<RemoteWorkerType>);
@@ -406,10 +412,13 @@ public:
     void didPostMessage(WebPageProxyIdentifier, UserContentControllerIdentifier, FrameInfoData&&, ScriptMessageHandlerIdentifier, JavaScriptEvaluationResult&&, CompletionHandler<void(std::expected<WebKit::JavaScriptEvaluationResult, String>&&)>&&);
     void didPostLegacySynchronousMessage(WebPageProxyIdentifier, UserContentControllerIdentifier, FrameInfoData&&, ScriptMessageHandlerIdentifier, JavaScriptEvaluationResult&&, CompletionHandler<void(std::expected<JavaScriptEvaluationResult, String>&&)>&&);
 
+    void ensureMediaKeysStorageDirectory(WebCore::FrameIdentifier);
+
     void enableSuddenTermination();
     void disableSuddenTermination();
     bool isSuddenTerminationEnabled() { return !m_numberOfTimesSuddenTerminationWasDisabled; }
 
+    bool detectAndHandleTermination();
     void requestTermination(ProcessTerminationReason, std::optional<IPC::MessageName> invalidMessageName = std::nullopt);
 
     RefPtr<API::Object> transformHandlesToObjects(API::Object*);
@@ -789,7 +798,7 @@ private:
 #if ENABLE(GPU_PROCESS)
     void createGPUProcessConnection(GPUProcessConnectionIdentifier, IPC::Connection::Handle&&);
     void gpuProcessConnectionDidBecomeUnresponsive(GPUProcessConnectionIdentifier);
-    void drawFrameToSnapshot(WebCore::FrameIdentifier, const WebCore::IntRect& rectRelativeToVisibleContent, RemoteSnapshotIdentifier, WebCore::RenderingMode);
+    void drawFrameToSnapshot(WebCore::FrameIdentifier, const WebCore::IntRect& rectRelativeToVisibleContent, RemoteSnapshotIdentifier, WebCore::RenderingMode, const WebCore::FloatSize& scale);
 #endif
 
 #if HAVE(IOSURFACE)
@@ -810,6 +819,7 @@ private:
     void updateBackgroundResponsivenessTimer();
 
     void processDidTerminateOrFailedToLaunch(ProcessTerminationReason);
+    Vector<PageProcessTermination> classifyAffectedPagesUponTermination() const;
 
     void didStartRunningProcess();
     void didStopRunningProcess();
@@ -871,41 +881,11 @@ private:
     void sendMessageToInspector(WebCore::ServiceWorkerIdentifier, String&& message);
 #endif
 
-    enum class IsWeak : bool { No, Yes };
-    template<typename T> class WeakOrStrongPtr {
-    public:
-        WeakOrStrongPtr(T& object, IsWeak isWeak)
-            : m_isWeak(isWeak)
-            , m_weakObject(object)
-        {
-            updateStrongReference();
-        }
-
-        void setIsWeak(IsWeak isWeak)
-        {
-            m_isWeak = isWeak;
-            updateStrongReference();
-        }
-
-        T* get() const { return m_weakObject.get(); }
-        T* operator->() const { return m_weakObject.get(); }
-        T& operator*() const { return *m_weakObject; }
-        explicit operator bool() const { return !!m_weakObject; }
-
-    private:
-        void updateStrongReference()
-        {
-            m_strongObject = m_isWeak == IsWeak::Yes ? nullptr : m_weakObject.get();
-        }
-
-        IsWeak m_isWeak;
-        WeakPtr<T> m_weakObject;
-        RefPtr<T> m_strongObject;
-    };
-
     const UniqueRef<BackgroundProcessResponsivenessTimer> m_backgroundResponsivenessTimer;
     
-    WeakOrStrongPtr<WebProcessPool> m_processPool; // Pre-warmed and cached processes do not hold a strong reference to their pool.
+    const WeakPtr<WebProcessPool> m_processPool;
+    // Keeps m_processPool alive. Null for pre-warmed and cached processes, since they must not keep their pool alive.
+    RefPtr<WebProcessPool> m_processPoolKeepAlive;
 
     bool m_mayHaveUniversalFileReadSandboxExtension { false }; // True if a read extension for "/" was ever granted - we don't track whether WebProcess still has it.
     HashSet<String> m_localPathsWithAssumedReadAccess;
@@ -951,8 +931,9 @@ private:
     // and for remote-worker processes, and it can move to MultipleSites.
     enum class HostedSiteTracking : uint8_t { NotStarted, Recorded, AnySite };
     HostedSiteTracking m_hostedSiteTracking { HostedSiteTracking::NotStarted };
-    std::pair<LoadedWebArchive, HashSet<WebCore::RegistrableDomain>> m_allowedFirstPartiesForCookies { LoadedWebArchive::No, { } };
+    std::pair<LoadedWebArchive, HashSet<WebCore::Site>> m_allowedFirstPartiesForCookies { LoadedWebArchive::No, { } };
     bool m_isInProcessCache { false };
+    HashMap<String, WebCore::CertificateInfo> m_hostAndPortToCertificateInfo;
     bool m_isEligibleForWebProcessCache { true };
     std::optional<WebCore::SecurityOriginData> m_coopCacheOrigin;
     bool m_isCOOPCacheOriginUnconfirmed { false };

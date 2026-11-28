@@ -61,38 +61,40 @@ enum class CompositingUpdateType {
     OnCompositedScroll
 };
 
-enum class CompositingReason {
-    Transform3D                            = 1 << 0,
-    Video                                  = 1 << 1,
-    Canvas                                 = 1 << 2,
-    Plugin                                 = 1 << 3,
-    IFrame                                 = 1 << 4,
-    BackfaceVisibilityHidden               = 1 << 5,
-    ClipsCompositingDescendants            = 1 << 6,
-    Animation                              = 1 << 7,
-    Filters                                = 1 << 8,
-    PositionFixed                          = 1 << 9,
-    PositionSticky                         = 1 << 10,
-    OverflowScrolling                      = 1 << 11,
-    Stacking                               = 1 << 12,
-    Overlap                                = 1 << 13,
-    OverflowScrollPositioning              = 1 << 14,
-    NegativeZIndexChildren                 = 1 << 15,
-    TransformWithCompositedDescendants     = 1 << 16,
-    OpacityWithCompositedDescendants       = 1 << 17,
-    MaskWithCompositedDescendants          = 1 << 18,
-    ReflectionWithCompositedDescendants    = 1 << 19,
-    FilterWithCompositedDescendants        = 1 << 20,
-    BlendingWithCompositedDescendants      = 1 << 21,
-    Perspective                            = 1 << 22,
-    Preserve3D                             = 1 << 23,
-    WillChange                             = 1 << 24,
-    Root                                   = 1 << 25,
-    IsolatesCompositedBlendingDescendants  = 1 << 26,
-    Model                                  = 1 << 27,
-    BackdropRoot                           = 1 << 28,
-    AnchorPositioning                      = 1 << 29,
-    SpatialPortal                          = 1 << 30,
+enum class CompositingReason : uint64_t {
+    Transform3D                            = 1LLU << 0,
+    Video                                  = 1LLU << 1,
+    Canvas                                 = 1LLU << 2,
+    Plugin                                 = 1LLU << 3,
+    IFrame                                 = 1LLU << 4,
+    BackfaceVisibilityHidden               = 1LLU << 5,
+    ClipsCompositingDescendants            = 1LLU << 6,
+    Animation                              = 1LLU << 7,
+    Filters                                = 1LLU << 8,
+    PositionFixed                          = 1LLU << 9,
+    PositionSticky                         = 1LLU << 10,
+    OverflowScrolling                      = 1LLU << 11,
+    Stacking                               = 1LLU << 12,
+    Overlap                                = 1LLU << 13,
+    OverflowScrollPositioning              = 1LLU << 14,
+    NegativeZIndexChildren                 = 1LLU << 15,
+    TransformWithCompositedDescendants     = 1LLU << 16,
+    OpacityWithCompositedDescendants       = 1LLU << 17,
+    MaskWithCompositedDescendants          = 1LLU << 18,
+    ReflectionWithCompositedDescendants    = 1LLU << 19,
+    FilterWithCompositedDescendants        = 1LLU << 20,
+    BlendingWithCompositedDescendants      = 1LLU << 21,
+    Perspective                            = 1LLU << 22,
+    Preserve3D                             = 1LLU << 23,
+    WillChange                             = 1LLU << 24,
+    Root                                   = 1LLU << 25,
+    IsolatesCompositedBlendingDescendants  = 1LLU << 26,
+    Model                                  = 1LLU << 27,
+    BackdropRoot                           = 1LLU << 28,
+    AnchorPositioning                      = 1LLU << 29,
+    SpatialPortal                          = 1LLU << 30,
+    SpatialPortalHosting                   = 1LLU << 31,
+    ScreenCaptureProtection                = 1LLU << 32,
 };
 
 enum class ScrollCoordinationRole {
@@ -331,7 +333,11 @@ public:
 
 #if ENABLE(SPATIAL_PORTAL)
     static bool isSpatialPortal(const RenderObject&);
+    static bool isPromotedSpatialPortalChild(const RenderLayer&);
+    static RenderLayer* promotedSpatialPortalChildForLayer(RenderLayer&);
 #endif
+
+    bool isRunningTransformAnimation(RenderLayerModelObject&) const;
 
     static RenderLayerCompositor* frameContentsCompositor(RenderWidget&);
 
@@ -352,6 +358,7 @@ public:
     void rootLayerConfigurationChanged();
 
     void widgetDidChangeSize(RenderWidget&);
+    bool canSkipRequirementsTraversalForStickyOffsetChange(const RenderLayer&) const;
 
     WEBCORE_EXPORT String layerTreeAsText(OptionSet<LayerTreeAsTextOptions> = { }) const;
     WEBCORE_EXPORT String trackedRepaintRectsAsText() const;
@@ -457,6 +464,9 @@ private:
     bool backdropRootIsOpaque(const GraphicsLayer*) const override;
     bool isFlushingLayers() const override { return m_flushingLayers; }
     bool isTrackingRepaints() const override { return m_isTrackingRepaints; }
+#if ENABLE(THREADED_ANIMATIONS)
+    std::optional<MonotonicTime> renderingUpdateTimestamp() const override;
+#endif
 
     // Copy the accelerated compositing related flags from Settings
     void cacheAcceleratedCompositingFlags();
@@ -511,7 +521,6 @@ private:
     void adjustOverflowScrollbarContainerLayers(RenderLayer& stackingContextLayer, const Vector<RenderLayer*>& overflowScrollLayers, const Vector<RenderLayer*>& layersClippedByScrollers, Vector<Ref<GraphicsLayer>>&);
 
     bool layerHas3DContent(const RenderLayer&) const;
-    bool isRunningTransformAnimation(RenderLayerModelObject&) const;
 
     bool allowBackingStoreDetachingForFixedPosition(RenderLayer&, const LayoutRect& absoluteBounds);
 
@@ -563,6 +572,8 @@ private:
     bool requiresCompositingForWillChange(RenderLayerModelObject&) const;
     NODELETE bool requiresCompositingForModel(RenderLayerModelObject&) const;
     NODELETE bool requiresCompositingForSpatialPortal(RenderLayerModelObject&) const;
+    bool requiresCompositingForSpatialPortalHosting(const RenderLayer&) const;
+    bool requiresCompositingForScreenCaptureProtection(RenderLayerModelObject&) const;
 
     // Layout-dependent
     bool requiresCompositingForPlugin(RenderLayerModelObject&, RequiresCompositingData&) const;
@@ -647,7 +658,7 @@ private:
 
     void updateCompositingForLayerTreeAsTextDump();
 
-    RenderView& m_renderView;
+    const CheckedRef<RenderView> m_renderView;
     Timer m_updateCompositingLayersTimer;
     Timer m_updateRenderingTimer;
 

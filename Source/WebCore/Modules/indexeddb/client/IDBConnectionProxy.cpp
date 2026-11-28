@@ -41,11 +41,11 @@
 #include "ScriptExecutionContext.h"
 #include "SecurityOrigin.h"
 #include "TransactionOperation.h"
+#include <wtf/Borrow.h>
 #include <wtf/MainThread.h>
 #include <wtf/TZoneMallocInlines.h>
 
-namespace WebCore {
-namespace IDBClient {
+namespace WebCore::IDBClient {
 
 template<typename T, typename... Parameters, typename... Arguments>
 static void performCallbackOnOriginThread(Locker<Lock>& locker, Ref<T>&& object, void (T::*method)(Parameters...), Arguments&&... arguments) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
@@ -436,7 +436,7 @@ void IDBConnectionProxy::didAbortTransaction(const IDBResourceIdentifier& transa
 
 bool IDBConnectionProxy::hasRecordOfTransaction(const IDBTransaction& transaction) const
 {
-    ASSERT(m_transactionMapLock.isLocked());
+    RELEASE_ASSERT(m_transactionMapLock.isLocked());
 
     auto identifier = transaction.info().identifier();
     return m_pendingTransactions.contains(identifier) || m_committingTransactions.contains(identifier) || m_abortingTransactions.contains(identifier);
@@ -488,7 +488,7 @@ void IDBConnectionProxy::connectionToServerLost(const IDBError& error)
         openDBRequestIdentifiers = copyToVector(m_openDBRequestMap.keys());
     }
 
-    for (auto& requestIdentifier : openDBRequestIdentifiers) {
+    for (auto& requestIdentifier : borrow(openDBRequestIdentifiers)) {
         Locker locker { m_openDBRequestMapLock };
         RefPtr request = m_openDBRequestMap.get(requestIdentifier);
         if (!request)
@@ -504,7 +504,7 @@ void IDBConnectionProxy::connectionToServerLost(const IDBError& error)
         infoCallbackIdentifiers = copyToVector(m_databaseInfoCallbacks.keys());
     }
 
-    for (auto& requestIdentifier : infoCallbackIdentifiers)
+    for (auto& requestIdentifier : borrow(infoCallbackIdentifiers))
         didGetAllDatabaseNamesAndVersions(requestIdentifier, { });
 }
 
@@ -577,7 +577,7 @@ void IDBConnectionProxy::forgetActiveOperations(const Vector<Ref<TransactionOper
 {
     Locker locker { m_transactionOperationLock };
 
-    for (auto& operation : operations)
+    for (auto& operation : borrow(operations))
         m_activeOperations.remove(operation->identifier());
 }
 
@@ -689,5 +689,4 @@ void IDBConnectionProxy::setContextSuspended(ScriptExecutionContext& currentCont
     }
 }
 
-} // namesapce IDBClient
-} // namespace WebCore
+} // namespace WebCore::IDBClient

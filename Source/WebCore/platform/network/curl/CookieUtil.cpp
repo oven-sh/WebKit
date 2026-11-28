@@ -107,7 +107,14 @@ static void parseCookieAttributes(const String& attribute, bool& hasMaxAge, Cook
         result.httpOnly = true;
     else if (equalLettersIgnoringASCIICase(attributeName, "secure"_s))
         result.secure = true;
-    else if (equalLettersIgnoringASCIICase(attributeName, "domain"_s)) {
+    else if (equalLettersIgnoringASCIICase(attributeName, "samesite"_s)) {
+        if (equalLettersIgnoringASCIICase(attributeValue, "lax"_s))
+            result.sameSite = Cookie::SameSitePolicy::Lax;
+        else if (equalLettersIgnoringASCIICase(attributeValue, "strict"_s))
+            result.sameSite = Cookie::SameSitePolicy::Strict;
+        else
+            result.sameSite = Cookie::SameSitePolicy::None;
+    } else if (equalLettersIgnoringASCIICase(attributeName, "domain"_s)) {
         if (attributeValue.isEmpty())
             return;
 
@@ -131,7 +138,7 @@ static void parseCookieAttributes(const String& attribute, bool& hasMaxAge, Cook
         }
     } else if (equalLettersIgnoringASCIICase(attributeName, "expires"_s) && !hasMaxAge) {
         // FIXME: This code passes a UTF-8 buffer to a function that expects to parse Latin1.
-        if (auto expiryTime = parseExpiresMS(byteCast<Latin1Character>(attributeValue.utf8().span()))) {
+        if (auto expiryTime = parseExpiresMS(byteCast<Latin1Character>(makeUTF8CString(attributeValue).span()))) {
             result.expires = expiryTime.value();
             result.session = false;
         } else if (!hasMaxAge) {
@@ -177,8 +184,10 @@ std::optional<Cookie> parseCookieHeader(const String& cookieLine)
     bool hasMaxAge = false;
     cookie.session = true;
 
-    for (auto attribute : cookieLine.splitAllowingEmptyEntries(';'))
-        parseCookieAttributes(attribute, hasMaxAge, cookie);
+    if (separatorPosition != notFound) {
+        for (auto attribute : cookieLine.substring(separatorPosition + 1).splitAllowingEmptyEntries(';'))
+            parseCookieAttributes(attribute, hasMaxAge, cookie);
+    }
 
     return cookie;
 }

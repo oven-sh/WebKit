@@ -64,7 +64,7 @@ void WebBackForwardCache::deref() const
 
 inline void WebBackForwardCache::removeOldestEntry()
 {
-    ASSERT(!m_itemsWithCachedPage.isEmptyIgnoringNullReferences());
+    ASSERT(!m_itemsWithCachedPage.computeIsEmpty());
     if (RefPtr item = m_itemsWithCachedPage.tryTakeFirst())
         item->setBackForwardCacheEntry(nullptr);
 }
@@ -102,17 +102,20 @@ void WebBackForwardCache::addEntry(WebBackForwardListItem& item, Ref<WebBackForw
         removeOldestEntry();
     ASSERT(size() <= capacity());
 
-    RELEASE_LOG(BackForwardCache, "WebBackForwardCache::addEntry: item=%s, hasSuspendedPage=%d, size=%u/%u", item.identifier().toString().utf8(), !!item.suspendedPage(), size(), capacity());
+    RELEASE_LOG(BackForwardCache, "WebBackForwardCache::addEntry: item=%s, hasSuspendedPage=%d, size=%u/%u", makeUTF8CString(item.identifier().toString()), !!item.suspendedPage(), size(), capacity());
 }
 
 void WebBackForwardCache::addEntry(WebBackForwardListItem& item, Ref<SuspendedPageProxy>&& suspendedPage)
 {
     auto coreProcessIdentifier = suspendedPage->process().coreProcessIdentifier();
 
-    // Share the SuspendedPageProxy with existing entries in the same process.
-    // When a process is suspended, ALL items cached in that process need access
-    // to the SuspendedPageProxy to unsuspend it during back/forward navigation.
+    // Share the SuspendedPageProxy with existing entries of the same page in the same process.
+    // When a process is suspended, ALL items of that page cached in that process need access
+    // to the SuspendedPageProxy to unsuspend it during back/forward navigation. Entries of other
+    // pages are left alone: their suspended pages belong to those pages.
     for (RefPtr otherItem : m_itemsWithCachedPage) {
+        if (otherItem->pageID() != item.pageID())
+            continue;
         if (RefPtr entry = otherItem->backForwardCacheEntryForProcess(coreProcessIdentifier); entry && !entry->suspendedPage())
             entry->setSuspendedPage(suspendedPage.copyRef());
     }
@@ -129,7 +132,7 @@ void WebBackForwardCache::removeEntry(WebBackForwardListItem& item)
 {
     ASSERT(m_itemsWithCachedPage.contains(item));
     m_itemsWithCachedPage.remove(item);
-    RELEASE_LOG(BackForwardCache, "WebBackForwardCache::removeEntry: item=%s, size=%u/%u", item.identifier().toString().utf8(), size(), capacity());
+    RELEASE_LOG(BackForwardCache, "WebBackForwardCache::removeEntry: item=%s, size=%u/%u", makeUTF8CString(item.identifier().toString()), size(), capacity());
     item.setBackForwardCacheEntry(nullptr); // item may be dead after this call.
 }
 
@@ -140,9 +143,17 @@ void WebBackForwardCache::removeEntry(SuspendedPageProxy& suspendedPage)
     });
 }
 
+void WebBackForwardCache::removeEntriesForFrameItem(WebPageProxyIdentifier pageID, WebCore::BackForwardFrameItemIdentifier frameItemID)
+{
+    removeEntriesMatching([&](auto& item) {
+        RefPtr entry = item.backForwardCacheEntry();
+        return item.pageID() == pageID && entry && entry->backForwardFrameItemID() == frameItemID;
+    });
+}
+
 Ref<SuspendedPageProxy> WebBackForwardCache::takeSuspendedPage(WebBackForwardListItem& item)
 {
-    RELEASE_LOG(BackForwardCache, "WebBackForwardCache::takeSuspendedPage: item=%s", item.identifier().toString().utf8());
+    RELEASE_LOG(BackForwardCache, "WebBackForwardCache::takeSuspendedPage: item=%s", makeUTF8CString(item.identifier().toString()));
 
     ASSERT(m_itemsWithCachedPage.contains(item));
     ASSERT(item.backForwardCacheEntry());
@@ -150,11 +161,12 @@ Ref<SuspendedPageProxy> WebBackForwardCache::takeSuspendedPage(WebBackForwardLis
     auto processIdentifier = item.backForwardCacheEntry()->processIdentifier();
     Ref suspendedPage = protect(item.backForwardCacheEntry())->takeSuspendedPage();
 
-    // Clear SuspendedPageProxy from other entries in the same process.
+    // Clear SuspendedPageProxy from other entries of the same page in the same process.
     // The process is about to be unsuspended, so these entries become
-    // regular in-process BFCache entries.
+    // regular in-process BFCache entries. Entries of other pages keep their
+    // suspended pages: unsuspending this page does not restore those.
     for (RefPtr otherItem : m_itemsWithCachedPage) {
-        if (otherItem.get() == &item)
+        if (otherItem.get() == &item || otherItem->pageID() != item.pageID())
             continue;
         if (RefPtr entry = otherItem->backForwardCacheEntryForProcess(processIdentifier); entry && entry->suspendedPage())
             entry->clearSuspendedPage();

@@ -362,7 +362,7 @@ std::span<uint8_t> Buffer::getMappedRangeSpan(uint64_t apiOffset, std::optional<
     return getBufferContents().subspan(offset);
 }
 
-std::span<uint8_t> Buffer::mappedRangeForCAPI(uint64_t offset, std::optional<uint64_t> size)
+std::span<uint8_t> Buffer::persistentMappedRange(uint64_t offset, std::optional<uint64_t> size)
 {
     size_t rangeSize = size ? *size : computeRangeSize(initialSize(), offset);
     if (!isValid() || !validateMappedRangeBounds(offset, rangeSize) || !m_buffer.contents)
@@ -493,19 +493,25 @@ void Buffer::setLabel(String&& label)
     m_buffer.label = label.createNSString().get();
 }
 
-void Buffer::generateAValidationError()
-{
-    generateAValidationError("Buffer state was not unmapped"_s);
-}
-
-void Buffer::generateAValidationError(String&& message)
-{
-    m_device->generateAValidationError(WTF::move(message));
-}
-
 uint64_t Buffer::initialSize() const
 {
     return m_initialSize;
+}
+
+WebGPU::BufferMapState Buffer::mapState() const
+{
+    // https://gpuweb.github.io/gpuweb/#dom-gpubuffer-mapstate
+    switch (m_state) {
+    case State::Mapped:
+    case State::MappedAtCreation:
+        return WebGPU::BufferMapState::Mapped;
+    case State::MappingPending:
+        return WebGPU::BufferMapState::Pending;
+    case State::Unmapped:
+    case State::Destroyed:
+        return WebGPU::BufferMapState::Unmapped;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 uint64_t Buffer::currentSize() const
@@ -654,6 +660,8 @@ void Buffer::takeSlowIndexValidationPath(CommandBuffer& commandBuffer, uint32_t 
     Ref queue = m_device->getQueue();
     queue->waitForAllCommitedWorkToComplete();
     queue->synchronizeResourceAndWait(m_buffer);
+    if (vertexCount == RenderBundleEncoder::invalidVertexInstanceCount)
+        vertexCount -= primitiveOffset;
     bool verified = false;
     if (indexType == MTLIndexTypeUInt16)
         verified = verifyIndexBufferData<uint16_t>(m_buffer, firstIndex, indexCount, vertexCount, primitiveOffset);
@@ -736,7 +744,7 @@ void Buffer::indirectBufferInvalidated(CommandEncoder& commandEncoder)
     });
 }
 
-static size_t computeSize(HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>& encoders, Device& device)
+static size_t computeSize(HashSet<uint64_t>& encoders, Device& device)
 {
     encoders.removeIf([&](uint64_t encoderId) {
         return !device.commandEncoderFromIdentifier(encoderId);
@@ -798,108 +806,3 @@ void Buffer::clearMustTakeSlowIndexValidationPath()
 }
 
 } // namespace WebGPU::Metal
-
-#pragma mark WGPU Stubs
-
-NODELETE void wgpuBufferAddRef(WGPUBuffer buffer)
-{
-    WebGPU::Metal::fromAPI(buffer).ref();
-}
-
-void wgpuBufferRelease(WGPUBuffer buffer)
-{
-    @autoreleasepool {
-        WebGPU::Metal::fromAPI(buffer).deref();
-    }
-}
-
-void wgpuBufferDestroy(WGPUBuffer buffer)
-{
-    @autoreleasepool {
-        protect(WebGPU::Metal::fromAPI(buffer))->destroy();
-    }
-}
-
-WGPUBufferMapState wgpuBufferGetMapState(WGPUBuffer buffer)
-{
-    @autoreleasepool {
-        switch (protect(WebGPU::Metal::fromAPI(buffer))->state()) {
-        case WebGPU::Metal::Buffer::State::Mapped:
-            return WGPUBufferMapState_Mapped;
-        case WebGPU::Metal::Buffer::State::MappedAtCreation:
-            return WGPUBufferMapState_Mapped;
-        case WebGPU::Metal::Buffer::State::MappingPending:
-            return WGPUBufferMapState_Pending;
-        case WebGPU::Metal::Buffer::State::Unmapped:
-            return WGPUBufferMapState_Unmapped;
-        case WebGPU::Metal::Buffer::State::Destroyed:
-            return WGPUBufferMapState_Unmapped;
-        }
-    }
-}
-
-void* wgpuBufferGetMappedRange(WGPUBuffer buffer, size_t offset, size_t size)
-{
-    @autoreleasepool {
-        return protect(WebGPU::Metal::fromAPI(buffer))->mappedRangeForCAPI(offset, WebGPU::Metal::mapSizeFromAPI(size)).data();
-    }
-}
-
-const void* wgpuBufferGetConstMappedRange(WGPUBuffer buffer, size_t offset, size_t size)
-{
-    @autoreleasepool {
-        return wgpuBufferGetMappedRange(buffer, offset, size);
-    }
-}
-
-// mapAsync() validates only the Read and Write bits of the mode, as in the WebGPU specification, so the
-// conversion drops unknown bits instead of failing.
-static OptionSet<WebGPU::MapMode> mapModeFromAPIIgnoringUnknownBits(WGPUMapMode mode)
-{
-    return *WebGPU::Metal::mapModeFromAPI(mode & (WGPUMapMode_Read | WGPUMapMode_Write));
-}
-
-WGPUFuture wgpuBufferMapAsync(WGPUBuffer buffer, WGPUMapMode mode, size_t offset, size_t size, WGPUBufferMapCallbackInfo callbackInfo)
-{
-    @autoreleasepool {
-        Ref protectedBuffer = WebGPU::Metal::fromAPI(buffer);
-        WebGPU::Metal::CAPIFuture future { protectedBuffer->device().instance() };
-        protectedBuffer->mapAsync(mapModeFromAPIIgnoringUnknownBits(mode), offset, WebGPU::Metal::mapSizeFromAPI(size), [callbackInfo, future](bool success) {
-            if (success)
-                callbackInfo.callback(WGPUMapAsyncStatus_Success, WebGPU::Metal::toAPI(""_s), callbackInfo.userdata1, callbackInfo.userdata2);
-            else
-                callbackInfo.callback(WGPUMapAsyncStatus_Error, WebGPU::Metal::toAPI("mapAsync failed"_s), callbackInfo.userdata1, callbackInfo.userdata2);
-            future.complete();
-        });
-        return future.future();
-    }
-}
-
-void wgpuBufferUnmap(WGPUBuffer buffer)
-{
-    @autoreleasepool {
-        protect(WebGPU::Metal::fromAPI(buffer))->unmap();
-    }
-}
-
-void wgpuBufferSetLabel(WGPUBuffer buffer, WGPUStringView label)
-{
-    @autoreleasepool {
-        protect(WebGPU::Metal::fromAPI(buffer))->setLabel(WebGPU::Metal::fromAPI(label));
-    }
-}
-
-// The size of the descriptor of the buffer.
-uint64_t wgpuBufferGetSize(WGPUBuffer buffer)
-{
-    @autoreleasepool {
-        return WebGPU::Metal::fromAPI(buffer).initialSize();
-    }
-}
-
-WGPUBufferUsage wgpuBufferGetUsage(WGPUBuffer buffer)
-{
-    @autoreleasepool {
-        return WebGPU::Metal::toAPI(WebGPU::Metal::fromAPI(buffer).usage());
-    }
-}

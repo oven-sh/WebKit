@@ -94,6 +94,7 @@
 #include "RenderTheme.h"
 #include "SVGImageElement.h"
 #include "ScriptDisallowedScope.h"
+#include "ScriptExecutionContext.h"
 #include "ScriptTrackingPrivacyCategory.h"
 #include "SecurityOrigin.h"
 #include "Settings.h"
@@ -264,7 +265,7 @@ NODELETE static TextBaseline fromCanvasTextBaseline(CanvasTextBaseline canvasTex
 
 static Color parseColorWithOverrideAlpha(const String& colorString, float alpha, CanvasBase& canvasBase)
 {
-    auto color = parseColor(colorString, canvasBase);
+    auto color = parseColor(colorString, canvasBase).color();
     if (!color.isValid())
         return color;
     return color.colorWithAlpha(alpha);
@@ -275,6 +276,10 @@ CanvasRenderingContext2DBase::CanvasRenderingContext2DBase(CanvasBase& canvas, C
     , m_stateStack(1)
     , m_usesCSSCompatibilityParseMode(usesCSSCompatibilityParseMode)
     , m_settings(WTF::move(settings))
+#if ENABLE(PIXEL_FORMAT_RGBA16F)
+    , m_canStoreEDRContent(allowExtendedColorSpace(pixelFormat()) == AllowExtendedColorSpace::Yes)
+    , m_shouldShowEDRContent(m_settings.toneMapping.mode != CanvasToneMappingMode::Standard)
+#endif
 {
     ASSERT(is2dBase());
 }
@@ -794,6 +799,9 @@ void CanvasRenderingContext2DBase::realizeSavesLoop()
 {
     ASSERT(m_unrealizedSaveCount);
     ASSERT(m_stateStack.size() >= 1);
+    // Set the brushes to match the styles before the saves, so that they still match after the restores. Otherwise
+    // each draw between repeated save(), fill/stroke...(), restore() would set them again.
+    effectiveDrawingContext();
     GraphicsContext* context = drawingContext();
     do {
         if (m_stateStack.size() > MaxSaveCount)
@@ -875,10 +883,9 @@ void CanvasRenderingContext2DBase::setStrokeColorImpl(Color&& color, String&& un
         return;
 
     realizeSaves();
-    if (auto* c = effectiveDrawingContext())
-        c->setStrokeColor(color);
     auto& state = modifiableState();
     state.strokeStyle = color;
+    state.drawingContextStyleVersion = std::nullopt;
     state.unparsedStrokeColor = WTF::move(unparsedColor);
 }
 
@@ -889,10 +896,9 @@ void CanvasRenderingContext2DBase::setFillColorImpl(Color&& color, String&& unpa
         return;
 
     realizeSaves();
-    if (auto* c = effectiveDrawingContext())
-        c->setFillColor(color);
     auto& state = modifiableState();
     state.fillStyle = color;
+    state.drawingContextStyleVersion = std::nullopt;
     state.unparsedFillColor = WTF::move(unparsedColor);
 }
 
@@ -1015,7 +1021,7 @@ void CanvasRenderingContext2DBase::setShadowBlur(float blur)
 
 void CanvasRenderingContext2DBase::setShadowColor(const String& colorString)
 {
-    Color color = parseColor(colorString, protect(canvasBase()));
+    Color color = parseColor(colorString, protect(canvasBase())).color();
     if (!color.isValid())
         return;
     if (state().shadowColor == color)
@@ -1073,7 +1079,7 @@ void CanvasRenderingContext2DBase::setLineDashOffset(double offset)
 
 void CanvasRenderingContext2DBase::applyLineDash() const
 {
-    GraphicsContext* c = effectiveDrawingContext();
+    GraphicsContext* c = effectiveDrawingContextNoSync();
     if (!c)
         return;
     auto& state = this->state();
@@ -1081,6 +1087,45 @@ void CanvasRenderingContext2DBase::applyLineDash() const
     for (size_t i = 0; i < state.lineDash.size(); ++i)
         convertedLineDash[i] = static_cast<DashArrayElement>(state.lineDash[i]);
     c->setLineDash(convertedLineDash, state.lineDashOffset);
+}
+
+// Sets the brushes to match the styles. The setters of the styles and CanvasGradient::addColorStop() and
+// CanvasPattern::setTransform() leave the brushes as they are, and the context may also hold older brushes after
+// restore(). The version is only recorded without a target switcher. A switcher's context lives only during a draw
+// or a layer, and the base context can be restored when the switcher ends: TransparencyLayerContextSwitcher draws
+// into the base context between a save() and a restore(). The version is recorded without realizeSaves(), because
+// unrealized saves share both the state and the drawing context state with the level below.
+GraphicsContext* CanvasRenderingContext2DBase::effectiveDrawingContextSync()
+{
+    auto* context = effectiveDrawingContextNoSync();
+    if (!context)
+        return nullptr;
+    const auto& fillStyle = state().fillStyle;
+    if (RefPtr canvasGradient = fillStyle.canvasGradient()) {
+        if (Ref gradient = canvasGradient->gradient(); context->fillGradient() != gradient.ptr())
+            context->setFillGradient(WTF::move(gradient));
+    } else if (RefPtr canvasPattern = fillStyle.canvasPattern()) {
+        if (Ref pattern = canvasPattern->pattern(); context->fillPattern() != pattern.ptr())
+            context->setFillPattern(WTF::move(pattern));
+    } else
+        context->setFillColor(fillStyle.color());
+    const auto& strokeStyle = state().strokeStyle;
+    if (RefPtr canvasGradient = strokeStyle.canvasGradient()) {
+        if (Ref gradient = canvasGradient->gradient(); context->strokeGradient() != gradient.ptr())
+            context->setStrokeGradient(WTF::move(gradient));
+    } else if (RefPtr canvasPattern = strokeStyle.canvasPattern()) {
+        if (Ref pattern = canvasPattern->pattern(); context->strokePattern() != pattern.ptr())
+            context->setStrokePattern(WTF::move(pattern));
+    } else
+        context->setStrokeColor(strokeStyle.color());
+    if (!state().targetSwitcher)
+        m_stateStack.last().drawingContextStyleVersion = CanvasStyle::gradientPatternVersion();
+    return context;
+}
+
+void CanvasRenderingContext2DBase::setTargetSwitcherForDraw(RefPtr<CanvasLayerContextSwitcher>&& targetSwitcher)
+{
+    m_stateStack.last().targetSwitcher = WTF::move(targetSwitcher);
 }
 
 void CanvasRenderingContext2DBase::setGlobalAlpha(double alpha)
@@ -1280,12 +1325,18 @@ void CanvasRenderingContext2DBase::setStrokeColor(String&& colorString, std::opt
         setStrokeColorImpl(WTF::move(color));
         return;
     }
+
     if (colorString == state().unparsedStrokeColor)
         return;
-    auto color = parseColor(colorString, protect(canvasBase()));
-    if (!color.isValid())
+
+    auto parsedColor = parseColor(colorString, protect(canvasBase()));
+    if (!parsedColor.color().isValid())
         return;
-    setStrokeColorImpl(WTF::move(color), WTF::move(colorString));
+
+    if (!parsedColor.isCacheable())
+        colorString = WTF::nullString();
+
+    setStrokeColorImpl(WTF::move(parsedColor).color(), WTF::move(colorString));
 }
 
 void CanvasRenderingContext2DBase::setStrokeColor(float grayLevel, float alpha)
@@ -1315,12 +1366,18 @@ void CanvasRenderingContext2DBase::setFillColor(String&& colorString, std::optio
         setFillColorImpl(WTF::move(color));
         return;
     }
+
     if (colorString == state().unparsedFillColor)
         return;
-    auto color = parseColor(colorString, protect(canvasBase()));
-    if (!color.isValid())
+
+    auto parsedColor = parseColor(colorString, protect(canvasBase()));
+    if (!parsedColor.color().isValid())
         return;
-    setFillColorImpl(WTF::move(color), WTF::move(colorString));
+
+    if (!parsedColor.isCacheable())
+        colorString = WTF::nullString();
+
+    setFillColorImpl(WTF::move(parsedColor).color(), WTF::move(colorString));
 }
 
 void CanvasRenderingContext2DBase::setFillColor(float grayLevel, float alpha)
@@ -1456,10 +1513,10 @@ void CanvasRenderingContext2DBase::fillInternal(const Path& path, CanvasFillRule
     } else {
 #if !USE(COORDINATED_GRAPHICS)
         if (isEntireBackingStoreDirty())
-            willUpdateContents(std::nullopt);
+            willUpdateContents(*c, std::nullopt);
         else
 #endif
-            willUpdateContents(targetSwitcher ? targetSwitcher->expandedBounds() : path.fastBoundingRect());
+            willUpdateContents(*c, targetSwitcher ? targetSwitcher->expandedBounds() : path.fastBoundingRect());
         c->fillPath(path);
     }
 
@@ -1497,10 +1554,10 @@ void CanvasRenderingContext2DBase::strokeInternal(const Path& path)
     } else {
 #if !USE(COORDINATED_GRAPHICS)
         if (isEntireBackingStoreDirty())
-            willUpdateContents(std::nullopt);
+            willUpdateContents(*c, std::nullopt);
         else
 #endif
-            willUpdateContents(targetSwitcher ? targetSwitcher->expandedBounds() : inflatedStrokeRect(path.fastBoundingRect()));
+            willUpdateContents(*c, targetSwitcher ? targetSwitcher->expandedBounds() : inflatedStrokeRect(path.fastBoundingRect()));
         c->strokePath(path);
     }
 }
@@ -1726,7 +1783,7 @@ void CanvasRenderingContext2DBase::setShadow(float width, float height, float bl
 
     Color color = Color::transparentBlack;
     if (!colorString.isNull()) {
-        color = parseColor(colorString, protect(canvasBase()));
+        color = parseColor(colorString, protect(canvasBase())).color();
         if (!color.isValid())
             return;
     }
@@ -2014,6 +2071,8 @@ ExceptionOr<void> CanvasRenderingContext2DBase::drawImage(WebCodecsVideoFrame& f
     auto* context = effectiveDrawingContext();
     if (!context)
         return { };
+    if (!hasInvertibleTransform()) [[unlikely]]
+        return { };
 
     RefPtr scriptContext = protect(canvasBase())->scriptExecutionContext();
     if (!scriptContext)
@@ -2029,7 +2088,7 @@ ExceptionOr<void> CanvasRenderingContext2DBase::drawImage(WebCodecsVideoFrame& f
     RasterDrawingOptions options = {
         internalFrame->orientation(),
 #if ENABLE(PIXEL_FORMAT_RGBA16F)
-        (isHDR() && usesITUR2100TF(internalFrame->colorSpace())) ? DrawsHDRContent::Yes : DrawsHDRContent::No,
+        (canStoreEDRContent() && usesITUR2100TF(internalFrame->colorSpace())) ? DrawsHDRContent::Yes : DrawsHDRContent::No,
 #endif
         compositeOperator,
         state().globalBlend
@@ -2124,7 +2183,7 @@ ExceptionOr<void> CanvasRenderingContext2DBase::drawImage(Document& document, Im
         InvertContent::No,
 #endif
 #if ENABLE(PIXEL_FORMAT_RGBA16F)
-        (isHDR() && !firstFrame && sourceImage.hasHDRContent()) ? DrawsHDRContent::Yes : DrawsHDRContent::No,
+        (canStoreEDRContent() && !firstFrame && sourceImage.hasHDRContent()) ? DrawsHDRContent::Yes : DrawsHDRContent::No,
         document.settings().hdrAcceleratedApplyGainMapEnabled() ? AllowAcceleratedApplyGainMap::Yes : AllowAcceleratedApplyGainMap::No,
 #endif
     };
@@ -2626,20 +2685,22 @@ void CanvasRenderingContext2DBase::setStrokeStyle(String&& colorString)
     if (colorString == state().unparsedStrokeColor)
         return;
 
-    auto color = parseColor(colorString, protect(canvasBase()));
-    if (!color.isValid())
+    auto parsedColor = parseColor(colorString, protect(canvasBase()));
+    if (!parsedColor.color().isValid())
         return;
 
-    setStrokeColorImpl(WTF::move(color), WTF::move(colorString));
+    if (!parsedColor.isCacheable())
+        colorString = WTF::nullString();
+
+    setStrokeColorImpl(WTF::move(parsedColor).color(), WTF::move(colorString));
 }
 
 void CanvasRenderingContext2DBase::setStrokeStyle(Ref<CanvasGradient>&& gradient)
 {
     realizeSaves();
-    if (auto* c = effectiveDrawingContext())
-        c->setStrokeGradient(gradient->gradient());
     auto& state = modifiableState();
     state.strokeStyle = WTF::move(gradient);
+    state.drawingContextStyleVersion = std::nullopt;
     state.unparsedStrokeColor = String();
 }
 
@@ -2647,10 +2708,9 @@ void CanvasRenderingContext2DBase::setStrokeStyle(Ref<CanvasPattern>&& pattern)
 {
     checkOrigin(pattern.ptr());
     realizeSaves();
-    if (auto* c = effectiveDrawingContext())
-        c->setStrokePattern(pattern->pattern());
     auto& state = modifiableState();
     state.strokeStyle = WTF::move(pattern);
+    state.drawingContextStyleVersion = std::nullopt;
     state.unparsedStrokeColor = String();
 }
 
@@ -2664,20 +2724,22 @@ void CanvasRenderingContext2DBase::setFillStyle(String&& colorString)
     if (colorString == state().unparsedFillColor)
         return;
 
-    auto color = parseColor(colorString, protect(canvasBase()));
-    if (!color.isValid())
+    auto parsedColor = parseColor(colorString, protect(canvasBase()));
+    if (!parsedColor.color().isValid())
         return;
 
-    setFillColorImpl(WTF::move(color), WTF::move(colorString));
+    if (!parsedColor.isCacheable())
+        colorString = WTF::nullString();
+
+    setFillColorImpl(WTF::move(parsedColor).color(), WTF::move(colorString));
 }
 
 void CanvasRenderingContext2DBase::setFillStyle(Ref<CanvasGradient>&& gradient)
 {
     realizeSaves();
-    if (auto* c = effectiveDrawingContext())
-        c->setFillGradient(gradient->gradient());
     auto& state = modifiableState();
     state.fillStyle = WTF::move(gradient);
+    state.drawingContextStyleVersion = std::nullopt;
     state.unparsedFillColor = String();
 }
 
@@ -2685,10 +2747,9 @@ void CanvasRenderingContext2DBase::setFillStyle(Ref<CanvasPattern>&& pattern)
 {
     checkOrigin(pattern.ptr());
     realizeSaves();
-    if (auto* c = effectiveDrawingContext())
-        c->setFillPattern(pattern->pattern());
     auto& state = modifiableState();
     state.fillStyle = WTF::move(pattern);
+    state.drawingContextStyleVersion = std::nullopt;
     state.unparsedFillColor = String();
 }
 
@@ -2903,20 +2964,40 @@ void CanvasRenderingContext2DBase::willUpdateEntireContents(OptionSet<WillUpdate
 
 void CanvasRenderingContext2DBase::willUpdateContents(std::optional<FloatRect> rect, OptionSet<WillUpdateContentsOption> options)
 {
+    auto* context = effectiveDrawingContext();
+    if (!context) {
+        invalidateCachedContents(options);
+        return;
+    }
+    willUpdateContents(*context, rect, options);
+}
+
+void CanvasRenderingContext2DBase::invalidateCachedContents(OptionSet<WillUpdateContentsOption> options)
+{
     m_bufferNativeImage = nullptr;
     if (!options.contains(WillUpdateContentsOption::PreserveCachedContents))
         m_cachedContents.emplace<CachedContentsUnknown>();
+}
 
-    auto* context = effectiveDrawingContext();
-    if (!context)
+void CanvasRenderingContext2DBase::notifyCanvasEntireContentsWillChange(ShouldApplyPostProcessingToDirtyRect shouldApplyPostProcessing)
+{
+    // Skip repeats until the canvas is next prepared for display.
+    if (isInPreparationForDisplayOrFlush() && canvasBase().hasPendingEntireContentsUpdate(shouldApplyPostProcessing))
         return;
+    protect(canvasBase())->willUpdateContents(std::nullopt, shouldApplyPostProcessing);
+}
+
+void CanvasRenderingContext2DBase::willUpdateContents(GraphicsContext& context, std::optional<FloatRect> rect, OptionSet<WillUpdateContentsOption> options)
+{
+    ASSERT(&context == effectiveDrawingContext());
+    invalidateCachedContents(options);
 
     m_hasDeferredOperations = true;
 
     auto shouldApplyPostProcessing = options.contains(WillUpdateContentsOption::ApplyPostProcessing) ? ShouldApplyPostProcessingToDirtyRect::Yes : ShouldApplyPostProcessingToDirtyRect::No;
 
     if (!rect) {
-        protect(canvasBase())->willUpdateContents(std::nullopt, shouldApplyPostProcessing);
+        notifyCanvasEntireContentsWillChange(shouldApplyPostProcessing);
         return;
     }
 
@@ -2941,12 +3022,12 @@ void CanvasRenderingContext2DBase::willUpdateContents(std::optional<FloatRect> r
 #if !USE(COORDINATED_GRAPHICS)
     // FIXME: This does not apply the clip because we have no way of reading the clip out of the GraphicsContext.
     if (m_dirtyRect.contains(dirtyRect))
-        protect(canvasBase())->willUpdateContents(std::nullopt, shouldApplyPostProcessing);
+        notifyCanvasEntireContentsWillChange(shouldApplyPostProcessing);
     else
 #endif
     {
         // Inflate dirty rect to cover antialiasing on image buffers.
-        if (context->shouldAntialias())
+        if (context.shouldAntialias())
             dirtyRect.inflate(1);
 #if USE(COORDINATED_GRAPHICS)
         // In COORDINATED_GRAPHICS graphics layer is tiled and tiling logic handles dirty rects
@@ -2989,7 +3070,7 @@ GraphicsContext* CanvasRenderingContext2DBase::drawingContext() const
     return nullptr;
 }
 
-GraphicsContext* CanvasRenderingContext2DBase::effectiveDrawingContext() const
+GraphicsContext* CanvasRenderingContext2DBase::effectiveDrawingContextNoSync() const
 {
     auto context = drawingContext();
     if (!context)
@@ -3522,6 +3603,10 @@ void CanvasRenderingContext2DBase::drawTextUnchecked(const TextRun& textRun, dou
             drawText(maskImageContext, location);
         }
 
+        RefPtr maskNativeImage = ImageBuffer::sinkIntoNativeImage(WTF::move(maskImage));
+        if (!maskNativeImage)
+            return;
+
         auto drawShadowAndMaskedFill = [&] {
             // If we have a shadow, we need to draw it before the mask operation.
             // Follow a procedure similar to paintTextWithShadows in TextPainter.
@@ -3550,7 +3635,7 @@ void CanvasRenderingContext2DBase::drawTextUnchecked(const TextRun& textRun, dou
             }
 
             GraphicsContextStateSaver stateSaver(*c);
-            c->clipToImageBuffer(*maskImage, maskRect);
+            c->clipToNativeImage(*maskNativeImage, maskRect);
             if (RefPtr gradient = drawStyle.canvasGradient())
                 c->setFillGradient(gradient->gradient());
             else
@@ -3755,31 +3840,53 @@ struct DisplayEDRState {
 
 static DisplayEDRState displayEDRState(const CanvasBase& canvas)
 {
-#if HAVE(SUPPORT_HDR_DISPLAY)
     RefPtr document = dynamicDowncast<Document>(canvas.scriptExecutionContext());
-    if (RefPtr page = document ? document->page() : nullptr)
-        return { currentEDRHeadroomForDisplay(page->displayID()), suppressEDRForDisplay(page->displayID()) };
-#else
-    UNUSED_PARAM(canvas);
+    RefPtr page = document ? document->page() : nullptr;
+    if (!page)
+        return { };
+
+    DisplayEDRState state;
+    state.suppressEDR = page->shouldSuppressHDR();
+#if HAVE(SUPPORT_HDR_DISPLAY)
+    state.headroom = currentEDRHeadroomForDisplay(page->displayID());
+    state.suppressEDR |= suppressEDRForDisplay(page->displayID());
 #endif
-    return { };
+    return state;
+}
+
+PlatformDynamicRangeLimit CanvasRenderingContext2DBase::effectiveDynamicRangeLimit() const
+{
+    return WebCore::effectiveDynamicRangeLimit(m_dynamicRangeLimit, displayEDRState(protect(canvasBase())).suppressEDR);
 }
 
 std::optional<double> CanvasRenderingContext2DBase::getEffectiveDynamicRangeLimitValue() const
 {
-    return effectiveDynamicRangeLimit(m_dynamicRangeLimit, displayEDRState(protect(canvasBase())).suppressEDR).value();
+    return effectiveDynamicRangeLimit().value();
+}
+
+bool CanvasRenderingContext2DBase::isHDR() const
+{
+    // The displayed headroom is the lesser of the bitmap's (none with "standard" tone mapping) and the one
+    // allowed by the dynamic range limit (none with "standard").
+    // https://html.spec.whatwg.org/multipage/canvas.html#colour-spaces-and-colour-correction
+    // The display state is only queried for canvases that could be HDR.
+    return canStoreEDRContent() && shouldShowEDRContent() && effectiveDynamicRangeLimit() > PlatformDynamicRangeLimit::standard();
 }
 
 RasterDrawingOptions CanvasRenderingContext2DBase::drawingOptionsForDisplay() const
 {
-    if (!isHDR() || m_dynamicRangeLimit == PlatformDynamicRangeLimit::noLimit())
+    if (!canStoreEDRContent())
+        return { };
+
+    auto dynamicRangeLimit = isHDR() ? m_dynamicRangeLimit : PlatformDynamicRangeLimit::standard();
+    if (dynamicRangeLimit == PlatformDynamicRangeLimit::noLimit())
         return { };
 
     auto display = displayEDRState(protect(canvasBase()));
 
     return {
-        Headroom(headroomForDynamicRangeLimit(m_dynamicRangeLimit, display.headroom, display.suppressEDR)),
-        m_dynamicRangeLimit,
+        Headroom(headroomForDynamicRangeLimit(dynamicRangeLimit, display.headroom, display.suppressEDR)),
+        dynamicRangeLimit,
         DrawsHDRContent::Yes
     };
 }

@@ -35,20 +35,28 @@
 #include "LayoutShape.h"
 #include "LayoutState.h"
 #include "RenderElementInlines.h"
+#include "StyleComputedStyle+ConstructionInlines.h"
 #include "StyleComputedStyle+GettersInlines.h"
 #include <wtf/NeverDestroyed.h>
 #include <wtf/TZoneMallocInlines.h>
 
-namespace WebCore {
-namespace Layout {
+namespace WebCore::Layout {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Box::BoxRareData);
 
-Box::Box(Style::ComputedStyle&& style, ElementAttributes elementAttributes, EnumSet<BaseTypeFlag> baseTypeFlags)
+Box::Box(UniqueRef<Style::ComputedStyle>&& style, ElementAttributes elementAttributes, EnumSet<BaseTypeFlag> baseTypeFlags)
     : m_nodeType(elementAttributes.nodeType)
     , m_isAnonymous(elementAttributes.isAnonymous == IsAnonymous::Yes)
     , m_baseTypeFlags(baseTypeFlags.toRaw())
-    , m_style(WTF::move(style))
+    , m_style(WTF::move(style.get()))
+{
+}
+
+Box::Box(const Style::ComputedStyle& style, ElementAttributes elementAttributes, EnumSet<BaseTypeFlag> baseTypeFlags)
+    : m_nodeType(elementAttributes.nodeType)
+    , m_isAnonymous(elementAttributes.isAnonymous == IsAnonymous::Yes)
+    , m_baseTypeFlags(baseTypeFlags.toRaw())
+    , m_style(style, Style::ComputedStyle::Clone)
 {
 }
 
@@ -299,6 +307,7 @@ bool Box::isBlockContainer() const
         || display == Style::DisplayType::BlockFlowRoot
         || display == Style::DisplayType::BlockFlowListItem
         || display == Style::DisplayType::BlockRuby
+        || display == Style::DisplayType::InlineFlowRoot
         || isTableCell()
         || isTableCaption(); // TODO && !replaced element
 }
@@ -623,5 +632,4 @@ UsedStyle Box::firstLineUsedStyle() const
     return rendererForIntegration()->firstLineUsedStyle();
 }
 
-}
 }

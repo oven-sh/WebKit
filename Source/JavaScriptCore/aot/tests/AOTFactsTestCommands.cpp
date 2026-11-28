@@ -1508,7 +1508,7 @@ static void printLinkCounts(PrintStream& out, const Program& program, const Fact
     static constexpr unsigned numberOfCalleeKinds = 4;
     static constexpr ASCIILiteral namesOfCalleeKinds[numberOfCalleeKinds] { "by binding"_s, "by name"_s, "by value"_s, "built-in"_s };
     uint64_t calls[numberOfCalleeKinds] { }, callsWithOneCallee[numberOfCalleeKinds] { }, callsInLoops[numberOfCalleeKinds] { }, callsInLoopsWithOneCallee[numberOfCalleeKinds] { }, constructions[numberOfCalleeKinds] { };
-    UncheckedKeyHashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> sizesOfCycles;
+    HashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> sizesOfCycles;
     uint32_t highestRank = 0;
 
     for (uint32_t index = 0; index < tables.functions.size(); ++index) {

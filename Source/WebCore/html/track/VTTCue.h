@@ -102,7 +102,7 @@ public:
 protected:
     VTTCueBox(Document&, VTTCue&);
 
-    RenderPtr<RenderElement> createElementRenderer(Style::ComputedStyle&&, const RenderTreePosition&) final;
+    RenderPtr<RenderElement> createElementRenderer(UniqueRef<Style::ComputedStyle>&&, const RenderTreePosition&) final;
 };
 
 // ----------------------------
@@ -310,7 +310,7 @@ private:
     LineAndPositionSetting m_height { Auto };
 
 #if !RELEASE_LOG_DISABLED
-    mutable RefPtr<Logger> m_logger;
+    const RefPtr<Logger> m_logger;
     mutable uint64_t m_logIdentifier { 0 };
 #endif
 };

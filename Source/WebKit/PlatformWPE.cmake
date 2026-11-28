@@ -445,7 +445,7 @@ if (ENABLE_WPE_LEGACY_API)
 endif ()
 
 if (ANDROID)
-    list(APPEND WebKit_PRIVATE_LIBRARIES intl)
+    list(APPEND WebKit_PRIVATE_LIBRARIES Intl::Intl)
 endif ()
 
 if (USE_ATK)
@@ -487,6 +487,8 @@ else ()
 endif ()
 
 list(APPEND WebKit_MESSAGES_IN_FILES
+    UIProcess/WebAuthentication/WebAuthenticatorCoordinatorProxy
+
     WebProcess/glib/SystemSettingsManager
 )
 
@@ -634,9 +636,11 @@ if (ENABLE_WPE_QT_API)
     file(MAKE_DIRECTORY
         ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/qt6/qml/org/wpewebkit/qtwpe
     )
-    add_custom_command(TARGET qtwpe POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy
+    # A symlink rather than a copy: the API tests link libqtwpe.so and also load it as the QML
+    # module, and the dynamic loader only shares the library if both paths are the same file.
+    add_custom_command(TARGET qtwpe POST_BUILD COMMAND ${CMAKE_COMMAND} -E create_symlink
         ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/libqtwpe.so
-        ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/qt6/qml/org/wpewebkit/qtwpe)
+        ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/qt6/qml/org/wpewebkit/qtwpe/libqtwpe.so)
     add_custom_command(TARGET qtwpe POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy
         ${WEBKIT_DIR}/UIProcess/API/wpe/qt6/qmldir
         ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/qt6/qml/org/wpewebkit/qtwpe)

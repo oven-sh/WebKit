@@ -6,6 +6,9 @@ const colorSpace = canvas.dataset.colorSpace;
 const renderingMode = canvas.dataset.renderingMode;
 debug(`canvas.dataset.colorSpace: ${colorSpace}`);
 debug(`canvas.dataset.renderingMode: ${renderingMode}`);
+const toneMappingMode = canvas.dataset.toneMappingMode;
+if (toneMappingMode)
+    debug(`canvas.dataset.toneMappingMode: ${toneMappingMode}`);
 
 const componentsPerPixel = 4;
 const canvasSize = 4;
@@ -13,7 +16,7 @@ const canvasSize = 4;
 // path; the cases that do want that path draw over the whole canvas instead.
 const drawSize = canvasSize / 2;
 
-const hdrImageURL = "../../images/resources/gainmap-red-green-1920x1920.jpg";
+const hdrImageURL = "../../images/resources/gainmap-red-green-gray-stripes-256x256.jpg";
 const sdrImageURL = "../../images/resources/green-400x400.png";
 const animatedImageURL = "../../images/resources/animated-red-green-blue-400x400.gif";
 
@@ -25,6 +28,8 @@ function createContext(colorType)
     const settings = { colorSpace, colorType };
     if (renderingMode)
         settings.renderingModeForTesting = renderingMode;
+    if (colorType == "float16" && toneMappingMode)
+        settings.toneMapping = { mode: toneMappingMode };
     const context = element.getContext("2d", settings);
     if (!context) {
         testFailed(`Could not create a "${colorType}" 2D context`);

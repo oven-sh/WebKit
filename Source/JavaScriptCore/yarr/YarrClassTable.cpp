@@ -176,7 +176,7 @@ static int16_t encodeClassTableSlot(size_t blockOffset, size_t page)
 struct ClassTablePacker::Cluster {
     Vector<size_t> tables;
     Vector<uint32_t> pool;
-    UncheckedKeyHashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> poolSlots;
+    HashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> poolSlots;
     size_t frameSize { 0 };
 };
 

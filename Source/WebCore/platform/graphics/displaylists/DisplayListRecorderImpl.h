@@ -29,9 +29,7 @@
 #include <wtf/RefCounted.h>
 #include <wtf/TZoneMalloc.h>
 
-namespace WebCore {
-
-namespace DisplayList {
+namespace WebCore::DisplayList {
 
 class RecorderImpl : public Recorder, public RefCounted<RecorderImpl> {
     WTF_MAKE_TZONE_ALLOCATED_EXPORT(RecorderImpl, WEBCORE_EXPORT);
@@ -55,7 +53,9 @@ public:
     WEBCORE_EXPORT Ref<const DisplayList> copyDisplayList();
 
     void save(GraphicsContextState::Purpose) final;
-    void restore(GraphicsContextState::Purpose) final;
+    bool restore(GraphicsContextState::Purpose) final;
+    void saveTransform() final;
+    bool restoreTransform() final;
     void translate(float x, float y) final;
     void rotate(float angle) final;
     void scale(const FloatSize&) final;
@@ -73,7 +73,7 @@ public:
     void clipOutRoundedRect(const FloatRoundedRect&) final;
     void clipPath(const Path&, WindRule) final;
     void clipTransformedPath(const AffineTransform&, const Path&, WindRule) final;
-    void clipToImageBuffer(ImageBuffer&, const FloatRect&) final;
+    void clipToNativeImage(const NativeImage&, const FloatRect&) final;
     void beginTransparencyLayer(float) final;
     void beginTransparencyLayer(CompositeOperator, BlendMode) final;
     void endTransparencyLayer() final;
@@ -85,6 +85,7 @@ public:
     void drawLine(const FloatPoint& point1, const FloatPoint& point2) final;
     void drawLinesForText(const FloatPoint&, float thickness, std::span<const FloatSegment>, bool isPrinting, bool doubleLines, StrokeStyle) final;
     void drawDotsForDocumentMarker(const FloatRect&, DocumentMarkerLineStyle) final;
+    void drawFreeformGradient(FreeformGradient&, const FloatRect& destination) final;
     void drawMeshGradient(MeshGradient&, const FloatRect& destination) final;
     void drawEllipse(const FloatRect&) final;
     void drawPath(const Path&) final;
@@ -96,8 +97,8 @@ public:
     void fillPath(const Path&) final;
     void fillRect(const FloatRect&, RequiresClipToRect) final;
     void fillRect(const FloatRect&, const Color&) final;
-    void fillRect(const FloatRect&, Gradient&) final;
-    void fillRect(const FloatRect&, Gradient&, const AffineTransform&, RequiresClipToRect) final;
+    void fillRect(const FloatRect&, const Gradient&) final;
+    void fillRect(const FloatRect&, const Gradient&, const AffineTransform&, RequiresClipToRect) final;
     void fillRect(const FloatRect&, const Color&, CompositeOperator, BlendMode) final;
     void fillRoundedRect(const FloatRoundedRect&, const Color&, BlendMode) final;
     void fillRectWithRoundedHole(const FloatRect&, const FloatRoundedRect&, const Color&) final;
@@ -112,10 +113,6 @@ public:
     void strokePath(const Path&) final;
     void clearRect(const FloatRect&) final;
     void drawControlPart(ControlPart&, const FloatRoundedRect& borderRect, float deviceScaleFactor, const ControlStyle&) final;
-#if USE(CG)
-    void applyStrokePattern() final;
-    void applyFillPattern() final;
-#endif
     void applyDeviceScaleFactor(float) final;
 
     void beginPage(const FloatRect&) final;
@@ -130,6 +127,8 @@ public:
     // The function should always produce the same GraphicsContext calls.
     WEBCORE_EXPORT void drawPlaceholder(Function<void(GraphicsContext&)>&&);
 
+    WEBCORE_EXPORT void drawPDFPage(Ref<SharedPDFDocument>&&, unsigned pageIndex, const FloatRect& pageRect, std::optional<SourceNativeImage>&& fallbackImage);
+
 private:
     WEBCORE_EXPORT RecorderImpl(const GraphicsContextState&, const FloatRect& initialClip, const AffineTransform&, const ColorSpace&, DrawGlyphsMode);
 
@@ -138,5 +137,4 @@ private:
     Vector<Item> m_items;
 };
 
-}
 }

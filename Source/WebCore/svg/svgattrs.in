@@ -30,6 +30,7 @@ clipPathUnits
 color
 color-interpolation
 color-interpolation-filters
+crossorigin
 cursor
 cx
 cy
@@ -40,6 +41,7 @@ direction
 display
 divisor
 dominant-baseline
+download
 dur
 dx
 dy

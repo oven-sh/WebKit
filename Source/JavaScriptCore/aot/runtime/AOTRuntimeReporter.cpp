@@ -61,7 +61,7 @@ namespace JSC { namespace AOT {
 void writeToStandardError(const String& line)
 {
     ASSERT(line.endsWith('\n'));
-    auto bytes = line.utf8();
+    auto bytes = makeUTF8CString(line);
     for (char8_t& byte : bytes.mutableSpan().first(bytes.length() - 1)) {
         if (byte < ' ')
             byte = ' ';
@@ -277,7 +277,7 @@ void RuntimeCounts::write()
         return;
     String path = makeStringByReplacingAll(String::fromUTF8(byteCast<char>(Options::aotCountsPath())), "%p"_s, String::number(getCurrentProcessID()));
     static bool hasWrittenInThisProcess;
-    if (auto file = FilePrintStream::open(path.utf8(), std::exchange(hasWrittenInThisProcess, true) ? "ab"_s : "wb"_s))
+    if (auto file = FilePrintStream::open(makeUTF8CString(path), std::exchange(hasWrittenInThisProcess, true) ? "ab"_s : "wb"_s))
         dump(*file);
 }
 
@@ -315,7 +315,7 @@ void writePerfMap(const Image& image)
     static Lock lock;
     static bool hasWrittenInThisProcess;
     Locker locker { lock };
-    auto file = FilePrintStream::open(makeString("/tmp/perf-"_s, getCurrentProcessID(), ".map"_s).utf8(), std::exchange(hasWrittenInThisProcess, true) ? "a"_s : "w"_s);
+    auto file = FilePrintStream::open(makeUTF8CString(makeString("/tmp/perf-"_s, getCurrentProcessID(), ".map"_s)), std::exchange(hasWrittenInThisProcess, true) ? "a"_s : "w"_s);
     if (!file)
         return;
     SetForScope runningImage(*Image::addressOfCurrentOfThread(), &image);

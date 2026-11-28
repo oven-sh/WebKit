@@ -32,8 +32,8 @@ struct ConstantPlacement {
     void add(Value*, BasicBlock*);
 
     IndexMap<BasicBlock*, Vector<Value*>> materializations;
-    UncheckedKeyHashMap<Value*, BasicBlock*> blockOf;
-    UncheckedKeyHashMap<ValueKey, Vector<Value*, 1>> valuesByKey;
+    HashMap<Value*, BasicBlock*> blockOf;
+    HashMap<ValueKey, Vector<Value*, 1>> valuesByKey;
 };
 
 inline bool isPlacedByFrequency(const Value* value)

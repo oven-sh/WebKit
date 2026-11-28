@@ -25,7 +25,7 @@
 
 static unsigned numberOfDeadMoves(Procedure& proc)
 {
-    UncheckedKeyHashSet<Air::Tmp> usedTmps;
+    HashSet<Air::Tmp> usedTmps;
     for (Air::BasicBlock* block : proc.code()) {
         for (Air::Inst& inst : *block) {
             inst.forEachTmp([&](Air::Tmp& tmp, Air::Arg::Role role, Bank, Width) {

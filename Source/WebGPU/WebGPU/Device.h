@@ -25,6 +25,11 @@
 
 #pragma once
 
+#if !__has_feature(objc_arc)
+#error This header requires ARC. Include it only from files compiled with -fobjc-arc.
+#endif
+
+#import "Adapter.h"
 #import "BindableResource.h"
 #import "HardwareCapabilities.h"
 #import "Queue.h"
@@ -45,6 +50,7 @@
 #import <wtf/HashTable.h>
 #import <wtf/KeyValuePair.h>
 #import <wtf/Ref.h>
+#import <wtf/SharedTask.h>
 #import <wtf/SwiftBridging.h>
 #import <wtf/TZoneMalloc.h>
 #import <wtf/ThreadSafeWeakHashSet.h>
@@ -144,12 +150,27 @@ public:
     void popErrorScope(CompletionHandler<void(bool, std::optional<WebGPU::Error>&&)>&&) final;
     void pushErrorScope(WebGPU::ErrorFilter) final;
     void resolveDeviceLostPromise(CompletionHandler<void(WebGPU::DeviceLostReason, String&&)>&&) final;
-    void resolveUncapturedErrorEvent(CompletionHandler<void(bool, std::optional<WebGPU::Error>&&)>&&) final;
+    void setUncapturedErrorCallback(Function<void(WebGPU::Error&&)>&&) final;
     void pauseAllErrorReporting(bool pause) final;
+
+    RefPtr<WebGPU::BindGroup> createInvalidBindGroup() final;
+    RefPtr<WebGPU::BindGroupLayout> createInvalidBindGroupLayout() final;
+    RefPtr<WebGPU::Buffer> createInvalidBuffer() final;
+    RefPtr<WebGPU::CommandBuffer> createInvalidCommandBuffer() final;
+    RefPtr<WebGPU::CommandEncoder> createInvalidCommandEncoder() final;
+    RefPtr<WebGPU::ComputePipeline> createInvalidComputePipeline() final;
+    RefPtr<WebGPU::PipelineLayout> createInvalidPipelineLayout() final;
+    RefPtr<WebGPU::QuerySet> createInvalidQuerySet() final;
+    RefPtr<WebGPU::RenderBundleEncoder> createInvalidRenderBundleEncoder(String&& error) final;
+    RefPtr<WebGPU::RenderPipeline> createInvalidRenderPipeline() final;
+    RefPtr<WebGPU::Sampler> createInvalidSampler() final;
+    RefPtr<WebGPU::ShaderModule> createInvalidShaderModule() final;
+    RefPtr<WebGPU::Texture> createInvalidTexture() final;
+
     NODELETE void setLabel(String&&) final;
 
     NODELETE bool isValid() const final { return m_device; }
-    bool isLost() const { return m_isLost; }
+    NODELETE bool isLost() const final { return m_isLost; }
     NODELETE const Limits& limits() const LIFETIME_BOUND final { return m_capabilities.limits; }
     const Limits limitsCopy() const { return m_capabilities.limits; }
     const HardwareCapabilities::BaseCapabilities& baseCapabilities() const LIFETIME_BOUND { return m_capabilities.baseCapabilities; }
@@ -161,12 +182,14 @@ public:
 
     id<MTLDevice> _Nullable device() const { return m_device; }
     void generateAValidationError(NSString * message);
-    void generateAValidationError(String&& message);
+    void generateAValidationError(String&& message) final;
     void generateAnOutOfMemoryError(String&& message);
     void generateAnInternalError(String&& message);
 
-    RefPtr<Instance> instance() const { return m_instance.get(); }
-    Adapter& adapter() const { return m_adapter; }
+    RefPtr<WebGPU::Instance> instance() const final;
+    // The Metal instance, for the callers that need what only it has.
+    ThreadSafeWeakPtr<Instance> weakInstance() const { return m_instance; }
+    Adapter& adapter() const final { return m_adapter; }
 #if CPU(X86_64)
     bool hasUnifiedMemory() const { return false; }
 #else
@@ -299,6 +322,7 @@ private:
     // Whether popping succeeds without a scope to pop: true for a lost device, false for an empty
     // stack. std::nullopt when there is a scope to pop.
     NODELETE std::optional<bool> validatePopErrorScope() const;
+    void dispatchUncapturedError(WebGPU::Error&&);
 
     NODELETE bool validateRenderPipeline(const WebGPU::RenderPipelineDescriptor&);
 
@@ -327,9 +351,10 @@ private:
     id<MTLDevice> _Nullable m_device { nil };
     const Ref<Queue> m_defaultQueue;
 
-    CompletionHandler<void(bool, std::optional<WebGPU::Error>&&)> m_uncapturedErrorCallback;
+    // Shared, so that the callback stays alive while it runs even if it replaces itself or loses the device.
+    RefPtr<SharedTask<void(WebGPU::Error&&)>> m_uncapturedErrorCallback;
     Vector<ErrorScope> m_errorScopeStack;
-    RefPtr<XRSubImage> m_xrSubImage;
+    const RefPtr<XRSubImage> m_xrSubImage;
 
     CompletionHandler<void(WebGPU::DeviceLostReason, String&&)> m_deviceLostCallback;
     bool m_isLost { false };
@@ -376,10 +401,10 @@ private:
     NSMapTable<id<MTLCommandBuffer>, NSMutableArray<id<MTLCounterSampleBuffer>>*>* m_sampleCounterBuffers;
     NSMapTable<id<MTLCommandBuffer>, NSMutableArray<id<MTLBuffer>>*>* m_resolvedSampleCounterBuffers;
     id<MTLSharedEvent> _Nullable m_resolveTimestampsSharedEvent { nil };
-    HashMap<uint64_t, CommandEncoder*, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_commandEncoderMap;
-    HashMap<uint64_t, Buffer*, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_bufferMap;
+    HashMap<uint64_t, CommandEncoder*> m_commandEncoderMap;
+    HashMap<uint64_t, Buffer*> m_bufferMap;
     ThreadSafeWeakHashSet<Texture> m_textures;
-    mutable HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_bindGroupCompatibilityCache;
+    mutable HashSet<uint64_t> m_bindGroupCompatibilityCache;
     uint64_t m_commandEncoderId { 0 };
     uint64_t m_pipelineLayoutId { 0 };
     uint64_t m_pipelineId { 0 };

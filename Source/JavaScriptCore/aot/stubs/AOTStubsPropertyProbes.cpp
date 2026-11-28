@@ -1173,7 +1173,7 @@ void generatePutValueThatSlotRefuses(StubAssembler& jit)
     JumpList cannot;
 
     jit.load32(Address(object, JSCell::structureIDOffset()), scratch);
-    jit.urshift32(scratch, TrustedImm32(StructureRowWords::granuleShift), exit);
+    jit.urshift32(scratch, TrustedImm32(structureIDPlaceShift), exit);
     jit.add32(name, exit);
     jit.and32(TrustedImm32(FieldExit::numberOfPlaces - 1), exit);
     jit.lshift32(TrustedImm32(FieldExit::sizeShift), exit);
@@ -1287,7 +1287,7 @@ void repeatFieldExitFoundBySlotAndReturn(StubAssembler& jit, const FieldExitBySl
     };
     jit.subPtr(object, offsetOfSlot);
     jit.load32(Address(object, JSCell::structureIDOffset()), scratch);
-    jit.urshift32(scratch, TrustedImm32(StructureRowWords::granuleShift), exit);
+    jit.urshift32(scratch, TrustedImm32(structureIDPlaceShift), exit);
     jit.urshift32(offsetOfSlot, TrustedImm32(2), extra);
     jit.add32(extra, exit);
     jit.and32(TrustedImm32(FieldExit::numberOfPlacesBySlot - 1), exit);

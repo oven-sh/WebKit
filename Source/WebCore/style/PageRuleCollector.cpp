@@ -35,8 +35,7 @@
 #include "UserAgentStyle.h"
 #include <ranges>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 NODELETE static inline bool comparePageRules(const StyleRulePage& r1, const StyleRulePage& r2)
 {
@@ -67,7 +66,7 @@ void PageRuleCollector::matchAllPageRules(int pageIndex)
     auto isFirst = isFirstPage(pageIndex);
     auto page = pageName(pageIndex);
 
-    matchPageRules(protect(UserAgentStyle::defaultPrintStyle), isLeft, isFirst, page);
+    matchPageRules(UserAgentStyle::sheets().defaultPrintStyle.get(), isLeft, isFirst, page);
     matchPageRules(protect(m_ruleSets.userStyle()), isLeft, isFirst, page);
     // Only consider the global author RuleSet for @page rules, as per the HTML5 spec.
     if (m_ruleSets.isAuthorStyleDefined())
@@ -127,5 +126,4 @@ void PageRuleCollector::matchPageRulesForList(Vector<Ref<StyleRulePage>>& matche
     }
 }
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

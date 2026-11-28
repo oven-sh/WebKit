@@ -85,6 +85,7 @@
 - (void)_doAfterReceivingEditDragSnapshotForTesting:(dispatch_block_t)action;
 
 - (void)_triggerSystemPreviewActionOnElement:(uint64_t)elementID document:(NSString*)documentID page:(uint64_t)pageID;
+- (void)_triggerSystemPreviewActionForTesting;
 
 - (void)_setDeviceOrientationUserPermissionHandlerForTesting:(BOOL (^)(void))handler;
 
@@ -118,6 +119,10 @@
 @property (nonatomic, readonly) CGRect _fixedClippingViewBoundsForTesting;
 
 - (void)_screenIsBeingCapturedForFrame:(_WKFrameHandle *)frameHandle completionHandler:(void (^)(BOOL))completionHandler;
+
+- (void)_hasActiveContextMenuInteractionInFrame:(WKFrameInfo *)frame completionHandler:(void (^)(BOOL))completionHandler;
+
+@property (nonatomic, readonly) NSArray<NSNumber *> *_processIdentifiersWithVisibilityPropagationForTesting;
 
 @end
 

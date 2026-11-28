@@ -33,6 +33,7 @@
 #include "FidoConstants.h"
 #include "WebAuthenticationConstants.h"
 #include <pal/crypto/CryptoDigest.h>
+#include <wtf/Borrow.h>
 #include <wtf/JSONValues.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/URL.h>
@@ -44,7 +45,7 @@ namespace WebCore {
 Vector<uint8_t> produceRpIdHash(const String& rpId)
 {
     auto crypto = PAL::Crypto::CryptoDigest::create(PAL::Crypto::CryptoDigest::Algorithm::SHA_256);
-    auto rpIdUTF8 = rpId.utf8();
+    auto rpIdUTF8 = makeUTF8CString(rpId);
     crypto->addBytes(std::as_bytes(rpIdUTF8.span()));
     return crypto->computeHash();
 }
@@ -133,7 +134,7 @@ cbor::CBORValue::MapValue buildAttestationMap(Vector<uint8_t>&& authData, String
     if (attestation == AttestationConveyancePreference::None) {
         const size_t aaguidOffset = rpIdHashLength + flagsLength + signCounterLength;
         if (authData.size() >= aaguidOffset + aaguidLength && shouldZero == ShouldZeroAAGUID::Yes)
-            zeroSpan(authData.mutableSpan().subspan(aaguidOffset, aaguidLength));
+            zeroSpan(borrow(authData)->mutableSpan().subspan(aaguidOffset, aaguidLength));
         format = String::fromLatin1(noneAttestationValue);
         statementMap.clear();
     }
@@ -173,7 +174,7 @@ Ref<ArrayBuffer> buildClientDataJson(ClientDataType type, const BufferSource& ch
     if (!topOrigin.isNull())
         object->setString("topOrigin"_s, topOrigin);
 
-    return ArrayBuffer::create(byteCast<uint8_t>(object->toJSONString().utf8().span()));
+    return ArrayBuffer::create(byteCast<uint8_t>(makeUTF8CString(object->toJSONString()).span()));
 }
 
 Vector<uint8_t> buildClientDataJsonHash(const ArrayBuffer& clientDataJson)

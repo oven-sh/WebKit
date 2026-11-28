@@ -355,7 +355,7 @@ struct MentionedKeys {
 enum class InlineFieldsOfModule : uint8_t { None, Few, Many };
 
 struct ModulesThatWriteFields {
-    UncheckedKeyHashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> namesDefinedAbove;
+    HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> namesDefinedAbove;
     Vector<uint32_t> firstOfKeys;
     Vector<uint32_t> modules;
     Vector<InlineFieldsOfModule> inlineFields;

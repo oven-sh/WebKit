@@ -80,7 +80,7 @@ struct PlatformVideoColorSpace;
 using TrackID = uint64_t;
 
 template<typename MappedArg>
-using TrackIDHashMap = HashMap<TrackID, MappedArg, WTF::IntHash<TrackID>, WTF::UnsignedWithZeroKeyHashTraits<TrackID>>;
+using TrackIDHashMap = HashMap<TrackID, MappedArg>;
 
 #if !GST_CHECK_VERSION(1, 27, 90)
 inline bool gst_check_version(guint major, guint minor, guint micro)
@@ -289,7 +289,7 @@ private:
 
     GstVideoFrame m_frame;
     GstVideoAlignment m_alignment;
-    std::array<size_t, GST_VIDEO_MAX_PLANES> m_planeSizes { };
+    std::array<size_t, GST_VIDEO_MAX_PLANES> m_planeHeights { };
 #if USE(GSTREAMER_GL)
     bool m_needsCPUSync { false };
 #endif
@@ -326,6 +326,16 @@ bool gstElementFactoryEquals(GstElement*, ASCIILiteral name);
 
 GstElement* createAutoAudioSink(const String& role);
 GstElement* createPlatformAudioSink(const String& role, const String& deviceId = { }, const GRefPtr<GstDevice>& = { });
+
+#if ENABLE(MEDIA_STREAM)
+// Resolves an audio output device ID ("default" or an existing persistent ID)
+// to its actual persistent ID and matching GstDevice.
+std::pair<String, GRefPtr<GstDevice>> gstResolveAudioOutputDevice(const String& deviceId);
+// Reconfigures an existing audio sink element (recursing into bins)
+// to use the given GstDevice as its output audio device.
+// Returns true if the sink was correctly reconfigured.
+bool gstApplyAudioSinkDevice(GstElement* audioSink, const GRefPtr<GstDevice>&, const String& deviceId);
+#endif
 
 bool webkitGstSetElementStateSynchronously(GstElement*, GstState, NOESCAPE const Function<bool(GstMessage*)>& = [](GstMessage*) -> bool {
     return true;

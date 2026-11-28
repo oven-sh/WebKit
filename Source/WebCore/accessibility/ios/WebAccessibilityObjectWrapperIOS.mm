@@ -497,14 +497,14 @@ struct AccessibilityElementsResult {
         // a sibling based on the reasoning above.
         if (RefPtr select = dynamicDowncast<HTMLSelectElement>(child->node()); select && select->usesBaseAppearancePicker()) {
             if (RefPtr popover = select->pickerPopoverElement()) {
-                if (shouldCollectElements) {
-                    CheckedPtr cache = downcast<AccessibilityObject>(child.get()).axObjectCache();
-                    if (RefPtr axPopover = cache ? cache->getOrCreate(*popover) : nullptr) {
-                        if (RetainPtr popoverWrapper = axPopover->wrapper())
+                CheckedPtr cache = downcast<AccessibilityObject>(child).axObjectCache();
+                if (RefPtr axPopover = cache ? cache->getOrCreate(*popover) : nullptr) {
+                    if (RetainPtr popoverWrapper = axPopover->wrapper()) {
+                        if (shouldCollectElements)
                             [result.elements addObject:popoverWrapper];
+                        result.count++;
                     }
                 }
-                result.count++;
             }
         }
     }
@@ -677,7 +677,7 @@ struct AccessibilityElementsResult {
     return roleValue == AccessibilityRole::ApplicationDialog || roleValue == AccessibilityRole::ApplicationAlertDialog;
 }
 
-using AccessibilityRoleSet = HashSet<AccessibilityRole, IntHash<AccessibilityRole>, WTF::StrongEnumHashTraits<AccessibilityRole>>;
+using AccessibilityRoleSet = HashSet<AccessibilityRole, IntHash<AccessibilityRole>>;
 static AccessibilityObjectWrapper *ancestorWithRole(const AXCoreObject& descendant, const AccessibilityRoleSet& roles)
 {
     RefPtr ancestor = Accessibility::findAncestor(descendant, false, [&roles] (const auto& object) {
@@ -1994,6 +1994,9 @@ static void appendStringToResult(NSMutableString *result, NSString *string)
     // VoiceOver can neither advance past the last iframe element nor resolve the view/window needed to draw its cursor.
     // This mirrors the macOS wrapper (handleParentAttribute / scrollViewParent).
     RefPtr parent = object->crossFrameParentObjectUnignored();
+    // A base appearance picker is listed as a sibling of its select, see _collectAccessibilityElements.
+    if (parent && is<SelectPopoverElement>(object->node()))
+        parent = parent->crossFrameParentObjectUnignored();
     if (parent)
         return parent->wrapper();
 
@@ -3304,8 +3307,8 @@ static RenderObject* rendererForView(WAKView* view)
     if (![self _prepareAccessibilityCall])
         return nil;
 
-    RefPtr<AccessibilityObject> object = self.axBackingObject;
-    return object->mathRootIndexObject() ? object->mathRootIndexObject()->wrapper() : 0;
+    RefPtr rootIndex = protect(self.axBackingObject)->mathRootIndexObject();
+    return rootIndex ? rootIndex->wrapper() : nil;
 }
 
 - (NSArray *)accessibilityMathRadicand
@@ -3322,8 +3325,8 @@ static RenderObject* rendererForView(WAKView* view)
     if (![self _prepareAccessibilityCall])
         return nil;
 
-    RefPtr<AccessibilityObject> object = self.axBackingObject;
-    return object->mathNumeratorObject() ? object->mathNumeratorObject()->wrapper() : 0;
+    RefPtr numerator = protect(self.axBackingObject)->mathNumeratorObject();
+    return numerator ? numerator->wrapper() : nil;
 }
 
 - (WebAccessibilityObjectWrapper *)accessibilityMathDenominatorObject
@@ -3331,8 +3334,8 @@ static RenderObject* rendererForView(WAKView* view)
     if (![self _prepareAccessibilityCall])
         return nil;
 
-    RefPtr<AccessibilityObject> object = self.axBackingObject;
-    return object->mathDenominatorObject() ? object->mathDenominatorObject()->wrapper() : 0;
+    RefPtr denominator = protect(self.axBackingObject)->mathDenominatorObject();
+    return denominator ? denominator->wrapper() : nil;
 }
 
 - (WebAccessibilityObjectWrapper *)accessibilityMathBaseObject
@@ -3340,8 +3343,8 @@ static RenderObject* rendererForView(WAKView* view)
     if (![self _prepareAccessibilityCall])
         return nil;
 
-    RefPtr<AccessibilityObject> object = self.axBackingObject;
-    return object->mathBaseObject() ? object->mathBaseObject()->wrapper() : 0;
+    RefPtr base = protect(self.axBackingObject)->mathBaseObject();
+    return base ? base->wrapper() : nil;
 }
 
 - (WebAccessibilityObjectWrapper *)accessibilityMathSubscriptObject
@@ -3349,8 +3352,8 @@ static RenderObject* rendererForView(WAKView* view)
     if (![self _prepareAccessibilityCall])
         return nil;
 
-    RefPtr<AccessibilityObject> object = self.axBackingObject;
-    return object->mathSubscriptObject() ? object->mathSubscriptObject()->wrapper() : 0;
+    RefPtr subscript = protect(self.axBackingObject)->mathSubscriptObject();
+    return subscript ? subscript->wrapper() : nil;
 }
 
 - (WebAccessibilityObjectWrapper *)accessibilityMathSuperscriptObject
@@ -3358,8 +3361,8 @@ static RenderObject* rendererForView(WAKView* view)
     if (![self _prepareAccessibilityCall])
         return nil;
 
-    RefPtr<AccessibilityObject> object = self.axBackingObject;
-    return object->mathSuperscriptObject() ? object->mathSuperscriptObject()->wrapper() : 0;
+    RefPtr superscript = protect(self.axBackingObject)->mathSuperscriptObject();
+    return superscript ? superscript->wrapper() : nil;
 }
 
 - (WebAccessibilityObjectWrapper *)accessibilityMathUnderObject
@@ -3367,8 +3370,8 @@ static RenderObject* rendererForView(WAKView* view)
     if (![self _prepareAccessibilityCall])
         return nil;
 
-    RefPtr<AccessibilityObject> object = self.axBackingObject;
-    return object->mathUnderObject() ? object->mathUnderObject()->wrapper() : 0;
+    RefPtr under = protect(self.axBackingObject)->mathUnderObject();
+    return under ? under->wrapper() : nil;
 }
 
 - (WebAccessibilityObjectWrapper *)accessibilityMathOverObject
@@ -3376,8 +3379,8 @@ static RenderObject* rendererForView(WAKView* view)
     if (![self _prepareAccessibilityCall])
         return nil;
 
-    RefPtr<AccessibilityObject> object = self.axBackingObject;
-    return object->mathOverObject() ? object->mathOverObject()->wrapper() : 0;
+    RefPtr over = protect(self.axBackingObject)->mathOverObject();
+    return over ? over->wrapper() : nil;
 }
 
 - (NSString *)accessibilityPlatformMathSubscriptKey

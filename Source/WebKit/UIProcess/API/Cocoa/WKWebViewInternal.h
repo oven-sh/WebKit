@@ -258,6 +258,12 @@ struct OverriddenLayoutParameters {
     CGSize maximumUnobscuredSize { CGSizeZero };
 };
 
+struct ZoomToRevealFocusedElementState {
+    double scaleBeforeZooming { 1 };
+    double zoomedScale { 1 };
+    bool didSameDocumentNavigationSinceZooming { false };
+};
+
 // This holds state that should be reset when the web process exits.
 struct PerWebProcessState {
     CGFloat viewportMetaTagWidth { WebCore::ViewportArguments::ValueAuto };
@@ -317,6 +323,8 @@ struct PerWebProcessState {
     std::optional<LiveResizeParameters> liveResizeParameters;
 
     std::optional<WebKit::TransactionID> firstTransactionIDAfterObscuredInsetChange;
+
+    std::optional<ZoomToRevealFocusedElementState> zoomToRevealFocusedElementState;
 
 #if ENABLE(RESPONSIVE_LIVE_RESIZE_UPDATE)
     std::optional<CGFloat> lastResizedViewWidth;
@@ -451,7 +459,7 @@ struct LiveResizeSnapshotState {
 #if PLATFORM(IOS_FAMILY)
     BOOL _forcesInitialScaleFactor;
     BOOL _automaticallyAdjustsViewLayoutSizesWithObscuredInset;
-    BOOL _avoidsUnsafeArea;
+    WebCore::ViewportFitEdges _viewportFitEdges;
 #endif
     CGRect _inputViewBoundsInWindow;
 
@@ -623,6 +631,10 @@ struct LiveResizeSnapshotState {
 #if ENABLE(MODEL_ELEMENT_IMMERSIVE)
 - (void)_allowImmersiveElement:(WKFrameInfo *)frameInfo completion:(CompletionHandler<void(bool)>&&)completion;
 - (void)_presentImmersiveElement:(const WebCore::LayerHostingContextIdentifier)contextID frameInfo:(WKFrameInfo *)frameInfo completion:(CompletionHandler<void(bool)>&&)completion;
+- (void)_presentImmersiveEnvironment:(WKImmersiveEnvironment *)environment completion:(CompletionHandler<void(bool)>&&)completion;
+#if ENABLE(IMAGE_ELEMENT_IMMERSIVE)
+- (void)_presentImmersiveImageElement:(CGImageRef)image focalLengthIn35mm:(NSNumber *)focalLengthIn35mm frameInfo:(WKFrameInfo *)frameInfo completion:(CompletionHandler<void(bool)>&&)completion;
+#endif
 - (void)_dismissImmersiveElement:(CompletionHandler<void()>&&)completion;
 #endif
 
@@ -736,7 +748,7 @@ struct LiveResizeSnapshotState {
 #endif
 #endif
 
-#if ENABLE(MANAGED_UIREFRESHCONTROL_APPEARANCE)
+#if ENABLE(MANAGED_REFRESHCONTROL_APPEARANCE)
 - (void)_updateRefreshControlAppearance;
 #endif
 
@@ -814,7 +826,7 @@ struct LiveResizeSnapshotState {
 
 - (void)_requestTextExtractionInternal:(nullable _WKTextExtractionConfiguration *)configuration completion:(CompletionHandler<void(std::optional<WebCore::TextExtraction::Result>&&)>&&)completion;
 
-- (void)_ensureTextExtractionFilterRulesWithCompletionHandler:(CompletionHandler<void()>&&)completionHandler;
+- (void)_fetchTextExtractionFilterRulesIfNeededWithCompletionHandler:(CompletionHandler<void()>&&)completionHandler;
 - (void)_extractDebugTextWithConfigurationWithoutUpdatingFilterRules:(_WKTextExtractionConfiguration *)configuration assertionScope:(UniqueRef<WebKit::TextExtractionAssertionScope>&&)assertionScope completionHandler:(void(^)(_WKTextExtractionResult *))completionHandler;
 - (void)_filterExtractedStringWithoutUpdatingFilterRules:(NSString *)string options:(_WKTextExtractionFilterOptions)options completionHandler:(void(^)(NSString *))completionHandler;
 // FIXME(rdar://189512757): NS_DIRECT avoids emitting an ObjC type encoding for std::expected, which crashes clang. Remove when resolved.

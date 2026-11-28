@@ -30,8 +30,7 @@
 #include "RenderObjectInlines.h"
 #include "StyleResolver.h"
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 // MARK: - GeneratedImage.
 
@@ -51,7 +50,7 @@ NaturalDimensions GeneratedImage::naturalDimensions(const RenderElement&, const 
 
 void GeneratedImage::addClient(RenderElement& renderer)
 {
-    if (m_clients.isEmptyIgnoringNullReferences())
+    if (m_clients.computeIsEmpty())
         ref();
 
     m_clients.add(renderer);
@@ -67,7 +66,7 @@ void GeneratedImage::removeClient(RenderElement& renderer)
 
     this->didRemoveClient(renderer);
 
-    if (m_clients.isEmptyIgnoringNullReferences())
+    if (m_clients.computeIsEmpty())
         deref();
 }
 
@@ -76,5 +75,4 @@ bool GeneratedImage::hasClient(RenderElement& renderer) const
     return m_clients.contains(renderer);
 }
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

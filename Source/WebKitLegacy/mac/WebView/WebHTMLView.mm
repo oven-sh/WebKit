@@ -1166,8 +1166,7 @@ NODELETE static NSControlStateValue kit(TriState state)
 {
     auto textNodes = adoptNS([[NSMutableArray alloc] init]);
 
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL NSString *path in paths) {
+    for (NSString *path in paths) {
         // Non-image file types; _web_userVisibleString is appropriate here because this will
         // be pasted as visible text.
         NSString *url = [[[NSURL fileURLWithPath:path] _webkit_canonicalize] _web_userVisibleString];
@@ -1454,8 +1453,7 @@ NODELETE static NSControlStateValue kit(TriState state)
 {
     auto array = adoptNS([[NSMutableArray alloc] initWithObjects:self, nil]);
     [self _web_addDescendentWebHTMLViewsToArray:array.get()];
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL WebHTMLView *view in array.get())
+    for (WebHTMLView *view in array.get())
         [view _setPrinting:printing minimumPageLogicalWidth:0 logicalHeight:0 originalPageWidth:0 originalPageHeight:0 maximumShrinkRatio:0 adjustViewSize:adjustViewSize paginateScreenContent:[self _isInScreenPaginationMode]];
 }
 
@@ -1839,8 +1837,7 @@ static BOOL isQuickLookEvent(NSEvent *event)
     if (id owner = _private->trackingRectOwner.getAutoreleased())
         return owner;
 
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL NSTrackingArea *trackingArea in self.trackingAreas) {
+    for (NSTrackingArea *trackingArea in self.trackingAreas) {
         static Class managerClass = NSClassFromString(@"NSToolTipManager");
 
         id owner = trackingArea.owner;
@@ -2366,8 +2363,7 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
         if (subresources)
             *subresources = localSubresources;
 
-        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-        for (SUPPRESS_UNRETAINED_LOCAL WebResource *resource in localSubresources)
+        for (WebResource *resource in localSubresources)
             [[self _dataSource] addSubresource:resource];
 
         if (!wasDeferringCallbacks)
@@ -2517,22 +2513,7 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 
 - (CGFloat)_adjustedBottomOfPageWithTop:(CGFloat)top bottom:(CGFloat)bottom limit:(CGFloat)bottomLimit
 {
-    RefPtr frame = core([self _frame]);
-    if (!frame)
-        return bottom;
-
-    RefPtr view = frame->view();
-    if (!view)
-        return bottom;
-
-    float newBottom;
-    view->adjustPageHeightDeprecated(&newBottom, top, bottom, bottomLimit);
-
-    // If the new bottom is equal to the old bottom (when both are treated as floats), we just return the original
-    // bottom. This prevents rounding errors that can occur when converting newBottom to a double.
-    if (WTF::areEssentiallyEqual(static_cast<float>(bottom), newBottom))
-        return bottom;
-    return newBottom;
+    return bottom;
 }
 
 #if PLATFORM(IOS_FAMILY)
@@ -2564,8 +2545,7 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 
 - (void)_web_addDescendentWebHTMLViewsToArray:(NSMutableArray *)array
 {
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL NSView *child in [self subviews]) {
+    for (NSView *child in [self subviews]) {
         if ([child isKindOfClass:[WebHTMLView class]])
             [array addObject:child];
         [child _web_addDescendentWebHTMLViewsToArray:array];
@@ -3423,8 +3403,7 @@ static RetainPtr<NSArray> fixMenusToSendToOldClients(NSMutableArray *defaultMenu
     if (!preVersion3Client)
         return savedItems;
 
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL NSMenuItem *item in defaultMenuItems) {
+    for (NSMenuItem *item in defaultMenuItems) {
         int tag = item.tag;
         int oldStyleTag = tag;
 
@@ -3474,8 +3453,7 @@ static RetainPtr<NSArray> fixMenusReceivedFromOldClients(NSArray *delegateSuppli
         return newMenuItems;
     
     // Restore the modern tags to the menu items whose tags we altered in fixMenusToSendToOldClients. 
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL NSMenuItem *item in newMenuItems.get()) {
+    for (NSMenuItem *item in newMenuItems.get()) {
         int tag = [item tag];
         int modernTag = tag;
         
@@ -3657,8 +3635,7 @@ static RetainPtr<NSMenuItem> createMenuItem(const WebCore::HitTestResult& hitTes
         auto menu = adoptNS([[NSMenu alloc] init]);
         {
             auto submenuItems = createMenuItems(hitTestResult, item.subMenuItems());
-            // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-            for (SUPPRESS_UNRETAINED_LOCAL NSMenuItem *menuItem in submenuItems.get())
+            for (NSMenuItem *menuItem in submenuItems.get())
                 [menu addItem:menuItem];
         }
 
@@ -3704,8 +3681,7 @@ static RetainPtr<NSArray> customMenuFromDefaultItems(WebView *webView, const Web
             return defaultMenuItems;
     }
 
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL NSMenuItem *menuItem in defaultMenuItems.get()) {
+    for (NSMenuItem *menuItem in defaultMenuItems.get()) {
         if (!menuItem.representedObject)
             menuItem.representedObject = element.get();
     }
@@ -3759,8 +3735,7 @@ static RetainPtr<NSArray> customMenuFromDefaultItems(WebView *webView, const Web
 
     auto menu = adoptNS([[NSMenu alloc] init]);
 
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL NSMenuItem *item in menuItems.get()) {
+    for (NSMenuItem *item in menuItems.get()) {
         [menu addItem:item];
 
         if (item.tag == WebCore::ContextMenuItemTagShareMenu) {
@@ -3970,7 +3945,7 @@ static BOOL currentScrollIsBlit(NSView *clipView)
 
 #ifdef LOG_TIMES
     double thisTime = CFAbsoluteTimeGetCurrent() - start;
-    LOG(Timing, "%s draw seconds = %f", widget->part()->baseURL().URL().utf8(), thisTime);
+    LOG(Timing, "%s draw seconds = %f", makeUTF8CString(widget->part()->baseURL().URL()), thisTime);
 #endif
 
 #if PLATFORM(MAC)
@@ -4751,17 +4726,15 @@ static RefPtr<WebCore::KeyboardEvent> currentKeyboardEvent(WebCore::LocalFrame* 
     return YES;
 }
 
-// This is needed for the case where the webview is embedded in the view that's being printed.
-// It shouldn't be called when the webview is being printed directly.
+// AppKit calls this when the webview is embedded in the view being printed. Entering print mode
+// applies print styles. Page breaks are left to AppKit.
 - (void)adjustPageHeightNew:(CGFloat *)newBottom top:(CGFloat)oldTop bottom:(CGFloat)oldBottom limit:(CGFloat)bottomLimit
 {
-    // This helps when we print as part of a larger print process.
-    // If the WebHTMLView itself is what we're printing, then we will never have to do this.
     BOOL wasInPrintingMode = _private->printing;
     if (!wasInPrintingMode)
         [self _setPrinting:YES minimumPageLogicalWidth:0 logicalHeight:0 originalPageWidth:0 originalPageHeight:0 maximumShrinkRatio:0 adjustViewSize:NO paginateScreenContent:[self _isInScreenPaginationMode]];
 
-    *newBottom = [self _adjustedBottomOfPageWithTop:oldTop bottom:oldBottom limit:bottomLimit];
+    *newBottom = oldBottom;
 
     if (!wasInPrintingMode) {
         NSPrintOperation *currenPrintOperation = [NSPrintOperation currentOperation];
@@ -6575,7 +6548,7 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 #if PLATFORM(MAC)
     if (isAttributedString) {
         // FIXME: We ignore most attributes from the string, so an input method cannot specify e.g. a font or a glyph variation.
-        text = [string string];
+        text = [checked_objc_cast<NSAttributedString>(string) string];
         NSString *rangeString = [string attribute:NSTextInputReplacementRangeAttributeName atIndex:0 longestEffectiveRange:0 inRange:NSMakeRange(0, [text length])];
         LOG(TextInput, "    ReplacementRange: %@", rangeString);
         // The AppKit adds a 'secret' property to the string that contains the replacement range.
@@ -6691,7 +6664,7 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
         registerUndoGroup = WebCore::shouldRegisterInsertionUndoGroup(checked_objc_cast<NSAttributedString>(string));
         // FIXME: We ignore most attributes from the string, so for example inserting from Character Palette loses font and glyph variation data.
         // It does not look like any input methods ever use insertText: with attributes other than NSTextInputReplacementRangeAttributeName.
-        text = [string string];
+        text = [checked_objc_cast<NSAttributedString>(string) string];
         NSString *rangeString = [string attribute:NSTextInputReplacementRangeAttributeName atIndex:0 longestEffectiveRange:0 inRange:NSMakeRange(0, [text length])];
         LOG(TextInput, "    ReplacementRange: %@", rangeString);
         if (rangeString) {

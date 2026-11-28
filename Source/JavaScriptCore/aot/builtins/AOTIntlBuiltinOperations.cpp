@@ -41,7 +41,7 @@ namespace JSC { namespace AOT {
 
 struct FormatPatternState {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(FormatPatternState);
-    UncheckedKeyHashMap<const FormatPatternHeader*, UTCOffsetOfStretch> utcOffsetsByPattern;
+    HashMap<const FormatPatternHeader*, UTCOffsetOfStretch> utcOffsetsByPattern;
     Weak<Structure> objectPrototypeWithoutOptions;
 };
 

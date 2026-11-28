@@ -46,6 +46,7 @@
 #include <WebCore/ImageBufferTransferIdentifier.h>
 #include <WebCore/NotificationEventType.h>
 #include <WebCore/RegistrableDomain.h>
+#include <WebCore/Site.h>
 #include <memory>
 #include <wtf/Deque.h>
 #include <wtf/MonotonicTime.h>
@@ -164,7 +165,7 @@ public:
     Ref<DownloadProxy> createDownloadProxy(WebsiteDataStore&, Ref<API::DownloadClient>&&, const WebCore::ResourceRequest&, const std::optional<FrameInfoData>&, WebPageProxy* originatingPage);
     void dataTaskWithRequest(WebPageProxy&, PAL::SessionID, WebCore::ResourceRequest&&, const std::optional<WebCore::SecurityOriginData>& topOrigin, bool shouldRunAtForegroundPriority, CompletionHandler<void(API::DataTask&)>&&);
 
-    void addAllowedFirstPartyForCookies(WebProcessProxy&, const WebCore::RegistrableDomain& firstPartyForCookies, LoadedWebArchive, CompletionHandler<void()>&&);
+    void addAllowedFirstPartyForCookies(WebProcessProxy&, const WebCore::Site& firstPartyForCookies, LoadedWebArchive, CompletionHandler<void()>&&);
     void addAllowedWebPageProxyIdentifier(WebProcessProxy&, WebPageProxyIdentifier);
     void authorizeDownloadForWebProcess(WebProcessProxy&, DownloadID, CompletionHandler<void()>&&);
     void addAllowedFilePaths(WebProcessProxy&, const Vector<String>& paths);
@@ -252,6 +253,7 @@ public:
     void setFirstPartyHostCNAMEDomainForTesting(PAL::SessionID, const String& firstPartyHost, const RegistrableDomain& cnameDomain, CompletionHandler<void()>&&);
     void setThirdPartyCNAMEDomainForTesting(PAL::SessionID, const WebCore::RegistrableDomain&, CompletionHandler<void()>&&);
     void setDomainsWithUserInteraction(HashSet<WebCore::RegistrableDomain>&&);
+    void didGrantPageLevelStorageAccess(WebPageProxyIdentifier, WebCore::RegistrableDomain&& topFrameDomain, WebCore::RegistrableDomain&& subFrameDomain);
     void setDomainsWithCrossPageStorageAccess(HashMap<TopFrameDomain, Vector<SubResourceDomain>>&&, CompletionHandler<void()>&&);
 
     void setPrivateClickMeasurementDebugMode(PAL::SessionID, bool);
@@ -525,7 +527,7 @@ private:
 #endif
 
     WeakHashSet<WebsiteDataStore> m_websiteDataStores;
-    WeakHashMap<WebProcessProxy, std::pair<LoadedWebArchive, HashSet<WebCore::RegistrableDomain>>> m_allowedFirstPartiesForCookies;
+    WeakHashMap<WebProcessProxy, std::pair<LoadedWebArchive, HashSet<WebCore::Site>>> m_allowedFirstPartiesForCookies;
     unsigned m_pendingAddAllowedFirstPartyForCookiesReplies { 0 };
     WeakHashMap<WebProcessProxy, HashSet<WebPageProxyIdentifier>> m_allowedWebPageProxyIdentifiers;
     WeakHashMap<WebProcessProxy, HashSet<String>> m_allowedFilePathsByProcess;

@@ -45,7 +45,9 @@
 
 namespace WebCore {
 
+#if PLATFORM(COCOA)
 static bool shouldForceContentSniffing;
+#endif
 
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(ResourceHandleInternal);
 
@@ -55,7 +57,7 @@ NODELETE static BuiltinResourceHandleConstructorMap& builtinResourceHandleConstr
 #if PLATFORM(IOS_FAMILY)
     ASSERT(WebThreadIsLockedOrDisabled());
 #else
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
 #endif
     static NeverDestroyed<BuiltinResourceHandleConstructorMap> map;
     return map;
@@ -69,7 +71,7 @@ void ResourceHandle::registerBuiltinConstructor(const AtomString& protocol, Reso
 typedef HashMap<AtomString, ResourceHandle::BuiltinSynchronousLoader> BuiltinResourceHandleSynchronousLoaderMap;
 NODELETE static BuiltinResourceHandleSynchronousLoaderMap& builtinResourceHandleSynchronousLoaderMap()
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     static NeverDestroyed<BuiltinResourceHandleSynchronousLoaderMap> map;
     return map;
 }
@@ -287,7 +289,9 @@ bool ResourceHandle::shouldContentSniffURL(const URL& url)
 
 void ResourceHandle::forceContentSniffing()
 {
+#if PLATFORM(COCOA)
     shouldForceContentSniffing = true;
+#endif
 }
 
 void ResourceHandle::setDefersLoading(bool defers)

@@ -137,7 +137,7 @@ void PageClientImpl::setViewNeedsDisplay(const Region&)
 
 void PageClientImpl::requestScroll(const FloatPoint& scrollPosition, const IntPoint& scrollOrigin, ScrollIsAnimated animated, InterruptScrollAnimation interrupt)
 {
-    [webView() _scrollToContentScrollPosition:scrollPosition scrollOrigin:scrollOrigin animated:animated == ScrollIsAnimated::Yes interruptAnimation:interrupt == InterruptScrollAnimation::Yes];
+    [webView() _scrollToContentScrollPosition:scrollPosition scrollOrigin:scrollOrigin animated:animated == ScrollIsAnimated::Yes interruptAnimation:interrupt];
 }
 
 WebCore::FloatPoint PageClientImpl::viewScrollPosition()
@@ -376,7 +376,7 @@ void PageClientImpl::decidePolicyForGeolocationPermissionRequest(WebFrameProxy& 
         return std::exchange(completionHandler, nullptr)(false);
     if (auto webView = this->webView()) {
         RetainPtr geolocationProvider = [protect(wrapper(webView->_page->configuration().processPool())) _geolocationProvider];
-        [geolocationProvider decidePolicyForGeolocationRequestFromOrigin:FrameInfoData { frameInfo } topOrigin:mainFrame->documentSecurityOriginData() completionHandler:std::exchange(completionHandler, nullptr) view:webView.get()];
+        [geolocationProvider decidePolicyForGeolocationRequestFromOrigin:FrameInfoData { frameInfo } frameOrigin:frame.documentSecurityOriginData() topOrigin:mainFrame->documentSecurityOriginData() completionHandler:std::exchange(completionHandler, nullptr) view:webView.get()];
     }
 }
 
@@ -986,6 +986,17 @@ bool PageClientImpl::lockFullscreenOrientation(WebCore::ScreenOrientationType or
 void PageClientImpl::unlockFullscreenOrientation()
 {
     [[webView() fullScreenWindowController] resetSupportedOrientations];
+}
+
+void PageClientImpl::beginRequestFullscreen()
+{
+    [[webView() fullScreenWindowController] installPlaceholderSnapshot];
+}
+
+void PageClientImpl::endRequestFullscreen()
+{
+    if ([webView() hasFullScreenWindowController])
+        [[webView() fullScreenWindowController] discardPlaceholderSnapshot];
 }
 
 void PageClientImpl::beganEnterFullScreen(const IntRect& initialFrame, const IntRect& finalFrame, CompletionHandler<void(bool)>&& completionHandler)

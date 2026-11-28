@@ -43,6 +43,7 @@
 typedef struct opaqueCMSampleBuffer *CMSampleBufferRef;
 typedef struct CF_BRIDGED_TYPE(id) __CVBuffer *CVPixelBufferRef;
 typedef struct __CVBuffer *CVImageBufferRef;
+typedef struct __CVPixelBufferPool *CVPixelBufferPoolRef;
 typedef struct OpaqueCMTaggedBufferGroup *CMTaggedBufferGroupRef;
 typedef UInt32 VTDecodeInfoFlags;
 typedef struct OpaqueVTDecompressionSession*  VTDecompressionSessionRef;
@@ -69,6 +70,8 @@ public:
         NonDisplaying = 1 << 0,
         RealTime = 1 << 1,
         EnableStereo = 1 << 2,
+        // Fail instead of decoding in software formats the content process can decode.
+        HardwareOnly = 1 << 3,
     };
     using DecodingFlags = OptionSet<DecodingFlag>;
 
@@ -79,18 +82,22 @@ public:
     bool isHardwareAccelerated() const;
 
 private:
-    WEBCORE_EXPORT WebCoreDecompressionSession(NSDictionary *, GuaranteedSerialFunctionDispatcher*);
+    enum class IsAlphaDecoder : bool { No, Yes };
+    WEBCORE_EXPORT WebCoreDecompressionSession(NSDictionary *, GuaranteedSerialFunctionDispatcher*, IsAlphaDecoder = IsAlphaDecoder::No);
     static NSDictionary *defaultPixelBufferAttributes();
 
-    std::expected<RefPtr<VideoDecoderVTBSession>, OSStatus> ensureDecoderForSample(CMSampleBufferRef);
+    std::expected<RefPtr<VideoDecoderVTBSession>, OSStatus> ensureDecoderForSample(CMSampleBufferRef, DecodingFlags);
 
     Ref<DecodingPromise> decodeSampleInternal(CMSampleBufferRef, DecodingFlags);
+    Ref<DecodingPromise> decodeSampleWithAlpha(CMSampleBufferRef, CFArrayRef alphaDatas, DecodingFlags);
+    std::expected<Vector<RetainPtr<CMSampleBufferRef>>, OSStatus> compositeAlphaOntoColorFrames(Vector<RetainPtr<CMSampleBufferRef>>&&, const Vector<RetainPtr<CVPixelBufferRef>>& alphaPixelBuffers);
     void assignResourceOwner(CVImageBufferRef);
 
     Ref<MediaPromise> initializeVideoDecoder(FourCharCode, std::span<const uint8_t>, const std::optional<PlatformVideoColorSpace>&);
     bool isInvalidated() const { return m_invalidated; }
 
     const RetainPtr<NSDictionary> m_pixelBufferAttributes;
+    const IsAlphaDecoder m_isAlphaDecoder;
     static WorkQueue& queueSingleton();
     const Ref<GuaranteedSerialFunctionDispatcher> m_dispatcher;
 
@@ -115,6 +122,14 @@ private:
     // with a capability guard because the owning thread differs per instance.
     bool m_waitingForKeyframe { true };
     RetainPtr<CMFormatDescriptionRef> m_currentImageDescription WTF_GUARDED_BY_CAPABILITY(m_dispatcher.get());
+
+    // WebM alpha compositing.
+    RefPtr<WebCoreDecompressionSession> m_alphaDecompressionSession WTF_GUARDED_BY_LOCK(m_lock);
+    RetainPtr<CMFormatDescriptionRef> m_alphaSourceFormatDescription WTF_GUARDED_BY_LOCK(m_lock);
+    bool m_alphaDecoderIsFullRange WTF_GUARDED_BY_LOCK(m_lock) { false };
+    RetainPtr<CVPixelBufferPoolRef> m_mergedPixelBufferPool WTF_GUARDED_BY_CAPABILITY(m_dispatcher.get());
+    RetainPtr<CMFormatDescriptionRef> m_mergedFormatDescription WTF_GUARDED_BY_CAPABILITY(m_dispatcher.get());
+    RetainPtr<CMFormatDescriptionRef> m_mergedSourceFormatDescription WTF_GUARDED_BY_CAPABILITY(m_dispatcher.get());
 
     // Stereo playback support
     const bool m_stereoSupported { false };

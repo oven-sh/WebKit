@@ -49,10 +49,6 @@ namespace WebKit {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteLayerTreeTransaction);
 
-RemoteLayerTreeTransaction::RemoteLayerTreeTransaction(RemoteLayerTreeTransaction&&) = default;
-
-RemoteLayerTreeTransaction& RemoteLayerTreeTransaction::operator=(RemoteLayerTreeTransaction&&) = default;
-
 RemoteLayerTreeTransaction::RemoteLayerTreeTransaction() = default;
 
 RemoteLayerTreeTransaction::~RemoteLayerTreeTransaction() = default;
@@ -60,6 +56,17 @@ RemoteLayerTreeTransaction::~RemoteLayerTreeTransaction() = default;
 void RemoteLayerTreeTransaction::setRootLayerID(WebCore::PlatformLayerIdentifier rootLayerID)
 {
     m_rootLayerID = rootLayerID;
+}
+
+void RemoteLayerTreeTransaction::copyRootStateFrom(const RemoteLayerTreeTransaction& other)
+{
+    m_rootLayerID = other.m_rootLayerID;
+    m_remoteContextHostedIdentifier = other.m_remoteContextHostedIdentifier;
+    m_contentsSize = other.m_contentsSize;
+    m_scrollGeometryContentSize = other.m_scrollGeometryContentSize;
+    m_scrollOrigin = other.m_scrollOrigin;
+    m_scrollPosition = other.m_scrollPosition;
+    // No need to copy m_timelinesUpdate: timelines are registered with the page-wide drawing area, not per layer tree.
 }
 
 void RemoteLayerTreeTransaction::layerPropertiesChanged(PlatformCALayerRemote& remoteLayer)
@@ -250,6 +257,18 @@ static void dumpChangedLayers(TextStream& ts, const LayerPropertiesMap& changedL
         if (layerProperties.changedProperties & LayerChange::ShadowPathChanged)
             ts.dumpProperty("shadowPath"_s, layerProperties.shadowPath.isEmpty() ? "empty" : "set");
 
+        if (layerProperties.changedProperties & LayerChange::HidesFromScreenCaptureChanged)
+            ts.dumpProperty("hidesFromScreenCapture"_s, layerProperties.hidesFromScreenCapture);
+
+#if ENABLE(THREADED_ANIMATIONS)
+        if (layerProperties.changedProperties & LayerChange::AnimationExtentChanged) {
+            if (auto& animationExtent = layerProperties.animationExtent)
+                ts.dumpProperty("animationExtent"_s, *animationExtent);
+            else
+                ts.dumpProperty("animationExtent"_s, "unknown");
+        }
+#endif
+
         if (auto displayOnlyImage = layerProperties.displayOnlyImage)
             ts.dumpProperty("displayOnlyImage"_s, *displayOnlyImage);
     }
@@ -257,7 +276,7 @@ static void dumpChangedLayers(TextStream& ts, const LayerPropertiesMap& changedL
 
 void RemoteLayerTreeTransaction::dump() const
 {
-    SAFE_WTFLOGALWAYS("%s", description().utf8());
+    SAFE_WTFLOGALWAYS("%s", makeUTF8CString(description()));
 }
 
 String RemoteLayerTreeTransaction::description() const

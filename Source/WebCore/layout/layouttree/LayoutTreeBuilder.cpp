@@ -37,8 +37,7 @@
 #include <wtf/text/MakeString.h>
 #include <wtf/text/TextStream.h>
 
-namespace WebCore {
-namespace Layout {
+namespace WebCore::Layout {
 
 #if ENABLE(TREE_DEBUGGING)
 void showInlineTreeAndRuns(TextStream& stream, const LayoutState& layoutState, const ElementBox& inlineFormattingRoot, size_t depth)
@@ -60,7 +59,7 @@ void showInlineTreeAndRuns(TextStream& stream, const LayoutState& layoutState, c
         addSpacing();
         auto& line = lines[lineIndex];
         auto& lineBoxRect = line.lineBoxRect();
-        stream << "line at (" << lineBoxRect.x() << "," << lineBoxRect.y() << ") size (" << lineBoxRect.width() << "x" << lineBoxRect.height() << ") baseline (" << line.baseline() << ") enclosing top (" << line.enclosingContentLogicalTop() << ") bottom (" << line.enclosingContentLogicalBottom() << ")";
+        stream << "line at (" << lineBoxRect.x() << "," << lineBoxRect.y() << ") size (" << lineBoxRect.width() << "x" << lineBoxRect.height() << ") baseline (" << line.baseline() << ") enclosing top (" << line.enclosingBorderBoxLogicalTop() << ") bottom (" << line.enclosingBorderBoxLogicalBottom() << ")";
         stream.nextLine();
 
         addSpacing();
@@ -70,7 +69,7 @@ void showInlineTreeAndRuns(TextStream& stream, const LayoutState& layoutState, c
         auto outputInlineLevelBox = [&](const auto& inlineLevelBox) {
             addSpacing();
             stream << "    ";
-            auto rect = inlineLevelBox.visualRectIgnoringBlockDirection();
+            auto rect = inlineLevelBox.blockStartRelativePhysicalRect();
             auto& layoutBox = inlineLevelBox.layoutBox();
             if (layoutBox.isAtomicInlineBox())
                 stream << "Atomic inline box";
@@ -227,7 +226,7 @@ String layoutTreeAsText(const InitialContainingBlock& initialContainingBlock, co
 void showLayoutTree(const InitialContainingBlock& initialContainingBlock, const LayoutState* layoutState)
 {
     auto treeAsText = layoutTreeAsText(initialContainingBlock, layoutState);
-    SAFE_WTFLOGALWAYS("%s", treeAsText.utf8());
+    SAFE_WTFLOGALWAYS("%s", makeUTF8CString(treeAsText));
 }
 
 void showLayoutTree(const InitialContainingBlock& initialContainingBlock)
@@ -236,5 +235,4 @@ void showLayoutTree(const InitialContainingBlock& initialContainingBlock)
 }
 #endif
 
-}
 }

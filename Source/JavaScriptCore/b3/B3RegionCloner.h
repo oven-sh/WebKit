@@ -23,8 +23,8 @@ class Procedure;
 class RegionCloner {
     WTF_MAKE_NONCOPYABLE(RegionCloner);
 public:
-    using BlockMap = UncheckedKeyHashMap<BasicBlock*, BasicBlock*>;
-    using ValueMap = UncheckedKeyHashMap<Value*, Value*>;
+    using BlockMap = HashMap<BasicBlock*, BasicBlock*>;
+    using ValueMap = HashMap<Value*, Value*>;
     enum class PhiTreatment : uint8_t { Demote, KeepIfJumpFed };
     enum class ValueOwners : uint8_t { MayBeStale, AreCurrent };
 

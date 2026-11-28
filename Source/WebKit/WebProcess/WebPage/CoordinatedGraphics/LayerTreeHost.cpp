@@ -266,6 +266,13 @@ void LayerTreeHost::setViewOverlayRootLayer(GraphicsLayer* graphicsLayer)
 
 void LayerTreeHost::updateRenderingWithForcedRepaint()
 {
+    if (m_webPage->size().isEmpty()) {
+        m_pendingForceRepaint = false;
+        if (m_forcedRepaintAsyncCallback)
+            m_forcedRepaintAsyncCallback();
+        return;
+    }
+
     if (m_isWaitingForRenderer) {
         if (m_forcedRepaintAsyncCallback)
             m_pendingForceRepaint = true;
@@ -372,16 +379,22 @@ bool LayerTreeHost::isCompositionRequiredOrOngoing() const
 
 void LayerTreeHost::requestComposition(CompositionReason reason)
 {
-#if ENABLE(SCROLLING_THREAD)
-    if (ScrollingThread::isCurrentThread()) {
-        m_sceneState->flushPendingState();
-        if (!m_compositionRequiredInScrollingThread)
-            return;
-        m_compositionRequiredInScrollingThread = false;
-    }
-#endif
-
     m_compositor->requestComposition(reason);
+}
+
+void LayerTreeHost::didChangeLayerPendingScrollingPosition(CoordinatedPlatformLayer& layer)
+{
+    m_sceneState->didChangeLayerPendingScrollingPosition(layer);
+}
+
+void LayerTreeHost::didApplyLayerScrollingPositions()
+{
+    m_sceneState->commitPendingScrollingPositions();
+
+#if ENABLE(SCROLLING_THREAD)
+    if (ScrollingThread::isCurrentThread() && std::exchange(m_compositionRequiredInScrollingThread, false))
+        requestComposition(CompositionReason::AsyncScrolling);
+#endif
 }
 
 RunLoop* LayerTreeHost::compositingRunLoop() const

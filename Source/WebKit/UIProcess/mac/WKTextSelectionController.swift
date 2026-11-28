@@ -54,11 +54,7 @@ extension WKTextSelectionController {
     }
 
     func addTextSelectionManager() {
-        guard let view, let page = view._protectedPage().get() else {
-            return
-        }
-
-        guard page.preferences().useAppKitGestures() else {
+        guard let view else {
             return
         }
 
@@ -245,8 +241,8 @@ extension WKTextSelectionController {
             return
         }
 
-        impl.mouseDown(mouseDown, .Automation)
-        impl.mouseUp(mouseUp, .Automation)
+        impl.mouseDown(mouseDown, .Touch)
+        impl.mouseUp(mouseUp, .Touch)
     }
 
     @objc(dragSelectionWithGesture:completionHandler:)
@@ -286,8 +282,8 @@ extension WKTextSelectionController {
             completionHandler(session)
         }
 
-        impl.mouseDown(mouseDown, .Automation, .Yes)
-        impl.mouseDragged(mouseDragged, .Automation, .Yes)
+        impl.mouseDown(mouseDown, .Touch, .Yes)
+        impl.mouseDragged(mouseDragged, .Touch, .Yes)
 
         gesture.addTarget(self, action: #selector(textSelectionDragGestureUpdated(_:)))
     }
@@ -318,7 +314,7 @@ extension WKTextSelectionController {
                 return
             }
 
-            impl.mouseDragged(mouseDragged, .Automation, .Yes)
+            impl.mouseDragged(mouseDragged, .Touch, .Yes)
 
         case .ended, .cancelled, .failed:
             guard
@@ -334,7 +330,7 @@ extension WKTextSelectionController {
                 break
             }
 
-            impl.mouseUp(mouseUp, .Automation, .Yes)
+            impl.mouseUp(mouseUp, .Touch, .Yes)
             gesture.removeTarget(self, action: #selector(textSelectionDragGestureUpdated(_:)))
 
         default:

@@ -86,7 +86,8 @@ using HeapList = Vector<const Machine::AbstractHeap*, 16>;
     v(JSCell_typeInfoType, JSCell::typeInfoTypeOffset(), Immutable) \
     v(JSPropertyNameEnumerator_cachedInlineCapacity, JSPropertyNameEnumerator::cachedInlineCapacityOffset(), Immutable) \
     v(JSPropertyNameEnumerator_cachedPropertyNamesVector, JSPropertyNameEnumerator::cachedPropertyNamesVectorOffset(), ImmutableInnerPointer) \
-    v(JSPropertyNameEnumerator_cachedStructureID, JSPropertyNameEnumerator::cachedStructureIDOffset(), Immutable) \
+    v(JSPropertyNameEnumerator_cachedStructureIDForNames, JSPropertyNameEnumerator::cachedStructureIDForNamesOffset(), Immutable) \
+    v(JSPropertyNameEnumerator_cachedStructureIDForNamesAndOffsets, JSPropertyNameEnumerator::cachedStructureIDForNamesAndOffsetsOffset(), Immutable) \
     v(JSPropertyNameEnumerator_endGenericPropertyIndex, JSPropertyNameEnumerator::endGenericPropertyIndexOffset(), Immutable) \
     v(JSPropertyNameEnumerator_endStructurePropertyIndex, JSPropertyNameEnumerator::endStructurePropertyIndexOffset(), Immutable) \
     v(JSPropertyNameEnumerator_indexLength, JSPropertyNameEnumerator::indexedLengthOffset(), Immutable) \

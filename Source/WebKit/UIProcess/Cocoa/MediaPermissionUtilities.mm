@@ -46,6 +46,7 @@
 #import <WebCore/SecurityOriginData.h>
 #import <mutex>
 #import <wtf/BlockPtr.h>
+#import <wtf/Borrow.h>
 #import <wtf/Function.h>
 #import <wtf/Markable.h>
 #import <wtf/NativePromise.h>
@@ -244,7 +245,7 @@ bool checkUsageDescriptionStringForSpeechRecognition()
 
 static RetainPtr<NSString> visibleDomain(const String& host)
 {
-    auto domain = WTF::URLHelpers::userVisibleURL(host.utf8().span());
+    auto domain = WTF::URLHelpers::userVisibleURL(makeUTF8CString(host).span());
     return startsWithLettersIgnoringASCIICase(domain, "www."_s) ? StringView(domain).substring(4).createNSString() : domain.createNSString();
 }
 
@@ -435,7 +436,7 @@ void alertForPermission(WebPageProxy& page, PermissionPromptRequest&& request, C
 
     [alert addAction:allowAction.get()];
 
-    for (auto& action : request.customization.additionalActions) {
+    for (auto& action : borrow(request.customization.additionalActions)) {
         bool granted = action.decision == MediaPermissionPromptAdditionalAction::Decision::Allow;
         [alert addAction:[UIAlertAction actionWithTitle:action.title.createNSString().get() style:UIAlertActionStyleDefault handler:[completionBlock, source = action.source, granted](UIAlertAction *) {
             completionBlock({ .granted = granted, .wasAnswered = true, .chosenAction = source });
@@ -625,6 +626,8 @@ public:
 
     Vector<Device> cameras() const final { return devicesForTesting(CapturePreviewDeviceType::Camera); }
     Vector<Device> microphones() const final { return devicesForTesting(CapturePreviewDeviceType::Microphone); }
+    bool cameraMenuEnabled() const final { return [m_prompt selection].isMenuEnabled(CapturePreviewDeviceType::Camera); }
+    bool microphoneMenuEnabled() const final { return [m_prompt selection].isMenuEnabled(CapturePreviewDeviceType::Microphone); }
     String selectedCameraID() const final { return [m_prompt selection].selectedDeviceID(CapturePreviewDeviceType::Camera); }
     String selectedMicrophoneID() const final { return [m_prompt selection].selectedDeviceID(CapturePreviewDeviceType::Microphone); }
     unsigned audioLevelUpdateCount() const final { return [m_prompt audioLevelUpdateCount]; }
@@ -711,7 +714,7 @@ CapturePreviewPromptHandles alertForPermissionForTesting(WebPageProxy& page, Cap
     PermissionPromptRequest textRequest { .reason = request.reason, .origin = request.origin, .customization = request.customization };
     Vector<String> buttonTitles;
     buttonTitles.append(promptAllowButtonText(textRequest).get());
-    for (auto& action : request.customization.additionalActions)
+    for (auto& action : borrow(request.customization.additionalActions))
         buttonTitles.append(action.title);
     buttonTitles.append(promptDenyButtonText(textRequest).get());
 
@@ -773,8 +776,9 @@ CapturePreviewPromptHandles alertForPermissionWithCapturePreview(WebPageProxy& p
     RetainPtr allowButton = [sheet addButtonWithTitle:promptAllowButtonText(textRequest).get() response:NSAlertFirstButtonReturn];
 
     RetainPtr allowButtons = adoptNS([[NSMutableArray alloc] initWithObjects:allowButton.get(), nil]);
-    for (size_t index = 0; index < request.customization.additionalActions.size(); ++index) {
-        auto& action = request.customization.additionalActions[index];
+    Borrow additionalActions = request.customization.additionalActions;
+    for (size_t index = 0; index < additionalActions->size(); ++index) {
+        auto& action = additionalActions->at(index);
         RetainPtr additionalButton = [sheet addButtonWithTitle:action.title.createNSString().get() response:NSAlertThirdButtonReturn + index];
         if (action.decision == MediaPermissionPromptAdditionalAction::Decision::Allow)
             [allowButtons addObject:additionalButton.get()];

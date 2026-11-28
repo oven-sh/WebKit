@@ -56,22 +56,22 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(GStreamerVideoEncoderFactory);
 
 class GStreamerEncodedImageBuffer : public webrtc::EncodedImageBufferInterface {
 public:
-    static webrtc::scoped_refptr<GStreamerEncodedImageBuffer> create(std::span<const uint8_t> data)
+    static webrtc::scoped_refptr<GStreamerEncodedImageBuffer> create(Vector<uint8_t>&& data)
     {
-        return webrtc::make_ref_counted<GStreamerEncodedImageBuffer>(data);
+        return webrtc::make_ref_counted<GStreamerEncodedImageBuffer>(WTF::move(data));
     }
 
-    const uint8_t* data() const override { return m_data.data(); }
-    size_t size() const override { return m_data.size_bytes(); }
+    const uint8_t* data() const override { return m_data.span().data(); }
+    size_t size() const override { return m_data.size(); }
 
 protected:
-    GStreamerEncodedImageBuffer(std::span<const uint8_t> data)
-        : m_data(data)
+    GStreamerEncodedImageBuffer(Vector<uint8_t>&& data)
+        : m_data(WTF::move(data))
     {
     }
 
 private:
-    std::span<const uint8_t> m_data;
+    Vector<uint8_t> m_data;
 };
 
 class LibWebRTCGStreamerVideoEncoder final : public webrtc::VideoEncoder {
@@ -106,7 +106,7 @@ public:
             notifyEncodedFrame(WTF::move(encodedFrame));
         });
         if (!result) {
-            SAFE_GST_PRINTERRLN("Unable to create GStreamer video encoder: %s", result.error().utf8());
+            SAFE_GST_PRINTERRLN("Unable to create GStreamer video encoder: %s", makeUTF8CString(result.error()));
             return;
         }
         lazyInitialize(m_internalEncoder, WTF::move(*result));
@@ -121,7 +121,7 @@ public:
             return;
 
         webrtc::EncodedImage encodedImage;
-        encodedImage.SetEncodedData(GStreamerEncodedImageBuffer::create(frame.data.span()));
+        encodedImage.SetEncodedData(GStreamerEncodedImageBuffer::create(WTF::move(frame.data)));
 
         encodedImage._encodedWidth = m_size.width();
         encodedImage._encodedHeight = m_size.height();
@@ -280,7 +280,7 @@ private:
     webrtc::EncodedImageCallback* m_encodedImageCallback;
     IntSize m_size;
     std::optional<double> m_frameRate;
-    HashMap<int64_t, uint32_t, WTF::IntHash<int64_t>, WTF::UnsignedWithZeroKeyHashTraits<int64_t>> m_rtpTimestamps;
+    HashMap<int64_t, uint32_t> m_rtpTimestamps;
 };
 
 std::unique_ptr<webrtc::VideoEncoder> GStreamerVideoEncoderFactory::Create(const webrtc::Environment& environment, const webrtc::SdpVideoFormat& format)

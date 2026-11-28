@@ -1,0 +1,171 @@
+# An array iterator that a next() finished while another next() of it read the length stays finished: the outer call hands out the element at its own position and stores nothing.
+# Where the calls in between only stepped on, the outer call stores its own position behind them, and the next call goes on from there.
+# The getter of `length` calls next() on the iterator that is asking. Walked code reads the position again behind the length, and so does the operation that straight code calls.
+# -- source: main.js
+# function made(turn) {
+#   const list = {
+#     turn,
+#     iterator: undefined,
+#     keys: Array.prototype.keys,
+#     get length() {
+#       const turn = this.turn;
+#       if (turn === 0) {
+#         this.turn = 1;
+#         this.iterator.next();
+#         return 2;
+#       }
+#       if (turn === 1) {
+#         this.turn = 2;
+#         return 0;
+#       }
+#       if (turn === 3) {
+#         this.turn = 2;
+#         this.iterator.next();
+#         this.iterator.next();
+#         return 3;
+#       }
+#       return 3;
+#     },
+#   };
+#   list.iterator = list.keys();
+#   return list;
+# }
+# function step(list) {
+#   const result = list.iterator.next();
+#   print(result.value, result.done);
+# }
+# const finished = made(0);
+# step(finished);
+# step(finished);
+# const rewound = made(3);
+# step(rewound);
+# step(rewound);
+# -- end of source
+# The records are written by hand after that text. Of the library they hold `next` alone.
+# RUN: run-in-shell
+# CHECK: 0 false
+# CHECK-NEXT: undefined true
+# CHECK-NEXT: 0 false
+# CHECK-NEXT: 1 false
+# CHECK-NEXT: exited with 0
+# CHECK-NEXT: the source prints the same
+# RUN(CALLED): run-in-shell mechanisms=all-Inlining
+# CALLED: 0 false
+# CALLED-NEXT: undefined true
+# CALLED-NEXT: 0 false
+# CALLED-NEXT: 1 false
+# CALLED-NEXT: exited with 0
+# CALLED-NEXT: the source prints the same
+# RUN(STRAIGHT): run-in-shell testing=ForceStraightCompilation
+# STRAIGHT: 0 false
+# STRAIGHT-NEXT: undefined true
+# STRAIGHT-NEXT: 0 false
+# STRAIGHT-NEXT: 1 false
+# STRAIGHT-NEXT: exited with 0
+# STRAIGHT-NEXT: the source prints the same
+
+layout L0 module=m0 fields=[{key="turn" declared={type=anything} flags=[IsRequired]}, {key="iterator" declared={type=anything} flags=[IsRequired]}, {key="keys" declared={type=anything} flags=[IsRequired]}, {key="length" declared={type=anything} flags=[IsRequired]}] ownFieldCount=4
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f3
+    v2 = Integer
+    v3 = Call v0, -, v2 calleeName="made"
+    v4 = Call v1, -, v3 calleeName="step"
+    v5 = Call v1, -, v3 calleeName="step"
+    v6 = Integer integer=3
+    v7 = Call v0, -, v6 calleeName="made"
+    v8 = Call v1, -, v7 calleeName="step"
+    v9 = Call v1, -, v7 calleeName="step"
+    v10 = Undefined
+    Return v10
+}
+function f1 name="made" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Undefined
+    v2 = Builtin builtin=ArrayPrototypeKeys
+    v3 = NewObject -, v0, v1, v2 layout=L0 fields=[0, 1, 2]
+    v4 = NewClosure function=f2
+    DefineGetter v3, v4 key="length"
+    v6 = FinishObject v3
+    v7 = PropGet v6 key="keys"
+    v8 = Call v7, v6 calleeKey="keys" calleeName="list.keys"
+    PropSet v6, v8 key="iterator"
+    Return v6
+}
+function f2 name="length" module=m0 kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="turn"
+    v2 = Integer
+    v3 = StrictEq v1, v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = Integer integer=1
+    PropSet v0, v4 key="turn"
+    v6 = PropGet v0 key="iterator"
+    v7 = PropGet v6 key="next"
+    v8 = Call v7, v6 calleeKey="next" calleeName="next"
+    v9 = Integer integer=2
+    Return v9
+  b2():
+    v10 = Integer integer=1
+    v11 = StrictEq v1, v10
+    Branch v11 -> taken b3(), notTaken b4()
+  b3():
+    v12 = Integer integer=2
+    PropSet v0, v12 key="turn"
+    v14 = Integer
+    Return v14
+  b4():
+    v15 = Integer integer=3
+    v16 = StrictEq v1, v15
+    Branch v16 -> taken b5(), notTaken b6()
+  b5():
+    v17 = Integer integer=2
+    PropSet v0, v17 key="turn"
+    v19 = PropGet v0 key="iterator"
+    v20 = PropGet v19 key="next"
+    v21 = Call v20, v19 calleeKey="next" calleeName="next"
+    v22 = PropGet v0 key="iterator"
+    v23 = PropGet v22 key="next"
+    v24 = Call v23, v22 calleeKey="next" calleeName="next"
+    v25 = Integer integer=3
+    Return v25
+  b6():
+    v26 = Integer integer=3
+    Return v26
+}
+function f3 name="step" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="iterator"
+    v2 = PropGet v1 key="next"
+    v3 = Call v2, v1 calleeKey="next" calleeName="next"
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="print" [isFreeName]
+    v6 = PropGet v3 key="value"
+    v7 = PropGet v3 key="done"
+    v8 = Call v5, -, v6, v7 calleeName="print"
+    v9 = Undefined
+    Return v9
+}
+function f4 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+runtimefunction id=ArrayIteratorPrototypeNext function=f4 visibility=Private

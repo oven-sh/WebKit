@@ -1006,9 +1006,9 @@ void unlockNameWithoutImage(uint32_t holder, std::span<const uint8_t> name)
 static constinit RejectedChangeListener rejectedChangeListener = nullptr;
 static constinit Lock namesOfLockedObjectsLock;
 
-static UncheckedKeyHashMap<JSObject*, BuiltinID>& namesOfLockedObjects() WTF_REQUIRES_LOCK(namesOfLockedObjectsLock)
+static HashMap<JSObject*, BuiltinID>& namesOfLockedObjects() WTF_REQUIRES_LOCK(namesOfLockedObjectsLock)
 {
-    static NeverDestroyed<UncheckedKeyHashMap<JSObject*, BuiltinID>> names;
+    static NeverDestroyed<HashMap<JSObject*, BuiltinID>> names;
     return names;
 }
 

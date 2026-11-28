@@ -44,7 +44,7 @@ Wire::TextRange CompileOutput::appendText(std::span<const uint8_t> utf8)
 
 Wire::TextRange CompileOutput::appendText(const String& text)
 {
-    return appendText(byteCast<uint8_t>(text.utf8().span()));
+    return appendText(byteCast<uint8_t>(makeUTF8CString(text).span()));
 }
 
 size_t imageAlignment()

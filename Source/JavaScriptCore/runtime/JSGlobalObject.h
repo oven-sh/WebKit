@@ -43,7 +43,6 @@
 
 struct OpaqueJSClass;
 struct OpaqueJSClassContextData;
-struct OpaqueJSWeakObjectMap;
 
 OBJC_CLASS JSWrapperMap;
 
@@ -546,6 +545,7 @@ public:
 #if ENABLE(REMOTE_INSPECTOR)
     // FIXME: <http://webkit.org/b/246237> Local inspection should be controlled by `inspectable` API.
     std::unique_ptr<Inspector::JSGlobalObjectInspectorController> m_inspectorController;
+    // Not const as upstream has it: Bun replaces the debuggable that init() makes with one of a class of its own (Bun__ensureDebugger()).
     RefPtr<JSGlobalObjectDebuggable> m_inspectorDebuggable;
 #endif
 
@@ -703,7 +703,7 @@ public:
     bool isArgumentsPrototypeIteratorProtocolFastAndNonObservable();
 
 #if ENABLE(DFG_JIT) || ENABLE(AOT)
-    using ReferencedGlobalPropertyWatchpointSets = UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, Ref<WatchpointSet>, IdentifierRepHash>;
+    using ReferencedGlobalPropertyWatchpointSets = HashMap<RefPtr<UniquedStringImpl>, Ref<WatchpointSet>, IdentifierRepHash>;
     ReferencedGlobalPropertyWatchpointSets m_referencedGlobalPropertyWatchpointSets;
     ConcurrentJSLock m_referencedGlobalPropertyWatchpointSetsLock;
 #endif
@@ -766,9 +766,9 @@ public:
 
     const Ref<ImportMap> m_importMap;
 
-    Ref<SymbolImpl> m_intlLegacyConstructedSymbol;
+    const Ref<SymbolImpl> m_intlLegacyConstructedSymbol;
 
-    UncheckedKeyHashMap<String, JSCJSGlobalObjectSignpostIdentifier> m_signposts;
+    HashMap<String, JSCJSGlobalObjectSignpostIdentifier> m_signposts;
 
 #if ASSERT_ENABLED
     const JSGlobalObject* m_globalObjectAtDebuggerEntry { nullptr };
@@ -1372,6 +1372,10 @@ public:
     void queueMicrotask(VM&, InternalMicrotask, uint8_t, JSValue, JSValue, JSValue, JSValue);
 #endif
     void queueMicrotaskSlow(VM&, QueuedTask&&);
+    void queueMicrotaskSlow(VM&, InternalMicrotask, uint8_t, JSValue, JSValue, JSValue);
+#if USE(BUN_JSC_ADDITIONS)
+    void queueMicrotaskSlow(VM&, InternalMicrotask, uint8_t, JSValue, JSValue, JSValue, JSValue);
+#endif
 
 #if ASSERT_ENABLED
     const JSGlobalObject* globalObjectAtDebuggerEntry() const { return m_globalObjectAtDebuggerEntry; }
@@ -1390,9 +1394,6 @@ public:
 
     static inline Structure* createStructure(VM&, JSValue prototype);
     static inline Structure* createStructureForShadowRealm(VM&, JSValue prototype);
-
-    inline void registerWeakMap(OpaqueJSWeakObjectMap*);
-    inline void unregisterWeakMap(OpaqueJSWeakObjectMap*);
 
     inline std::unique_ptr<OpaqueJSClassContextData>& contextData(OpaqueJSClass*);
 

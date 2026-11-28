@@ -38,8 +38,7 @@
 #include "StyleComputedStyle+GettersInlines.h"
 #include "StylePrimitiveNumericTypes+Conversions.h"
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 auto GradientImage::cachedGradientsForTesting() const -> Vector<CachedGradientForTesting>
 {
@@ -100,7 +99,7 @@ void GradientImage::load(CachedResourceLoader&, const ResourceLoaderOptions&)
 {
 }
 
-Ref<WebCore::Gradient> GradientImage::gradientForSize(const RenderElement& renderer, FloatSize size, bool isForFirstLine, CachedGradient*& cached) const
+Ref<const WebCore::Gradient> GradientImage::gradientForSize(const RenderElement& renderer, FloatSize size, bool isForFirstLine, CachedGradient*& cached) const
 {
     cached = nullptr;
 
@@ -159,12 +158,12 @@ ImageDrawResult GradientImage::drawAsPattern(GraphicsContext& context, const Ren
             cached->setPatternBuffer(newBuffer.releaseNonNull(), descriptor, adjustedSize, scaleFactor);
     }
 
-    return drawPatternBuffer(context, *buffer, descriptor, destination, adjustedTile, patternTransform, phase, spacing);
+    return drawPatternBuffer(context, *buffer, adjustedSize, descriptor, destination, adjustedTile, patternTransform, phase, spacing);
 }
 
 bool GradientImage::knownToBeOpaque(const RenderElement& renderer) const
 {
-    return isOpaque(m_gradient, renderer.style());
+    return isOpaque(m_gradient, protect(renderer.style()));
 }
 
 bool GradientImage::containsCurrentColor() const
@@ -172,5 +171,4 @@ bool GradientImage::containsCurrentColor() const
     return Style::containsCurrentColor(m_gradient);
 }
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

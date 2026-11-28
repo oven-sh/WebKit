@@ -490,7 +490,7 @@ JSC_DEFINE_JIT_OPERATION(ffiCallbackDispatch, EncodedJSValue, (JSFFICallback* ca
                 returnSlot = 0;
                 OPERATION_RETURN(scope, encodedJSUndefined());
             }
-            returnSlot = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(callback->setReturnCString(string.utf8())));
+            returnSlot = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(callback->setReturnCString(makeUTF8CString(string))));
         } else {
             FFI::writeSlotFromJSValue(globalObject, context, signature.returnType(), result, returnSlot, nullptr);
             if (scope.exception()) [[unlikely]] {

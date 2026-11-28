@@ -32,8 +32,7 @@
 #include "NodeInlines.h"
 #include "StyleInvalidationFunctions.h"
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 NODELETE static bool mayBeAffectedByAttributeChange(const RuleFeatureSet& features, bool isHTML, const QualifiedName& attributeName)
 {
@@ -103,7 +102,7 @@ void AttributeChangeInvalidation::invalidateStyle(const QualifiedName& attribute
     collect(m_element->styleResolver().ruleSets());
 
     if (RefPtr shadowRoot = m_element->shadowRoot())
-        collect(shadowRoot->styleScope().resolver().ruleSets(), MatchElement::Relation::Host);
+        collect(protect(shadowRoot->styleScope())->resolver().ruleSets(), MatchElement::Relation::Host);
 }
 
 void AttributeChangeInvalidation::invalidateStyleWithRuleSets()
@@ -111,6 +110,4 @@ void AttributeChangeInvalidation::invalidateStyleWithRuleSets()
     Invalidator::invalidateWithMatchElementRuleSets(m_element, m_matchElementRuleSets);
 }
 
-
-}
 }

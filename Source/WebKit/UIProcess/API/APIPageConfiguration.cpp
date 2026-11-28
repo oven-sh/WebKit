@@ -278,7 +278,7 @@ BrowsingContextGroup* PageConfiguration::preferredBrowsingContextGroup() const
         return opener->browsingContextGroup.ptr();
 
     // Only an opener can bring a page into a cross-origin-isolated group.
-    if (auto relatedPage = this->relatedPage()) {
+    if (auto* relatedPage = this->relatedPage()) {
         if (!relatedPage->isClosed() && relatedPage->browsingContextGroup().crossOriginMode() == WebCore::CrossOriginMode::Shared)
             return &relatedPage->browsingContextGroup();
     }

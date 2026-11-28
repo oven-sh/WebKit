@@ -97,7 +97,7 @@ static std::expected<CoreAudioCaptureUnit::StoredAudioUnit, OSStatus> createAudi
     if (name) {
         String ioUnitName = name;
         CFRelease(name);
-        RELEASE_LOG(WebRTC, "CoreAudioCaptureInternalUnit created \"%" PRIVATE_LOG_STRING "\" component", ioUnitName.utf8());
+        RELEASE_LOG(WebRTC, "CoreAudioCaptureInternalUnit created \"%" PRIVATE_LOG_STRING "\" component", makeUTF8CString(ioUnitName));
     }
 #endif
 
@@ -226,7 +226,7 @@ Ref<CoreAudioCaptureUnit> CoreAudioCaptureUnit::createNonVPIOUnit()
 
 NODELETE static WeakHashSet<CoreAudioCaptureUnit>& allCoreAudioCaptureUnits()
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
 
     static NeverDestroyed<WeakHashSet<CoreAudioCaptureUnit>> units;
     return units;
@@ -251,7 +251,7 @@ void CoreAudioCaptureUnit::forEach(NOESCAPE const Function<void(CoreAudioCapture
 
 NODELETE static Function<void(CoreAudioCaptureUnit&)>& coreAudioCaptureNewUnitCallback()
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
 
     static NeverDestroyed<Function<void(CoreAudioCaptureUnit&)>> callback;
     return callback.get();

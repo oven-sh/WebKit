@@ -44,8 +44,10 @@
             "spec": "https://w3c.github.io/webdriver-bidi/#type-script-LocalValue",
             "type": "object",
             "properties": [
-                { "name": "type", "$ref": "BidiScript.LocalValueType" },
-                { "name": "value", "type": "any" }
+                { "name": "type", "$ref": "BidiScript.LocalValueType", "optional": true },
+                { "name": "value", "type": "any", "optional": true },
+                { "name": "sharedId", "$ref": "BidiScript.SharedId", "optional": true },
+                { "name": "handle", "$ref": "BidiScript.Handle", "optional": true }
             ]
         },
         {
@@ -55,10 +57,18 @@
             "type": "string",
             "enum": [
                 "array",
+                "bigint",
+                "boolean",
+                "channel",
                 "date",
                 "map",
+                "null",
+                "number",
                 "object",
-                "set"
+                "regexp",
+                "set",
+                "string",
+                "undefined"
             ]
         },
         {
@@ -76,17 +86,31 @@
                 { "name": "realm", "$ref": "BidiScript.Realm", "description": "Unique identifier of the realm." },
                 { "name": "origin", "type": "string", "description": "The serialized origin of the realm." },
                 { "name": "type", "$ref": "BidiScript.RealmType", "description": "The type of the realm." },
-                { "name": "context", "$ref": "BidiBrowsingContext.BrowsingContext", "optional": true, "description": "Browsing context of the realm. Not present for worklet/worker realms." }
+                { "name": "context", "$ref": "BidiBrowsingContext.BrowsingContext", "optional": true, "description": "Browsing context associated with the realm. Not present for worklet/worker realms." },
+                { "name": "owners", "type": "array", "items": { "$ref": "BidiScript.Realm" }, "optional": true, "description": "Owner realms of a dedicated worker realm." }
             ]
         },
         {
             "id": "RealmType",
-            "description": "The type of a JavaScript realm. Currently only 'window' is supported; worker and worklet types will be added in future implementations.",
+            "description": "The type of a JavaScript realm.",
             "spec": "https://w3c.github.io/webdriver-bidi/#type-script-RealmType",
             "type": "string",
             "enum": [
-                "window"
+                "window",
+                "dedicated-worker",
+                "shared-worker",
+                "service-worker",
+                "worker",
+                "paint-worklet",
+                "audio-worklet",
+                "worklet"
             ]
+        },
+        {
+            "id": "SharedId",
+            "description": "A reference to a DOM node that is usable in any realm.",
+            "spec": "https://w3c.github.io/webdriver-bidi/#type-script-SharedId",
+            "type": "string"
         },
         {
             "id": "RemoteValue",
@@ -96,6 +120,7 @@
             "properties": [
                 { "name": "type", "$ref": "BidiScript.RemoteValueType" },
                 { "name": "value", "type": "any", "optional": true },
+                { "name": "sharedId", "$ref": "BidiScript.SharedId", "optional": true, "description": "Represents a reference to a remote DOM node." },
                 { "name": "handle", "$ref": "BidiScript.Handle", "optional": true, "description": "Represents a reference to a remote Node. Applicable if `type` property is `node`, `nodelist`, `htmlcollection`." },
                 { "name": "internalId", "$ref": "BidiScript.InternalId", "optional": true, "description": "Represents a reference to a remote script value. If both `handle` and `internalId` are specified, `internalId` takes precedence." }
             ]
@@ -147,8 +172,8 @@
             "spec": "https://w3c.github.io/webdriver-bidi/#type-script-SerializationOptions",
             "type": "object",
             "properties": [
-                { "name": "maxDomDepth", "type": "number", "optional": true },
-                { "name": "maxObjectDepth", "type": "number", "optional": true },
+                { "name": "maxDomDepth", "type": "number", "optional": true, "nullable": true },
+                { "name": "maxObjectDepth", "type": "number", "optional": true, "nullable": true },
                 { "name": "includeShadowTree", "type": "string", "enum": ["none", "open", "all"], "optional": true }
             ]
         },
@@ -260,7 +285,7 @@
             "description": "Disowns the given handles. This removes the handles from the realm, allowing the garbage collector to reclaim the associated objects.",
             "spec": "https://w3c.github.io/webdriver-bidi/#command-script-disown",
             "wpt": "https://github.com/web-platform-tests/wpt/tree/master/webdriver/tests/bidi/script/disown",
-            "bug": "https://bugs.webkit.org/show_bug.cgi?id=288059",
+            "bug": "https://bugs.webkit.org/show_bug.cgi?id=328254",
             "async": true,
             "parameters": [
                 { "name": "handles", "type": "array", "items": { "$ref": "BidiScript.Handle" }, "description": "The handles to disown." },
@@ -292,7 +317,8 @@
                 { "name": "realm", "$ref": "BidiScript.Realm", "description": "Unique identifier of the realm." },
                 { "name": "origin", "type": "string", "description": "The serialized origin of the realm." },
                 { "name": "type", "$ref": "BidiScript.RealmType", "description": "The type of the realm." },
-                { "name": "context", "$ref": "BidiBrowsingContext.BrowsingContext", "optional": true, "description": "Browsing context of the realm. Not present for worklet/worker realms." }
+                { "name": "context", "$ref": "BidiBrowsingContext.BrowsingContext", "optional": true, "description": "Browsing context associated with the realm. Not present for worklet/worker realms." },
+                { "name": "owners", "type": "array", "items": { "$ref": "BidiScript.Realm" }, "optional": true, "description": "Owner realms of a dedicated worker realm." }
             ]
         },
         {
@@ -300,8 +326,7 @@
             "description": "Event fired when a script realm is destroyed.",
             "spec": "https://w3c.github.io/webdriver-bidi/#event-script-realmDestroyed",
             "parameters": [
-                { "name": "realm", "$ref": "BidiScript.Realm", "description": "Unique identifier of the destroyed realm." },
-                { "name": "context", "$ref": "BidiBrowsingContext.BrowsingContext", "optional": true, "description": "Browsing context of the realm. Not present for worklet/worker realms." }
+                { "name": "realm", "$ref": "BidiScript.Realm", "description": "Unique identifier of the destroyed realm." }
             ]
         }
     ]

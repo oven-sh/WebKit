@@ -28,6 +28,7 @@
 #include "CCallHelpers.h"
 #include "CPU.h"
 #include "CPUFeatureSet.h"
+#include "Disassembler.h"
 #include "ExecutableAllocator.h"
 #include "FPRInfo.h"
 #include "GPRInfo.h"
@@ -47,6 +48,7 @@
 #include <wtf/Lock.h>
 #include <wtf/NumberOfCores.h>
 #include <wtf/PtrTag.h>
+#include <wtf/StringPrintStream.h>
 #include <wtf/Threading.h>
 #include <wtf/WTFProcess.h>
 #include <wtf/WeakRandom.h>
@@ -1617,6 +1619,34 @@ void testLoad64ExtendedAddress()
         CHECK_EQ(invoke<uint64_t>(test, i), table[i]);
 }
 
+void testBranchTest16ExtendedAddress()
+{
+    static constexpr std::array<uint16_t, 5> nonZeroTable { 0x0100, 0, 0x0100, 0, 0x0100 };
+    static constexpr std::array<uint16_t, 5> negativeTable { 0x8000, 0, 0x8000, 0, 0x8000 };
+
+    auto makeTest = [](CCallHelpers::ResultCondition condition, const uint16_t* table) {
+        return compile([=](CCallHelpers& jit) {
+            emitFunctionPrologue(jit);
+            auto taken = jit.branchTest16(condition, CCallHelpers::ExtendedAddress(GPRInfo::argumentGPR0, std::bit_cast<intptr_t>(table)));
+            jit.move(CCallHelpers::TrustedImm32(0), GPRInfo::returnValueGPR);
+            auto done = jit.jump();
+            taken.link(&jit);
+            jit.move(CCallHelpers::TrustedImm32(1), GPRInfo::returnValueGPR);
+            done.link(&jit);
+            emitFunctionEpilogue(jit);
+            jit.ret();
+        });
+    };
+
+    auto nonZero = makeTest(CCallHelpers::NonZero, nonZeroTable.data());
+    for (size_t i = 0; i < nonZeroTable.size(); ++i)
+        CHECK_EQ(invoke<uint32_t>(nonZero, i), nonZeroTable[i] > 0);
+
+    auto negative = makeTest(CCallHelpers::Signed, negativeTable.data());
+    for (size_t i = 0; i < negativeTable.size(); ++i)
+        CHECK_EQ(invoke<uint32_t>(negative, i), static_cast<int16_t>(negativeTable[i]) < 0);
+}
+
 void testAdd32Imm()
 {
     for (auto immediate : int32Operands()) {
@@ -2046,17 +2076,16 @@ static bool expectedBranchArithTaken(BranchArith op, MacroAssembler::ResultCondi
         int32_t result32 = 0;
         overflow = isAdd ? __builtin_add_overflow(lhs, imm, &result32) : __builtin_sub_overflow(lhs, imm, &result32);
         uint32_t unsignedResult = 0;
-        carry = __builtin_add_overflow(static_cast<uint32_t>(lhs), static_cast<uint32_t>(imm), &unsignedResult);
+        carry = isAdd ? __builtin_add_overflow(static_cast<uint32_t>(lhs), static_cast<uint32_t>(imm), &unsignedResult) : __builtin_sub_overflow(static_cast<uint32_t>(lhs), static_cast<uint32_t>(imm), &unsignedResult);
         result = result32;
     } else {
         int64_t lhs = static_cast<int64_t>(value);
         overflow = isAdd ? __builtin_add_overflow(lhs, static_cast<int64_t>(imm), &result) : __builtin_sub_overflow(lhs, static_cast<int64_t>(imm), &result);
         uint64_t unsignedResult = 0;
-        carry = __builtin_add_overflow(static_cast<uint64_t>(lhs), static_cast<uint64_t>(static_cast<int64_t>(imm)), &unsignedResult);
+        carry = isAdd ? __builtin_add_overflow(static_cast<uint64_t>(lhs), static_cast<uint64_t>(static_cast<int64_t>(imm)), &unsignedResult) : __builtin_sub_overflow(static_cast<uint64_t>(lhs), static_cast<uint64_t>(static_cast<int64_t>(imm)), &unsignedResult);
     }
     switch (cond) {
     case MacroAssembler::Carry:
-        RELEASE_ASSERT(isAdd);
         return carry;
     case MacroAssembler::Overflow:
         return overflow;
@@ -2111,17 +2140,81 @@ static void checkBranchArithImmediate(BranchArith op, int32_t imm, MacroAssemble
 
 void testBranchAddSubImmediateSetsFlags()
 {
-    // Carry after a subtraction means "no borrow" on ARM64 but "borrow" on x86, so it is only checked for additions.
-    const MacroAssembler::ResultCondition addConditions[] = { MacroAssembler::Carry, MacroAssembler::Overflow, MacroAssembler::Signed, MacroAssembler::PositiveOrZero, MacroAssembler::Zero, MacroAssembler::NonZero };
-    const MacroAssembler::ResultCondition subConditions[] = { MacroAssembler::Overflow, MacroAssembler::Signed, MacroAssembler::PositiveOrZero, MacroAssembler::Zero, MacroAssembler::NonZero };
+    const MacroAssembler::ResultCondition conditions[] = { MacroAssembler::Carry, MacroAssembler::Overflow, MacroAssembler::Signed, MacroAssembler::PositiveOrZero, MacroAssembler::Zero, MacroAssembler::NonZero };
 
     for (auto op : { BranchArith::Add32, BranchArith::Sub32, BranchArith::Add64, BranchArith::Sub64 }) {
-        bool isAdd = op == BranchArith::Add32 || op == BranchArith::Add64;
-        auto conditions = isAdd ? std::span<const MacroAssembler::ResultCondition> { addConditions } : std::span<const MacroAssembler::ResultCondition> { subConditions };
         for (int32_t imm : { 0, 1, -1 }) {
             for (auto cond : conditions) {
                 for (int32_t flagsPreset : { 0, 1 })
                     checkBranchArithImmediate(op, imm, cond, flagsPreset);
+            }
+        }
+    }
+}
+
+enum class BranchSubForm { Sub32TwoOperand, Sub32ThreeOperand, Sub64TwoOperand, Sub64ThreeOperand, Neg32, Neg64 };
+
+void testBranchSubAndNegCarryIsBorrow()
+{
+    const uint64_t values[] = { 0, 1, 2, ~0ULL, 0xffffffffULL, 0x7fffffffULL, 0x80000000ULL, 0x7fffffffffffffffULL, 0x8000000000000000ULL, 0x123456789abcdef0ULL };
+
+    for (auto form : { BranchSubForm::Sub32TwoOperand, BranchSubForm::Sub32ThreeOperand, BranchSubForm::Sub64TwoOperand, BranchSubForm::Sub64ThreeOperand, BranchSubForm::Neg32, BranchSubForm::Neg64 }) {
+        for (int32_t flagsPreset : { 0, 1 }) {
+            auto code = compile([=](CCallHelpers& jit) {
+                emitFunctionPrologue(jit);
+                jit.move(CCallHelpers::TrustedImm32(0), GPRInfo::argumentGPR2);
+                jit.compare32(MacroAssembler::Equal, GPRInfo::argumentGPR2, CCallHelpers::TrustedImm32(flagsPreset), GPRInfo::argumentGPR2);
+                CCallHelpers::Jump taken;
+                switch (form) {
+                case BranchSubForm::Sub32TwoOperand:
+                    taken = jit.branchSub32(MacroAssembler::Carry, GPRInfo::argumentGPR1, GPRInfo::argumentGPR0);
+                    break;
+                case BranchSubForm::Sub32ThreeOperand:
+                    taken = jit.branchSub32(MacroAssembler::Carry, GPRInfo::argumentGPR0, GPRInfo::argumentGPR1, GPRInfo::argumentGPR2);
+                    break;
+                case BranchSubForm::Sub64TwoOperand:
+                    taken = jit.branchSub64(MacroAssembler::Carry, GPRInfo::argumentGPR1, GPRInfo::argumentGPR0);
+                    break;
+                case BranchSubForm::Sub64ThreeOperand:
+                    taken = jit.branchSub64(MacroAssembler::Carry, GPRInfo::argumentGPR0, GPRInfo::argumentGPR1, GPRInfo::argumentGPR2);
+                    break;
+                case BranchSubForm::Neg32:
+                    taken = jit.branchNeg32(MacroAssembler::Carry, GPRInfo::argumentGPR0);
+                    break;
+                case BranchSubForm::Neg64:
+                    taken = jit.branchNeg64(MacroAssembler::Carry, GPRInfo::argumentGPR0);
+                    break;
+                }
+                jit.move(CCallHelpers::TrustedImm32(0), GPRInfo::returnValueGPR);
+                auto done = jit.jump();
+                taken.link(&jit);
+                jit.move(CCallHelpers::TrustedImm32(1), GPRInfo::returnValueGPR);
+                done.link(&jit);
+                emitFunctionEpilogue(jit);
+                jit.ret();
+            });
+
+            for (uint64_t a : values) {
+                for (uint64_t b : values) {
+                    bool expected = false;
+                    switch (form) {
+                    case BranchSubForm::Sub32TwoOperand:
+                    case BranchSubForm::Sub32ThreeOperand:
+                        expected = static_cast<uint32_t>(a) < static_cast<uint32_t>(b);
+                        break;
+                    case BranchSubForm::Sub64TwoOperand:
+                    case BranchSubForm::Sub64ThreeOperand:
+                        expected = a < b;
+                        break;
+                    case BranchSubForm::Neg32:
+                        expected = !!static_cast<uint32_t>(a);
+                        break;
+                    case BranchSubForm::Neg64:
+                        expected = !!a;
+                        break;
+                    }
+                    CHECK_EQ(invoke<int>(code, a, b), static_cast<int>(expected));
+                }
             }
         }
     }
@@ -2773,6 +2866,64 @@ void testClearBitField64()
     }
 }
 
+void testBitfieldWrappersAtFullWidth()
+{
+    // lsb + width == datasize is the widest field the bfi, bfxil, sbfiz and ubfiz aliases accept.
+    // The generic bitfield tests cannot reach it: their C reference masks would shift by the
+    // full width, so these check the results directly.
+    auto insert32 = compile([](CCallHelpers& jit) {
+        emitFunctionPrologue(jit);
+        jit.insertBitField32(GPRInfo::argumentGPR0, CCallHelpers::TrustedImm32(0), CCallHelpers::TrustedImm32(32), GPRInfo::argumentGPR1);
+        jit.move(GPRInfo::argumentGPR1, GPRInfo::returnValueGPR);
+        emitFunctionEpilogue(jit);
+        jit.ret();
+    });
+    CHECK_EQ(invoke<uint32_t>(insert32, 0x12345678U, 0xfedcba98U), 0x12345678U);
+
+    auto insert64 = compile([](CCallHelpers& jit) {
+        emitFunctionPrologue(jit);
+        jit.insertBitField64(GPRInfo::argumentGPR0, CCallHelpers::TrustedImm32(0), CCallHelpers::TrustedImm32(64), GPRInfo::argumentGPR1);
+        jit.move(GPRInfo::argumentGPR1, GPRInfo::returnValueGPR);
+        emitFunctionEpilogue(jit);
+        jit.ret();
+    });
+    CHECK_EQ(invoke<uint64_t>(insert64, 0x123456789abcdef0ULL, 0xfedcba9876543210ULL), 0x123456789abcdef0ULL);
+
+    auto extract32 = compile([](CCallHelpers& jit) {
+        emitFunctionPrologue(jit);
+        jit.extractInsertBitfieldAtLowEnd32(GPRInfo::argumentGPR0, CCallHelpers::TrustedImm32(0), CCallHelpers::TrustedImm32(32), GPRInfo::argumentGPR1);
+        jit.move(GPRInfo::argumentGPR1, GPRInfo::returnValueGPR);
+        emitFunctionEpilogue(jit);
+        jit.ret();
+    });
+    CHECK_EQ(invoke<uint32_t>(extract32, 0x12345678U, 0xfedcba98U), 0x12345678U);
+
+    auto clear32 = compile([](CCallHelpers& jit) {
+        emitFunctionPrologue(jit);
+        jit.clearBitField32(CCallHelpers::TrustedImm32(0), CCallHelpers::TrustedImm32(32), GPRInfo::argumentGPR0);
+        jit.move(GPRInfo::argumentGPR0, GPRInfo::returnValueGPR);
+        emitFunctionEpilogue(jit);
+        jit.ret();
+    });
+    CHECK_EQ(invoke<uint32_t>(clear32, 0xdeadbeefU), 0);
+
+    auto insertUnsignedInZero32 = compile([](CCallHelpers& jit) {
+        emitFunctionPrologue(jit);
+        jit.insertUnsignedBitfieldInZero32(GPRInfo::argumentGPR0, CCallHelpers::TrustedImm32(0), CCallHelpers::TrustedImm32(32), GPRInfo::returnValueGPR);
+        emitFunctionEpilogue(jit);
+        jit.ret();
+    });
+    CHECK_EQ(invoke<uint32_t>(insertUnsignedInZero32, 0x89abcdefU), 0x89abcdefU);
+
+    auto insertSignedInZero32 = compile([](CCallHelpers& jit) {
+        emitFunctionPrologue(jit);
+        jit.insertSignedBitfieldInZero32(GPRInfo::argumentGPR0, CCallHelpers::TrustedImm32(0), CCallHelpers::TrustedImm32(32), GPRInfo::returnValueGPR);
+        emitFunctionEpilogue(jit);
+        jit.ret();
+    });
+    CHECK_EQ(invoke<uint32_t>(insertSignedInZero32, 0x89abcdefU), 0x89abcdefU);
+}
+
 void testClearBitsWithMask32()
 {
     auto test = compile([] (CCallHelpers& jit) {
@@ -3130,6 +3281,57 @@ void testAddWithLeftShift64()
                 int64_t lhs = invoke<int64_t>(add64, n, m);
                 int64_t rhs = n + (m << amount);
                 CHECK_EQ(lhs, rhs);
+            }
+        }
+    }
+}
+
+void testBranch64LeftShift()
+{
+    auto compare = [](CCallHelpers::RelationalCondition cond, uint64_t left, uint64_t right) -> int {
+        switch (cond) {
+        case CCallHelpers::LessThan:
+            return static_cast<int64_t>(left) < static_cast<int64_t>(right);
+        case CCallHelpers::GreaterThanOrEqual:
+            return static_cast<int64_t>(left) >= static_cast<int64_t>(right);
+        case CCallHelpers::Below:
+            return left < right;
+        case CCallHelpers::AboveOrEqual:
+            return left >= right;
+        case CCallHelpers::Equal:
+            return left == right;
+        case CCallHelpers::NotEqual:
+            return left != right;
+        default:
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+        return 0;
+    };
+
+    Vector<int32_t> amounts = { 0, 1, 34, 63 };
+    Vector<CCallHelpers::RelationalCondition> conditions = { CCallHelpers::LessThan, CCallHelpers::GreaterThanOrEqual, CCallHelpers::Below, CCallHelpers::AboveOrEqual, CCallHelpers::Equal, CCallHelpers::NotEqual };
+    Vector<int64_t> operands = int64Operands();
+    operands.append(static_cast<int64_t>(0xfffc000000000000ULL));
+    operands.append(static_cast<int64_t>(0xfffbffffffffffffULL));
+    operands.append(static_cast<int64_t>(0xfffe000000000000ULL));
+    for (auto amount : amounts) {
+        for (auto cond : conditions) {
+            auto test = compile([=](CCallHelpers& jit) {
+                emitFunctionPrologue(jit);
+
+                auto branch = jit.branch64LeftShift(cond, GPRInfo::argumentGPR0, GPRInfo::argumentGPR1, CCallHelpers::TrustedImm32(amount));
+                jit.move(CCallHelpers::TrustedImm32(0), GPRInfo::returnValueGPR);
+                auto done = jit.jump();
+                branch.link(&jit);
+                jit.move(CCallHelpers::TrustedImm32(1), GPRInfo::returnValueGPR);
+                done.link(&jit);
+
+                emitFunctionEpilogue(jit);
+                jit.ret();
+            });
+            for (auto left : operands) {
+                for (auto right : operands)
+                    CHECK_EQ(invoke<int>(test, left, right), compare(cond, left, static_cast<uint64_t>(right) << amount));
             }
         }
     }
@@ -5761,6 +5963,64 @@ static void testTestBitBranchCompaction()
     for (auto& code : { nearCode, farCode }) {
         CHECK_EQ(invoke<int>(code, 1 << 3), 1);
         CHECK_EQ(invoke<int>(code, 0), 0);
+    }
+}
+
+static void testConditionalBranchCompactionAtDirectRangeBoundary()
+{
+    // computeJumpType must not classify a record whose exact displacement falls one instruction
+    // past the Direct form's immediate: the encoder masks the immediate, so the branch silently
+    // goes to a wrapped-around target. The move after the branch plus the nops put the target
+    // 8 + 4 * nops bytes away from the branch once the Direct form compacts away the trailing
+    // nop, so nops can be chosen to hit each form's boundary exactly. A sled at least as long
+    // precedes the branch and returns 2, so a target wrapped backwards fails the check
+    // deterministically instead of running whatever precedes the function in JIT memory.
+    auto compileWithNops = [](auto emitBranch, unsigned nops) {
+        CCallHelpers jit;
+        emitFunctionPrologue(jit);
+        jit.move(CCallHelpers::TrustedImm32(1), GPRInfo::argumentGPR1);
+        auto skipSled = jit.jump();
+        for (unsigned i = 0; i < nops; ++i)
+            jit.nop();
+        jit.move(CCallHelpers::TrustedImm32(2), GPRInfo::argumentGPR1);
+        auto sledDone = jit.jump();
+        skipSled.link(&jit);
+        auto jump = emitBranch(jit);
+        jit.move(CCallHelpers::TrustedImm32(0), GPRInfo::argumentGPR1);
+        for (unsigned i = 0; i < nops; ++i)
+            jit.nop();
+        jump.link(&jit);
+        sledDone.link(&jit);
+        jit.move(GPRInfo::argumentGPR1, GPRInfo::returnValueGPR);
+        emitFunctionEpilogue(jit);
+        jit.ret();
+        LinkBuffer linkBuffer(jit, nullptr);
+        return FINALIZE_CODE(linkBuffer, JSEntryPtrTag, nullptr, "testmasm compilation");
+    };
+
+    auto checkBehavior = [](auto code) {
+        CHECK_EQ(invoke<int>(code, 1), 1);
+        CHECK_EQ(invoke<int>(code, 0), 0);
+    };
+
+    {
+        // TBZ / TBNZ hold a signed 14-bit immediate, so 32 KB is one instruction past its range.
+        constexpr unsigned boundaryNops = (32 * KB - 8) / sizeof(uint32_t);
+        auto emitTestBitBranch = [](CCallHelpers& jit) {
+            return jit.branchTest32(CCallHelpers::NonZero, GPRInfo::argumentGPR0, CCallHelpers::TrustedImm32(1));
+        };
+        checkBehavior(compileWithNops(emitTestBitBranch, boundaryNops));
+        checkBehavior(compileWithNops(emitTestBitBranch, boundaryNops - 1));
+    }
+
+    {
+        // b.cond holds a signed 19-bit immediate, so 1 MB is one instruction past its range.
+        constexpr unsigned boundaryNops = (MB - 8) / sizeof(uint32_t);
+        auto emitConditionBranch = [](CCallHelpers& jit) {
+            return jit.branch32(CCallHelpers::Equal, GPRInfo::argumentGPR0, CCallHelpers::TrustedImm32(1));
+        };
+        checkBehavior(compileWithNops(emitConditionBranch, boundaryNops));
+        checkBehavior(compileWithNops(emitConditionBranch, boundaryNops - 1));
     }
 }
 
@@ -10817,6 +11077,66 @@ static void testARM64ZeroRegisterEncoding()
     CHECK_ARM64_ENCODING(0x4e040fe0U, dupGeneral(q0, zr, SIMDLane::i32x4));
 }
 
+#if CPU(ARM64E)
+template<typename Functor>
+static uint32_t encodeARM64EInstruction(const Functor& functor)
+{
+    ARM64EAssembler assembler;
+    functor(assembler);
+    CHECK_EQ(assembler.buffer().codeSize(), sizeof(uint32_t));
+    AssemblerData data = assembler.buffer().releaseAssemblerData();
+#if ENABLE(JIT_SIGN_ASSEMBLER_BUFFER)
+    AssemblerHashes hashes = assembler.buffer().releaseAssemblerHashes();
+#endif
+    return *reinterpret_cast<const uint32_t*>(data.buffer());
+}
+
+#define CHECK_ARM64E_ENCODING(expected, ...) \
+    CHECK_EQ(encodeARM64EInstruction([](ARM64EAssembler& assembler) { \
+        assembler.__VA_ARGS__; \
+    }), expected)
+
+static void testARM64EPACEncoding()
+{
+    using namespace ARM64Registers;
+    CHECK_ARM64E_ENCODING(0xdac1001fU, pacia(zr, x0));
+    CHECK_ARM64E_ENCODING(0xdac103e2U, pacia(x2, sp));
+    CHECK_ARM64E_ENCODING(0xdac107ffU, pacib(zr, sp));
+    CHECK_ARM64E_ENCODING(0xdac10bffU, pacda(zr, sp));
+    CHECK_ARM64E_ENCODING(0xdac10fffU, pacdb(zr, sp));
+    CHECK_ARM64E_ENCODING(0xdac113ffU, autia(zr, sp));
+    CHECK_ARM64E_ENCODING(0xdac117ffU, autib(zr, sp));
+    CHECK_ARM64E_ENCODING(0xdac11bffU, autda(zr, sp));
+    CHECK_ARM64E_ENCODING(0xdac11fffU, autdb(zr, sp));
+    CHECK_ARM64E_ENCODING(0xdac123ffU, paciza(zr));
+    CHECK_ARM64E_ENCODING(0xdac127ffU, pacizb(zr));
+    CHECK_ARM64E_ENCODING(0xdac12bffU, pacdza(zr));
+    CHECK_ARM64E_ENCODING(0xdac12fffU, pacdzb(zr));
+    CHECK_ARM64E_ENCODING(0xdac133ffU, autiza(zr));
+    CHECK_ARM64E_ENCODING(0xdac137ffU, autizb(zr));
+    CHECK_ARM64E_ENCODING(0xdac13bffU, autdza(zr));
+    CHECK_ARM64E_ENCODING(0xdac13fffU, autdzb(zr));
+    CHECK_ARM64E_ENCODING(0xdac143ffU, xpaci(zr));
+    CHECK_ARM64E_ENCODING(0xdac147ffU, xpacd(zr));
+    CHECK_ARM64E_ENCODING(0x9ac2303fU, pacga(zr, x1, x2));
+    CHECK_ARM64E_ENCODING(0x9ac233e0U, pacga(x0, zr, x2));
+    CHECK_ARM64E_ENCODING(0x9adf3020U, pacga(x0, x1, sp));
+    CHECK_ARM64E_ENCODING(0xd71f0be0U, braa(zr, x0));
+    CHECK_ARM64E_ENCODING(0xd71f085fU, braa(x2, sp));
+    CHECK_ARM64E_ENCODING(0xd71f0fffU, brab(zr, sp));
+    CHECK_ARM64E_ENCODING(0xd73f0bffU, blraa(zr, sp));
+    CHECK_ARM64E_ENCODING(0xd73f0fffU, blrab(zr, sp));
+    CHECK_ARM64E_ENCODING(0xd61f0bffU, braaz(zr));
+    CHECK_ARM64E_ENCODING(0xd61f0fffU, brabz(zr));
+    CHECK_ARM64E_ENCODING(0xd63f0bffU, blraaz(zr));
+    CHECK_ARM64E_ENCODING(0xd63f0fffU, blrabz(zr));
+    CHECK_ARM64E_ENCODING(0xd65f0bffU, retaa());
+    CHECK_ARM64E_ENCODING(0xd65f0fffU, retab());
+    CHECK_ARM64E_ENCODING(0xd69f0bffU, eretaa());
+    CHECK_ARM64E_ENCODING(0xd69f0fffU, eretab());
+}
+#endif
+
 static void testARM64FmovTopEncoding()
 {
     CHECK_ARM64_ENCODING(0x9eaf00c5U, fmov_top(ARM64Registers::q5, ARM64Registers::x6));
@@ -10858,8 +11178,16 @@ static void testARM64SIMDStackPointerBaseEncoding()
 class TestableARM64Assembler : public ARM64Assembler {
 public:
     using ARM64Assembler::disassembleAddSubtractImmediate;
+    using ARM64Assembler::disassembleCompareAndBranchImmediate;
+    using ARM64Assembler::disassembleConditionalBranchImmediate;
+    using ARM64Assembler::disassembleLoadStoreRegisterUnsignedImmediate;
+    using ARM64Assembler::disassembleMoveWideImediate;
+    using ARM64Assembler::disassembleTestAndBranchImmediate;
     using ARM64Assembler::Datasize;
     using ARM64Assembler::AddOp;
+    using ARM64Assembler::MemOpSize;
+    using ARM64Assembler::MemOp;
+    using ARM64Assembler::MoveWideOp;
 };
 
 // Verifies that disassembleAddSubtractImmediate recovers every field of an ADD/SUB (immediate)
@@ -10907,6 +11235,190 @@ static void testARM64AddSubtractImmediateDecoding()
         a.cmp<64>(x1, UInt12(0x42));
     }), 1, 1, 1, 0, 0x42, x1, zr);
 }
+
+static void testARM64AssemblerEncodingAndDecoding()
+{
+    using namespace ARM64Registers;
+
+    CHECK_EQ(ARM64Assembler::gprName(zr), "zr"_s);
+
+    CHECK_ARM64_ENCODING(0x1ee70000U, fmov<16>(q0, x0));
+    CHECK_ARM64_ENCODING(0x1ee60000U, fmov<16>(x0, q0));
+    CHECK_ARM64_ENCODING(0x1ee70263U, fmov<16>(q3, x19));
+    CHECK_ARM64_ENCODING(0x1ee60147U, fmov<16>(x7, q10));
+    CHECK_ARM64_ENCODING(0x1ee703e0U, fmov<16>(q0, zr));
+    CHECK_ARM64_ENCODING(0x1ee6001fU, fmov<16>(zr, q0));
+
+    CHECK_ARM64_ENCODING(0x90400000U, adrp(x0, 0x80000000LL));
+    CHECK_ARM64_ENCODING(0xf07fffe0U, adrp(x0, 0xfffff000LL));
+    CHECK_ARM64_ENCODING(0x90800000U, adrp(x0, -0x100000000LL));
+
+    CHECK_ARM64_ENCODING(0x8b2063e0U, add<64>(x0, x0, sp));
+    CHECK_ARM64_ENCODING(0xab2063e1U, add<64, ARM64Assembler::S>(x1, x0, sp));
+    CHECK_ARM64_ENCODING(0xcb206bffU, sub<64>(sp, sp, x0, ARM64Assembler::LSL, 2));
+    CHECK_ARM64_ENCODING(0xeb206bffU, cmp<64>(sp, x0, ARM64Assembler::LSL, 2));
+    CHECK_ARM64_ENCODING(0x0b2043ffU, add<32>(sp, sp, x0));
+    CHECK_ARM64_ENCODING(0x4b2043ffU, sub<32>(sp, sp, x0));
+    CHECK_ARM64_ENCODING(0x2b2043ffU, cmn<32>(sp, x0));
+    CHECK_ARM64_ENCODING(0x6b2043ffU, cmp<32>(sp, x0));
+
+    CHECK_ARM64_ENCODING(0xad410440U, ldp<128>(q0, q1, x2, 32));
+    CHECK_ARM64_ENCODING(0xadff0440U, ldp<128>(q0, q1, x2, PairPreIndex(-32)));
+    CHECK_ARM64_ENCODING(0xacc10440U, ldp<128>(q0, q1, x2, PairPostIndex(32)));
+    CHECK_ARM64_ENCODING(0xac408440U, ldnp<128>(q0, q1, x2, 16));
+    CHECK_ARM64_ENCODING(0xad010440U, stp<128>(q0, q1, x2, 32));
+    CHECK_ARM64_ENCODING(0xadbf0440U, stp<128>(q0, q1, x2, PairPreIndex(-32)));
+    CHECK_ARM64_ENCODING(0xac810440U, stp<128>(q0, q1, x2, PairPostIndex(32)));
+    CHECK_ARM64_ENCODING(0xac008440U, stnp<128>(q0, q1, x2, 16));
+    CHECK_EQ(ARM64Assembler::isValidLDPFPImm<128>(1008), true);
+    CHECK_EQ(ARM64Assembler::isValidLDPFPImm<128>(1024), false);
+
+    CHECK_ARM64_ENCODING(0xc8fffc41U, casal<64>(zr, x1, x2));
+    CHECK_ARM64_ENCODING(0x88fffc41U, casal<32>(zr, x1, x2));
+
+#if ENABLE(FAST_TLS_JIT)
+    CHECK_ARM64_ENCODING(0xd53bd07fU, mrs_TPIDRRO_EL0(zr));
+#endif
+
+    {
+        uint32_t cbzZr = encodeARM64Instruction([](ARM64Assembler& a) {
+            a.cbz<64>(zr);
+        });
+        TestableARM64Assembler::Datasize sf;
+        bool op;
+        int imm19;
+        MacroAssembler::RegisterID rt;
+        CHECK_EQ(TestableARM64Assembler::disassembleCompareAndBranchImmediate(&cbzZr, sf, op, imm19, rt), true);
+        CHECK_EQ(rt, zr);
+
+        uint32_t tbzZr = encodeARM64Instruction([](ARM64Assembler& a) {
+            a.tbz(zr, 7, 0);
+        });
+        unsigned bitNumber;
+        int imm14;
+        CHECK_EQ(TestableARM64Assembler::disassembleTestAndBranchImmediate(&tbzZr, op, bitNumber, imm14, rt), true);
+        CHECK_EQ(rt, zr);
+        CHECK_EQ(bitNumber, 7U);
+
+        uint32_t ldrQ31 = encodeARM64Instruction([](ARM64Assembler& a) {
+            a.ldr<128>(q31, x0, 0U);
+        });
+        TestableARM64Assembler::MemOpSize memSize;
+        bool isVector;
+        TestableARM64Assembler::MemOp memOp;
+        int imm12;
+        MacroAssembler::RegisterID rn;
+        CHECK_EQ(TestableARM64Assembler::disassembleLoadStoreRegisterUnsignedImmediate(&ldrQ31, memSize, isVector, memOp, imm12, rn, rt), true);
+        CHECK_EQ(isVector, true);
+        CHECK_EQ(static_cast<int>(rt), static_cast<int>(q31));
+
+        uint32_t addgInsn = 0x91800000U;
+        TestableARM64Assembler::AddOp addOp;
+        ARM64Assembler::SetFlags setFlags;
+        int shift;
+        CHECK_EQ(TestableARM64Assembler::disassembleAddSubtractImmediate(&addgInsn, sf, addOp, setFlags, shift, imm12, rn, rt), false);
+
+        uint32_t unallocatedMoveWide = 0x32800000U;
+        TestableARM64Assembler::MoveWideOp moveOp;
+        int hw;
+        uint16_t imm16;
+        CHECK_EQ(TestableARM64Assembler::disassembleMoveWideImediate(&unallocatedMoveWide, sf, moveOp, hw, imm16, rt), false);
+
+        uint32_t bcEqInsn = 0x54000010U;
+        unsigned op01;
+        ARM64Assembler::Condition cond;
+        CHECK_EQ(TestableARM64Assembler::disassembleConditionalBranchImmediate(&bcEqInsn, op01, imm19, cond), false);
+    }
+
+    {
+        CCallHelpers jit;
+        emitFunctionPrologue(jit);
+        auto cbzPatchable = jit.patchableBranch32(CCallHelpers::Equal, zr, CCallHelpers::TrustedImm32(0));
+        CCallHelpers::Label afterCbz = jit.label();
+        auto tbzPatchable = jit.patchableBranchTest32(CCallHelpers::Zero, zr, CCallHelpers::TrustedImm32(1));
+        jit.move(CCallHelpers::TrustedImm32(1), GPRInfo::returnValueGPR);
+        auto done1 = jit.jump();
+        CCallHelpers::Label target1 = jit.label();
+        jit.move(CCallHelpers::TrustedImm32(2), GPRInfo::returnValueGPR);
+        auto done2 = jit.jump();
+        CCallHelpers::Label target2 = jit.label();
+        jit.move(CCallHelpers::TrustedImm32(3), GPRInfo::returnValueGPR);
+        done1.link(&jit);
+        done2.link(&jit);
+        emitFunctionEpilogue(jit);
+        jit.ret();
+        cbzPatchable.m_jump.linkTo(target1, &jit);
+        tbzPatchable.m_jump.linkTo(target2, &jit);
+
+        LinkBuffer linkBuffer(jit, nullptr);
+        CodeLocationJump<JSInternalPtrTag> cbzLoc(linkBuffer.locationOf<JSInternalPtrTag>(cbzPatchable));
+        CodeLocationJump<JSInternalPtrTag> tbzLoc(linkBuffer.locationOf<JSInternalPtrTag>(tbzPatchable));
+        auto afterCbzLoc = linkBuffer.locationOf<JSInternalPtrTag>(afterCbz);
+        auto target1Loc = linkBuffer.locationOf<JSInternalPtrTag>(target1);
+        auto target2Loc = linkBuffer.locationOf<JSInternalPtrTag>(target2);
+        auto code = FINALIZE_CODE(linkBuffer, JSEntryPtrTag, nullptr, "testmasm zr relink");
+
+        CHECK_EQ(invoke<int>(code), 2);
+        CCallHelpers::repatchJump(cbzLoc, target2Loc);
+        CHECK_EQ(invoke<int>(code), 3);
+        CCallHelpers::repatchJump(tbzLoc, target1Loc);
+        CCallHelpers::repatchJump(cbzLoc, afterCbzLoc);
+        CHECK_EQ(invoke<int>(code), 2);
+    }
+}
+
+#if ENABLE(ARM64_DISASSEMBLER)
+static void testARM64Disassembler()
+{
+    using namespace ARM64Registers;
+
+    {
+        uint32_t insns[2] = { 0xd503201fU, 0xd65f03c0U };
+        for (size_t size : { static_cast<size_t>(0), static_cast<size_t>(1), static_cast<size_t>(2), static_cast<size_t>(3), static_cast<size_t>(5), static_cast<size_t>(7) }) {
+            StringPrintStream out;
+            CHECK_EQ(tryToDisassemble(CodePtr<DisassemblyPtrTag>::fromTaggedPtr(tagCodePtr<DisassemblyPtrTag>(insns)), size, "", out), true);
+            String text = out.toString();
+            if (size < 4)
+                CHECK_EQ(text.isEmpty(), true);
+            else
+                CHECK_EQ(text.contains("nop"_s), true);
+        }
+    }
+
+    {
+        alignas(4096) uint32_t pageBuffer[2048] = { };
+        pageBuffer[11] = encodeARM64Instruction([](ARM64Assembler& a) {
+            a.adrp(x0, 4096);
+        });
+        pageBuffer[12] = encodeARM64Instruction([](ARM64Assembler& a) {
+            a.adr(x1, 6);
+        });
+        pageBuffer[13] = encodeARM64Instruction([](ARM64Assembler& a) {
+            a.movn<32>(x16, static_cast<uint16_t>(~0x1234U), 0);
+        });
+        pageBuffer[14] = encodeARM64Instruction([](ARM64Assembler& a) {
+            a.movz<32>(x17, 0x8001U, 16);
+        });
+        pageBuffer[15] = 0xd503213fU;
+
+        StringPrintStream out;
+        CHECK_EQ(tryToDisassemble(
+            CodePtr<DisassemblyPtrTag>::fromTaggedPtr(tagCodePtr<DisassemblyPtrTag>(&pageBuffer[11])),
+            5 * sizeof(uint32_t),
+            &pageBuffer[0],
+            &pageBuffer[2048],
+            "",
+            out), true);
+        String text = out.toString();
+        CHECK_EQ(text.contains("-> <4096>"_s), true);
+        CHECK_EQ(text.contains("-> <54>"_s), true);
+        CHECK_EQ(text.contains("-> 0xffff1234"_s), true);
+        CHECK_EQ(text.contains("0xffffffffffff1234"_s), false);
+        CHECK_EQ(text.contains("-> 0x80010000"_s), true);
+        CHECK_EQ(text.contains("0xffffffff80010000"_s), false);
+    }
+}
+#endif
 
 // Test half-precision FMOV encoding (cmode=0b1110, op=1)
 // Verifies that 16-bit, 32-bit, and 64-bit FMOV use correct encodings
@@ -11039,6 +11551,77 @@ static void testCanEmitJumpMatchesBranchEncoding()
     CHECK_EQ(Assembler::canEmitJump(from, std::bit_cast<void*>(std::bit_cast<intptr_t>(from) + nearJumpRange)), false);
     CHECK_EQ(Assembler::canEmitJump(from, std::bit_cast<void*>(std::bit_cast<intptr_t>(from) - nearJumpRange)), true);
     CHECK_EQ(Assembler::canEmitJump(from, std::bit_cast<void*>(std::bit_cast<intptr_t>(from) - nearJumpRange - instructionSize)), false);
+}
+
+static void testComputeJumpTypeMatchesBranchEncoding()
+{
+    // The conditional branch forms hold a signed immediate in instruction units: imm19 for
+    // b.cond and cbz / cbnz, imm14 for tbz / tbnz. computeJumpType receives the record's
+    // label, one instruction after the branch on the trailing nop. For a forward target the
+    // record's own compaction shifts the target back by the same instruction, so the direct
+    // linker encodes exactly (target - label), and a Direct classification must match. For a
+    // backward target the displacement is measured from the branch instruction, one
+    // instruction before the label, so a Direct classification only has to stay encodable.
+    auto isRepresentable = [](intptr_t branchDisplacement, unsigned immediateBits) -> bool {
+        if (branchDisplacement & 3)
+            return false;
+        int32_t immediate = static_cast<int32_t>(branchDisplacement >> 2) & ((1 << immediateBits) - 1);
+        intptr_t signExtended = static_cast<intptr_t>(immediate << (32 - immediateBits)) >> (32 - immediateBits);
+        return (signExtended << 2) == branchDisplacement;
+    };
+
+    struct BranchForm {
+        Assembler::JumpType jumpType;
+        Assembler::JumpLinkType directLinkType;
+        unsigned immediateBits;
+    };
+
+    constexpr BranchForm forms[] = {
+        { Assembler::JumpCondition, Assembler::LinkJumpConditionDirect, 19 },
+        { Assembler::JumpCompareAndBranch, Assembler::LinkJumpCompareAndBranchDirect, 19 },
+        { Assembler::JumpTestBit, Assembler::LinkJumpTestBitDirect, 14 },
+    };
+
+    constexpr intptr_t instructionSize = sizeof(uint32_t);
+
+    Assembler assembler;
+    for (const BranchForm& form : forms) {
+        const intptr_t range = static_cast<intptr_t>(1) << (form.immediateBits + 1);
+        const intptr_t displacements[] = {
+            0,
+            instructionSize,
+            -instructionSize,
+            range - 2 * instructionSize,
+            range - instructionSize, // Largest forward branch the immediate encodes.
+            range, // One instruction past it: the encoder would wrap the immediate.
+            range + instructionSize,
+            -range, // Encodable from the branch instruction.
+            -range + instructionSize,
+            -range - instructionSize,
+            -2 * range,
+        };
+
+        for (intptr_t displacement : displacements) {
+            Assembler::LinkRecord record(&assembler, 0, 0, form.jumpType, Assembler::ConditionEQ, Assembler::ThunkOrNot::NotThunk);
+            constexpr intptr_t label = 0x100000000;
+            uint8_t* from = std::bit_cast<uint8_t*>(label);
+            uint8_t* to = std::bit_cast<uint8_t*>(label + displacement);
+            auto linkType = MacroAssembler::computeJumpType(record, from, to);
+            bool classifiedDirect = linkType == form.directLinkType;
+
+            if (displacement >= 0) {
+                bool representable = isRepresentable(displacement, form.immediateBits);
+                if (classifiedDirect != representable)
+                    dataLogLn("computeJumpType classifies a ", displacement, "-byte forward branch as ", classifiedDirect ? "Direct" : "Indirect", " but its ", form.immediateBits, "-bit immediate ", representable ? "encodes it" : "does not encode it");
+                CHECK_EQ(classifiedDirect, representable);
+            } else {
+                bool representable = isRepresentable(displacement + instructionSize, form.immediateBits);
+                if (classifiedDirect && !representable)
+                    dataLogLn("computeJumpType classifies a ", displacement, "-byte backward branch as Direct but its ", form.immediateBits, "-bit immediate does not encode it");
+                CHECK_EQ(!classifiedDirect || representable, true);
+            }
+        }
+    }
 }
 #endif
 
@@ -13813,6 +14396,34 @@ static void testGPRInfoConsistency()
     }
 }
 
+static void testAssemblerCommonAndCodeRef()
+{
+    static_assert(isInt<1>(static_cast<int8_t>(0)));
+    static_assert(isInt<1>(static_cast<int8_t>(-1)));
+    static_assert(!isInt<1>(static_cast<int8_t>(1)));
+    static_assert(!isInt<1>(static_cast<int8_t>(127)));
+    static_assert(isInt<9>(static_cast<int16_t>(255)));
+    static_assert(isInt<9>(static_cast<int16_t>(-256)));
+    static_assert(!isInt<9>(static_cast<int16_t>(256)));
+    static_assert(!isInt<9>(static_cast<int16_t>(-257)));
+    static_assert(!isInt<9>(static_cast<int16_t>(1000)));
+    static_assert(isUInt12(static_cast<int8_t>(0)));
+    static_assert(isUInt12(static_cast<int8_t>(127)));
+    static_assert(!isUInt12(static_cast<int8_t>(-1)));
+    static_assert(!isUInt12(static_cast<int8_t>(-128)));
+
+    MacroAssemblerCodeRef<JSEntryPtrTag> emptyCodeRef;
+    MacroAssemblerCodeRef<JITThunkPtrTag> retaggedEmpty = emptyCodeRef.retagged<JITThunkPtrTag>();
+    CHECK_EQ(static_cast<bool>(retaggedEmpty), false);
+    MacroAssemblerCodeRef<JSEntrySlowPathPtrTag> assignedEmpty;
+    assignedEmpty = emptyCodeRef;
+    CHECK_EQ(static_cast<bool>(assignedEmpty), false);
+
+    const CodeLocationLabel<JSEntryPtrTag> emptyLabel;
+    CodeLocationJump<JSEntryPtrTag> convertedJump = emptyLabel;
+    CHECK_EQ(static_cast<bool>(convertedJump), false);
+}
+
 #define RUN(test) do {                          \
         if (!shouldRun(#test))                  \
             break;                              \
@@ -13955,8 +14566,10 @@ void run(const char* filter) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
     RUN(testShiftAndAdd());
     RUN(testLogicalAndShiftImmediates());
     RUN(testBranchAddSubImmediateSetsFlags());
+    RUN(testBranchSubAndNegCarryIsBorrow());
     RUN(testStore64Imm64AddressPointer());
     RUN(testLoad64ExtendedAddress());
+    RUN(testBranchTest16ExtendedAddress());
 
     RUN(testAdd32Imm());
     RUN(testAdd32ArgImm());
@@ -14028,6 +14641,7 @@ void run(const char* filter) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
     RUN(testExtractInsertBitfieldAtLowEnd64());
     RUN(testClearBitField32());
     RUN(testClearBitField64());
+    RUN(testBitfieldWrappersAtFullWidth());
     RUN(testClearBitsWithMask32());
     RUN(testClearBitsWithMask64());
 
@@ -14045,6 +14659,7 @@ void run(const char* filter) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
     RUN(testAddWithRightShift32());
     RUN(testAddWithUnsignedRightShift32());
     RUN(testAddWithLeftShift64());
+    RUN(testBranch64LeftShift());
     RUN(testAddWithRightShift64());
     RUN(testAddWithUnsignedRightShift64());
     RUN(testSubWithLeftShift32());
@@ -14108,6 +14723,7 @@ void run(const char* filter) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
     RUN(testPushToSaveAddress());
     RUN(testRepatchConditionalJump());
     RUN(testTestBitBranchCompaction());
+    RUN(testConditionalBranchCompactionAtDirectRangeBoundary());
     RUN(testProbePCIsFirstInstructionAfterProbe());
 #endif
 
@@ -14242,6 +14858,7 @@ void run(const char* filter) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
     RUN(testMove16ToFloat16Comprehensive());
     RUN(testFMovHalfPrecisionEncoding());
     RUN(testCanEmitJumpMatchesBranchEncoding());
+    RUN(testComputeJumpTypeMatchesBranchEncoding());
     RUN(testCachedTempRegisterImm32Normalization());
     RUN(testARM64ZeroRegisterEncoding());
     RUN(testARM64FmovTopEncoding());
@@ -14249,6 +14866,13 @@ void run(const char* filter) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
     RUN(testARM64SIMDShiftAndTableEncoding());
     RUN(testARM64SIMDStackPointerBaseEncoding());
     RUN(testARM64AddSubtractImmediateDecoding());
+#if CPU(ARM64E)
+    RUN(testARM64EPACEncoding());
+#endif
+    RUN(testARM64AssemblerEncodingAndDecoding());
+#if ENABLE(ARM64_DISASSEMBLER)
+    RUN(testARM64Disassembler());
+#endif
 #endif
 
     RUN(testProbeStackSetFlushesStraddlingWrite());
@@ -14281,6 +14905,7 @@ void run(const char* filter) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
 #endif
 
     RUN(testGPRInfoConsistency());
+    RUN(testAssemblerCommonAndCodeRef());
 
     if (!numberOfTests)
         usage();

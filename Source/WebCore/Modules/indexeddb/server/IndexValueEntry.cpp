@@ -29,8 +29,7 @@
 #include "IDBCursorInfo.h"
 #include <wtf/TZoneMallocInlines.h>
 
-namespace WebCore {
-namespace IDBServer {
+namespace WebCore::IDBServer {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(IndexValueEntry);
 
@@ -164,7 +163,7 @@ IndexValueEntry::Iterator IndexValueEntry::begin() LIFETIME_BOUND
         ASSERT_UNUSED(singleKey, singleKey);
         return { *this };
     }, [this](IDBKeyDataSet& orderedKeys) -> Iterator {
-        ASSERT(!orderedKeys.empty());
+        RELEASE_ASSERT(!orderedKeys.empty());
         return { *this, orderedKeys.begin() };
     });
 }
@@ -175,7 +174,7 @@ IndexValueEntry::Iterator IndexValueEntry::reverseBegin(CursorDuplicity duplicit
         ASSERT_UNUSED(singleKey, singleKey);
         return { *this };
     }, [this, duplicity](IDBKeyDataSet& orderedKeys) -> Iterator {
-        ASSERT(!orderedKeys.empty());
+        RELEASE_ASSERT(!orderedKeys.empty());
         if (duplicity == CursorDuplicity::Duplicates)
             return { *this, orderedKeys.rbegin() };
         auto iterator = orderedKeys.rend();
@@ -225,5 +224,4 @@ Vector<IDBKeyData> IndexValueEntry::keys() const
     return result;
 }
 
-} // namespace IDBServer
-} // namespace WebCore
+} // namespace WebCore::IDBServer

@@ -30,9 +30,10 @@
 
 namespace WebCore {
 
-GPUExternalTexture::GPUExternalTexture(Ref<WebGPU::ExternalTexture>&& backing, String&& label, GPUDevice& device)
+GPUExternalTexture::GPUExternalTexture(Ref<WebGPU::ExternalTexture>&& backing, String&& label, PredefinedColorSpace colorSpace, GPUDevice& device)
     : m_backing(WTF::move(backing))
     , m_label(WTF::move(label))
+    , m_colorSpace(colorSpace)
     , m_device(device)
 {
 }
@@ -61,11 +62,18 @@ void GPUExternalTexture::setLabel(String&& label)
 
 void GPUExternalTexture::destroy()
 {
+    m_active = false;
+    if (m_destroyed)
+        return;
+    m_destroyed = true;
     m_backing->destroy();
 }
 
 void GPUExternalTexture::undestroy()
 {
+    if (!m_destroyed)
+        return;
+    m_destroyed = false;
     m_backing->undestroy();
 }
 

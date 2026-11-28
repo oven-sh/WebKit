@@ -85,7 +85,7 @@ private:
     CharacterSetID intern(CharacterSet&&);
 
     Vector<CharacterSet> m_sets;
-    UncheckedKeyHashMap<unsigned, Vector<CharacterSetID, 1>> m_idsByHash;
+    HashMap<unsigned, Vector<CharacterSetID, 1>> m_idsByHash;
     CharacterSetID m_lineTerminators { CharacterSetID::Unknown };
     std::array<CharacterSetID, 2> m_wordCharacters { };
     std::array<CharacterSetID, 2> m_notWordCharacters { };

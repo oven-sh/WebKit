@@ -56,8 +56,7 @@
 #include "StyleRelativeColor.h"
 #include <wtf/text/TextStream.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 Color::Color(Color::ColorKind&& color)
     : value { WTF::move(color) }
@@ -105,11 +104,6 @@ Color::Color(CSS::Keyword::White)
 }
 
 Color::Color(ResolvedColor&& color)
-    : value { WTF::move(color) }
-{
-}
-
-Color::Color(CurrentAccentColor&& color)
     : value { WTF::move(color) }
 {
 }
@@ -396,7 +390,9 @@ auto ToStyle<CSS::Color>::operator()(const CSS::Color& value, const BuilderState
     auto resolutionState = ColorResolutionState {
         .document = builderState.document(),
         .style = builderState.style(),
+        .parentStyle = builderState.parentStyleIfExists(),
         .conversionData = builderState.cssToLengthConversionData(),
+        .resolvingProperty = builderState.cssPropertyID(),
         .forVisitedLink = forVisitedLink
     };
     return toStyleColor(value, resolutionState);
@@ -471,5 +467,4 @@ auto Blending<Color>::blend(const Color& a, const Color& b, const Style::Compute
     return WebCore::blend(aColorResolver.colorResolvingCurrentColor(a), bColorResolver.colorResolvingCurrentColor(b), context);
 }
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

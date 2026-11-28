@@ -59,7 +59,7 @@ public:
 
     // Decoding
     bool isLargeForDecoding() const { return m_source->isLargeForDecoding(); }
-    void stopDecodingWorkQueue() { m_source->stopDecodingWorkQueue(); }
+    void cancelPendingDecodingRequests() { m_source->cancelPendingDecodingRequests(); }
     void decode(Function<void(DecodingStatus)>&& decodeCallback) { m_source->decode(WTF::move(decodeCallback)); }
 
     // Current ImageFrame
@@ -84,7 +84,7 @@ public:
     FloatSize size(ImageOrientation orientation = ImageOrientation::Orientation::FromImage) const { return m_source->size(orientation); }
     bool hasSomethingToDraw() const final { return !size().isEmpty(); }
     FloatSize density() const { return m_source->density(); }
-    ColorSpace colorSpace() final { return m_source->colorSpace(); }
+    ColorSpace colorSpace(const ColorSpace& = ColorSpace::SRGB()) final { return m_source->colorSpace(); }
     bool hasHDRContent() const final { return m_source->hasHDRContent(); }
     ImageOrientation orientation() const final { return m_source->orientation(); }
     unsigned frameCount() const final { return m_source->frameCount(); }
@@ -103,7 +103,7 @@ public:
     RefPtr<NativeImage> nativeImageAtIndex(unsigned index, const ImageDrawDescriptor&) final { return nativeImageAtIndex(index); }
 
     // Testing support.
-    UTF8CString sourceUTF8() const { return sourceURL().string().utf8(); }
+    UTF8CString sourceUTF8() const { return makeUTF8CString(sourceURL().string()); }
     void setAsyncDecodingEnabledForTesting(bool enabled) { m_source->setAsyncDecodingEnabledForTesting(enabled); }
     bool isAsyncDecodingEnabledForTesting() const { return m_source->isAsyncDecodingEnabledForTesting(); }
     void setMinimumDecodingDurationForTesting(Seconds duration) { m_source->setMinimumDecodingDurationForTesting(duration); }
@@ -147,6 +147,10 @@ private:
 
 #if ENABLE(QUICKLOOK_FULLSCREEN)
     bool isPanorama() const final { return m_source->isPanorama(); }
+#endif
+
+#if ENABLE(IMAGE_ELEMENT_IMMERSIVE)
+    std::optional<float> focalLengthIn35mm() const final { return m_source->focalLengthIn35mm(); }
 #endif
 
 #if ENABLE(SPATIAL_IMAGE_CONTROLS)

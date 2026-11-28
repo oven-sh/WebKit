@@ -34,13 +34,12 @@
 #define SET_NESTED(group, parent, variable, value) SET_STYLE_PROPERTY(group->parent->variable, group.access().parent.access().variable, value)
 #define SET_DOUBLY_NESTED(group, grandparent, parent, variable, value) SET_STYLE_PROPERTY(group->grandparent->parent->variable, group.access().grandparent.access().parent.access().variable, value)
 #define SET_NESTED_STRUCT(group, parent, variable, value) SET_STYLE_PROPERTY(group->parent.variable, group.access().parent.variable, value)
-#define SET_STYLE_PROPERTY_PAIR(read, write, variable1, value1, variable2, value2) do { Ref readable { *read }; if (!compareEqual(readable->variable1, value1) || !compareEqual(readable->variable2, value2)) { auto& writable = write; writable.variable1 = value1; writable.variable2 = value2; } } while (0)
+#define SET_STYLE_PROPERTY_PAIR(read, write, variable1, value1, variable2, value2) do { Ref readable { *read }; if (!compareEqual(readable->variable1, value1) || !compareEqual(readable->variable2, value2)) { [&](auto& writable) { writable.variable1 = value1; writable.variable2 = value2; }(write); } } while (0)
 #define SET_PAIR(group, variable1, value1, variable2, value2) SET_STYLE_PROPERTY_PAIR(group, group.access(), variable1, value1, variable2, value2)
 #define SET_NESTED_PAIR(group, parent, variable1, value1, variable2, value2) SET_STYLE_PROPERTY_PAIR(group->parent, group.access().parent.access(), variable1, value1, variable2, value2)
 #define SET_DOUBLY_NESTED_PAIR(group, grandparent, parent, variable1, value1, variable2, value2) SET_STYLE_PROPERTY_PAIR(group->grandparent->parent, group.access().grandparent.access().parent.access(), variable1, value1, variable2, value2)
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 template<typename T, typename U> inline bool compareEqual(const T& a, const U& b)
 {
@@ -249,7 +248,8 @@ inline void ComputedStyleBase::setUsedAppearance(StyleAppearance a)
 
 inline void ComputedStyleBase::setOverrideBackgroundColor(std::optional<Color>&& color)
 {
-    SET_NESTED(m_nonInheritedData, rareData, overrideBackgroundColor, WTF::move(color));
+    if (color != m_nonInheritedData->backgroundData->overrideBackgroundColor)
+        m_nonInheritedData.access().backgroundData.access().overrideBackgroundColor = WTF::move(color);
 }
 
 inline void ComputedStyleBase::setUsedUserSelect(UserSelect userSelect)
@@ -445,8 +445,7 @@ inline void ComputedStyleBase::setPageSize(PageSize&& pageSize)
     SET_NESTED(m_nonInheritedData, rareData, pageSize, WTF::move(pageSize));
 }
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style
 
 #undef SET
 #undef SET_DOUBLY_NESTED

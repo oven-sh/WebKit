@@ -25,16 +25,18 @@
 
 #pragma once
 
+#include <WebCore/ColorSpaceName.h>
 #include <WebCore/ColorTypes.h>
 #include <WebCore/PlatformExportMacros.h>
+#include <array>
+#include <concepts>
 #include <numeric>
+#include <optional>
 #include <wtf/MathExtras.h>
 
 namespace WebCore {
 
 class ColorSpace;
-
-enum class ColorSpaceName : uint8_t;
 
 // Conversion function for typed colors.
 template<typename Output, typename Input> requires (!IsPremultiplied<Output> && !IsPremultiplied<Input>) Output convertColor(const Input& color);
@@ -46,8 +48,11 @@ template<typename Output, typename Input> requires (!IsPremultiplied<Output> && 
 // Conversion function for changing the component type of a premultiplied color, which,
 // unlike the other conversions, is safe as it only rescales the components.
 template<typename ComponentType, typename ColorType> ResolvedPremultiplied<ColorTypeWithReplacementComponent<ColorType, ComponentType>> convertComponentType(const ResolvedPremultiplied<ColorType>&);
+template<typename ComponentType, typename T> ResolvedPremultiplied<ColorComponents<ComponentType, 4>> convertComponentType(const ResolvedPremultiplied<ColorComponents<T, 4>>&);
 
 // Conversion functions for raw color components with associated color spaces.
+template<typename Output> Output convertColorComponents(ColorSpaceName inputColorSpace, const ColorComponents<float, 4>& input);
+template<typename Output> Output convertColorComponentsCarryingForwardMissing(ColorSpaceName inputColorSpace, const ColorComponents<float, 4>& input);
 ColorComponents<float, 4> convertAndResolveColorComponents(ColorSpaceName inputColorSpace, ColorComponents<float, 4> inputColorComponents, ColorSpaceName outputColorSpace);
 ColorComponents<float, 4> convertAndResolveColorComponents(ColorSpaceName inputColorSpace, ColorComponents<float, 4> inputColorComponents, const ColorSpace& outputColorSpace);
 
@@ -72,7 +77,19 @@ template<typename Output, typename Input> requires (!IsPremultiplied<Output> && 
 
 template<typename ComponentType, typename ColorType> ResolvedPremultiplied<ColorTypeWithReplacementComponent<ColorType, ComponentType>> convertComponentType(const ResolvedPremultiplied<ColorType>& color)
 {
-    return Premultiplied { convertColor<ColorTypeWithReplacementComponent<ColorType, ComponentType>>(makeFromComponents<ColorType>(asColorComponents(color))).resolved() };
+    return Premultiplied { convertColor<ColorTypeWithReplacementComponent<ColorType, ComponentType>>(makeFromComponents<ColorType>(asColorComponents(color.resolved()))).resolved() };
+}
+
+template<typename ComponentType, typename T> ResolvedPremultiplied<ColorComponents<ComponentType, 4>> convertComponentType(const ResolvedPremultiplied<ColorComponents<T, 4>>& color)
+{
+    if constexpr (std::is_same_v<ComponentType, T>)
+        return color;
+    else if constexpr (std::is_same_v<ComponentType, uint8_t> && std::is_same_v<T, float>)
+        return Premultiplied { resolvedColor(color.resolved().map([](float value) -> uint8_t { return std::clamp(std::lround(value * 255.0f), 0l, 255l); })) };
+    else {
+        static_assert(std::is_same_v<ComponentType, float> && std::is_same_v<T, uint8_t>);
+        return Premultiplied { resolvedColor(color.resolved().map([](uint8_t value) -> float { return value / 255.0f; })) };
+    }
 }
 
 // MARK: Specialized converters
@@ -198,6 +215,38 @@ template<typename Output, typename Input> requires (!IsPremultiplied<Output> && 
 
 constexpr std::array<float, 3> D50WhitePoint { 0.3457 / 0.3585, 1.0, (1.0 - 0.3457 - 0.3585) / 0.3585 };
 constexpr std::array<float, 3> D65WhitePoint { 0.3127 / 0.3290, 1.0, (1.0 - 0.3127 - 0.3290) / 0.3290 };
+
+// MARK: Lab.
+
+constexpr float LABe = 216.0 / 24389.0;
+constexpr float LABk = 24389.0 / 27.0;
+
+// MARK: OKLab.
+
+// https://bottosson.github.io/posts/oklab/ with XYZ <-> LMS matrices recalculated for consistent reference white in https://github.com/w3c/csswg-drafts/issues/6642#issuecomment-943521484
+constexpr ColorMatrix<3, 3> LinearLMSToXYZD65 {
+     1.2268798758459243, -0.5578149944602171,  0.2813910456659647,
+    -0.0405757452148008,  1.1122868032803170, -0.0717110580655164,
+    -0.0763729366746601, -0.4214933324022432,  1.5869240198367816,
+};
+
+constexpr ColorMatrix<3, 3> OKLabToNonLinearLMS {
+     1.0000000000000000,  0.3963377773761749,  0.2158037573099136,
+     1.0000000000000000, -0.1055613458156586, -0.0638541728258133,
+     1.0000000000000000, -0.0894841775298119, -1.2914855480194092,
+};
+
+constexpr ColorMatrix<3, 3> XYZD65ToLinearLMS {
+    0.8190224379967030,  0.3619062600528904, -0.1288737815209879,
+    0.0329836539323885,  0.9292868615863434,  0.0361446663506424,
+    0.0481771893596242,  0.2642395317527308,  0.6335478284694309,
+};
+
+constexpr ColorMatrix<3, 3> NonLinearLMSToOKLab {
+    0.2104542683093140,  0.7936177747023054, -0.0040720430116193,
+    1.9779985324311684, -2.4285922420485799,  0.4505937096174110,
+    0.0259040424655478,  0.7827717124575296, -0.8086757549230774,
+};
 
 // MARK: Chromatic Adaptation conversions.
 
@@ -555,5 +604,134 @@ private:
         }
     }
 };
+
+// MARK: Conversions for color types known only at runtime.
+
+// Conversions from a color whose type is only known at runtime, as a ColorSpaceName. Converting
+// directly would instantiate a conversion for every pair of input and output types, so instead,
+// conversions are split at XYZ, into one conversion to XYZ per input type and one from XYZ per
+// output type. Each color type converts to the XYZ of its own white point, and adapts between white
+// points only when the input and output differ, so the steps are the same as converting directly.
+//
+// Pairs whose direct conversion does not go through XYZ, such as from HSL to sRGB or from LCH to Lab,
+// still convert directly, as splitting them at XYZ would do more work and lose precision.
+
+// The last color type before XYZ in the conversions of a color type, or XYZ itself. Two color types
+// with the same one convert to each other without going through XYZ.
+template<typename ColorType> struct LastColorTypeBeforeXYZHelper {
+    static constexpr auto type()
+    {
+        if constexpr (std::same_as<typename ColorType::ComponentType, uint8_t>)
+            return std::type_identity<typename LastColorTypeBeforeXYZHelper<ColorTypeWithReplacementComponent<ColorType, float>>::Type> { };
+        else if constexpr (IsXYZA<ColorType>)
+            return std::type_identity<ColorType> { };
+        else if constexpr (IsRGBBoundedType<ColorType>)
+            return std::type_identity<typename LastColorTypeBeforeXYZHelper<typename ColorType::ExtendedCounterpart>::Type> { };
+        else if constexpr (IsRGBGammaEncodedType<ColorType>)
+            return std::type_identity<typename LastColorTypeBeforeXYZHelper<typename ColorType::LinearCounterpart>::Type> { };
+        else if constexpr (IsRGBType<ColorType>)
+            return std::type_identity<ColorType> { };
+        else if constexpr (IsXYZA<typename ColorType::Reference>)
+            return std::type_identity<ColorType> { };
+        else
+            return std::type_identity<typename LastColorTypeBeforeXYZHelper<typename ColorType::Reference>::Type> { };
+    }
+
+    using Type = typename decltype(type())::type;
+};
+
+template<typename ColorType> using LastColorTypeBeforeXYZ = typename LastColorTypeBeforeXYZHelper<ColorType>::Type;
+
+// The XYZ, of the white point of `ColorType`, that it is converted to and from.
+template<typename ColorType> struct XYZForColorTypeHelper {
+    static constexpr auto type()
+    {
+        if constexpr (IsXYZA<LastColorTypeBeforeXYZ<ColorType>>)
+            return std::type_identity<LastColorTypeBeforeXYZ<ColorType>> { };
+        else
+            return std::type_identity<typename LastColorTypeBeforeXYZ<ColorType>::Reference> { };
+    }
+
+    using Type = typename decltype(type())::type;
+};
+
+template<typename ColorType> using XYZForColorType = typename XYZForColorTypeHelper<ColorType>::Type;
+
+// Whether two color types convert to each other directly, such as sRGB and HSL, without going
+// through XYZ. Those that do not, such as sRGB and Display P3, have their conversions split at XYZ instead.
+template<typename ColorType1, typename ColorType2> concept ConvertsWithoutXYZ = std::same_as<LastColorTypeBeforeXYZ<ColorType1>, LastColorTypeBeforeXYZ<ColorType2>>;
+
+// Not inlined, so that there is one copy per input type.
+template<typename ColorType> NEVER_INLINE XYZForColorType<ColorType> convertColorComponentsToXYZ(const ColorComponents<float, 4>& components)
+{
+    return convertColor<XYZForColorType<ColorType>>(makeFromComponents<ColorType>(components));
+}
+
+// Not inlined, so that there is one copy per output type.
+template<typename Output, WhitePoint whitePoint> NEVER_INLINE Output convertColorFromXYZ(const XYZA<float, whitePoint>& color)
+{
+    using XYZ = XYZForColorType<Output>;
+
+    if constexpr (XYZ::whitePoint == whitePoint)
+        return convertColor<Output>(color);
+    else
+        return convertColor<Output>(convertColor<XYZ>(color));
+}
+
+template<typename Input, typename Output> Output convertColorComponentsSplitAtXYZ(const ColorComponents<float, 4>& input)
+{
+    if constexpr (IsXYZA<Input>)
+        return convertColorFromXYZ<Output>(makeFromComponents<Input>(input));
+    else
+        return convertColorFromXYZ<Output>(convertColorComponentsToXYZ<Input>(input));
+}
+
+template<typename Output> Output convertColorComponents(ColorSpaceName inputColorSpace, const ColorComponents<float, 4>& input)
+{
+    return callWithColorType<float>(inputColorSpace, [&]<typename Input> -> Output {
+        if constexpr (ConvertsWithoutXYZ<Input, Output>)
+            return convertColor<Output>(makeFromComponents<Input>(input));
+        else
+            return convertColorComponentsSplitAtXYZ<Input, Output>(input);
+    });
+}
+
+// MARK: Carrying forward missing components.
+
+// The category of each component, used to find analogous components at runtime, as
+// analogousComponentIndex() does for color types known at compile time.
+using ColorComponentCategories = std::array<std::optional<ColorComponentCategory>, 3>;
+
+template<typename ColorType> consteval ColorComponentCategories colorComponentCategories()
+{
+    return { ColorType::Model::componentInfo[0].category, ColorType::Model::componentInfo[1].category, ColorType::Model::componentInfo[2].category };
+}
+
+// Does what convertColorCarryingForwardMissing() does after converting, for color types known only at runtime.
+WEBCORE_EXPORT void carryForwardMissingComponents(const ColorComponentCategories& inputCategories, const ColorComponents<float, 4>& input, const ColorComponentCategories& outputCategories, ColorComponents<float, 4>& output);
+
+// Not inlined, so that the dispatch in convertColorComponentsCarryingForwardMissing() calls one copy per output type, rather than inlining one for every input type.
+template<typename Output> NEVER_INLINE Output withMissingComponentsCarriedForward(const ColorComponentCategories& inputCategories, const ColorComponents<float, 4>& input, const Output& output)
+{
+    auto outputComponents = asColorComponents(output.unresolved());
+    carryForwardMissingComponents(inputCategories, input, colorComponentCategories<Output>(), outputComponents);
+    return makeFromComponents<Output>(outputComponents);
+}
+
+template<typename Output> Output convertColorComponentsCarryingForwardMissing(ColorSpaceName inputColorSpace, const ColorComponents<float, 4>& input)
+{
+    return callWithColorType<float>(inputColorSpace, [&]<typename Input> -> Output {
+        if constexpr (ConvertsWithoutXYZ<Input, Output>)
+            return convertColorCarryingForwardMissing<Output>(makeFromComponents<Input>(input));
+        else {
+            auto output = convertColorComponentsSplitAtXYZ<Input, Output>(input);
+            if constexpr (!std::same_as<typename Output::ComponentType, uint8_t>) {
+                if (unresolvedColor(input).anyComponentIsNone())
+                    return withMissingComponentsCarriedForward<Output>(colorComponentCategories<Input>(), input, output);
+            }
+            return output;
+        }
+    });
+}
 
 } // namespace WebCore

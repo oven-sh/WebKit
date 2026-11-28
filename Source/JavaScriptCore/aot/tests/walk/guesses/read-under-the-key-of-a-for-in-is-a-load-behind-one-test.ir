@@ -16,6 +16,11 @@
 # RUN(OTHER): walk f2 mechanisms=none+TypedOperations+Guesses
 # OTHER-NOT: IsEnumeratorCurrent
 # OTHER-NOT: EnumeratorGetByVal
+# where the object has a symbol, an accessor, a hidden name or a deleted one among its properties, the place of a key is not the place of its value: there the test fails and the read is the one as written
+# RUN(ANSWER): run-in-shell mechanisms=all globalThis.sink = (sum) => { const hidden = Object.defineProperty({ a: 1, b: 20, c: 300 }, "b", { enumerable: false }); const deleted = { a: 1, b: 20, c: 300 }; delete deleted.b; for (let turn = 0; turn < 2; turn++) print(sum({ a: 1, b: 20, c: 300 }), sum({ a: 1, [Symbol()]: 20, c: 300 }), sum({ a: 1, get b() { return 20; }, c: 300 }), sum(hidden), sum(deleted)); };
+# ANSWER: 321 301 321 301 301
+# ANSWER-NEXT: 321 301 321 301 301
+# ANSWER-NEXT: exited with 0
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

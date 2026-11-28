@@ -527,7 +527,7 @@ public:
 
     const RTT& signatureRTT() const LIFETIME_BOUND { return *m_signatureRTT; }
 
-    using OutOfLineJumpTargets = UncheckedKeyHashMap<unsigned, int>;
+    using OutOfLineJumpTargets = HashMap<unsigned, int>;
 
     unsigned computeCodeHashImpl() const;
 
@@ -545,7 +545,7 @@ private:
     const uint8_t* m_bytecodeEnd;
     Vector<uint8_t> m_metadata;
     Vector<uint8_t> m_localInitBytecode;
-    RefPtr<const RTT> m_signatureRTT;
+    const RefPtr<const RTT> m_signatureRTT;
     Vector<FunctionSpaceIndex> m_callTargets;
     HotLocals m_hotLocals;
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2006 Apple Inc. All rights reserved.
+ * Copyright (C) 2006-2026 Apple Inc. All rights reserved.
  * Copyright (C) 2006, 2008 Nikolas Zimmermann <zimmermann@kde.org>
  *
  * This library is free software; you can redistribute it and/or
@@ -20,10 +20,12 @@
 
 #pragma once
 
+#include "StyleURL.h"
 #include <wtf/CheckedPtr.h>
 #include <wtf/Forward.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
+#include <wtf/ListHashSet.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/URLHash.h>
 #include <wtf/WeakHashSet.h>
@@ -43,6 +45,33 @@ class SVGSMILElement;
 class SVGSVGElement;
 class SVGUseElement;
 class WeakPtrImplWithEventTargetData;
+
+struct SVGExternalResourceKey {
+    URL url;
+    CSS::URLModifiers modifiers;
+    CSS::URLProvenance provenance;
+
+    friend bool operator==(const SVGExternalResourceKey&, const SVGExternalResourceKey&) = default;
+};
+
+inline void add(Hasher& hasher, const SVGExternalResourceKey& key)
+{
+    add(hasher, key.url, key.modifiers, key.provenance);
+}
+
+} // namespace WebCore
+
+namespace WTF {
+
+template<> struct HashTraits<WebCore::SVGExternalResourceKey> : GenericHashTraits<WebCore::SVGExternalResourceKey> {
+    static constexpr bool emptyValueIsZero = false;
+    static void constructDeletedValue(WebCore::SVGExternalResourceKey& slot) { new (NotNull, &slot.url) URL(WTF::HashTableDeletedValue); }
+    static bool isDeletedValue(const WebCore::SVGExternalResourceKey& slot) { return slot.url.isHashTableDeletedValue(); }
+};
+
+} // namespace WTF
+
+namespace WebCore {
 
 class SVGDocumentExtensions final : public CanMakeCheckedPtr<SVGDocumentExtensions> {
     WTF_MAKE_TZONE_ALLOCATED(SVGDocumentExtensions);
@@ -71,22 +100,21 @@ public:
     void addElementToRebuild(SVGElement&);
     void removeElementToRebuild(SVGElement&);
     void rebuildElements();
-    void clearTargetDependencies(SVGElement&);
     void rebuildAllElementReferencesForTarget(SVGElement&);
 
     const WeakListHashSet<SVGFontFaceElement, WeakPtrImplWithEventTargetData>& svgFontFaceElements() const LIFETIME_BOUND { return m_svgFontFaceElements; }
     void registerSVGFontFaceElement(SVGFontFaceElement&);
     void unregisterSVGFontFaceElement(SVGFontFaceElement&);
 
-    bool hasExternalSVGResource(const URL&) const;
-    void addExternalSVGResource(const URL&, CachedImage&, Document&);
-    IsolatedSVGDocumentContext* isolatedSVGDocumentContext(const URL&) const;
+    bool hasExternalSVGResource(const Style::URL&) const;
+    void addExternalSVGResource(const Style::URL&, CachedImage&, Document&);
+    IsolatedSVGDocumentContext* isolatedSVGDocumentContext(const Style::URL&) const;
 
     // The return value is tri-state because callers need to distinguish whether the reference is external
     // at all, and if so whether it's loaded yet: nullopt = not an external/data reference (resolve
     // locally); null RefPtr = external but not loaded yet (resolve to nothing); non-null = the isolated
     // document to resolve in. Requires the SVGExternalResourcesEnabled setting.
-    std::optional<RefPtr<SVGDocument>> externalResourceDocument(const URL&) const;
+    std::optional<RefPtr<SVGDocument>> externalResourceDocument(const Style::URL&) const;
 
 private:
     WeakRef<Document, WeakPtrImplWithEventTargetData> m_document;
@@ -94,10 +122,10 @@ private:
     WeakListHashSet<SVGFontFaceElement, WeakPtrImplWithEventTargetData> m_svgFontFaceElements;
     const UniqueRef<SVGResourcesCache> m_resourcesCache;
 
-    Vector<Ref<SVGElement>> m_rebuildElements;
+    ListHashSet<Ref<SVGElement>> m_rebuildElements;
     bool m_areAnimationsPaused { false };
 
-    HashMap<URL, Ref<IsolatedSVGDocumentContext>> m_externalSVGDocuments;
+    HashMap<SVGExternalResourceKey, Ref<IsolatedSVGDocumentContext>> m_externalSVGDocuments;
 };
 
 } // namespace WebCore

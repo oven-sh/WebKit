@@ -56,6 +56,14 @@ constexpr bool skipMemoryAttribution = true;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Queue);
 
+// Nothing is valid to use with a queue whose device is gone.
+template<typename T>
+static bool isValidToUseWith(const T& object, const Queue& queue)
+{
+    RefPtr device = queue.device();
+    return device && isValidToUseWithDevice(object, *device);
+}
+
 Queue::Queue(id<MTLCommandQueue> commandQueue, Adapter& adapter, Device& device)
     : m_commandQueue(commandQueue)
     , m_device(device)
@@ -150,16 +158,6 @@ void Queue::finalizeBlitCommandEncoder()
     // Finalizes the queue-owned staging command buffer, whichever encoder type is
     // currently open on it (blit, or the compute staged-copy encoder).
     if (m_blitCommandEncoder || m_stagedCopyEncoder) {
-        // Hand the command buffer any bytes its copies only alias, before it is committed: Metal
-        // accepts completed handlers on uncommitted command buffers only. Nothing is parked unless a
-        // writeBuffer() staged a copy through a newBufferWithBytesNoCopy MTLBuffer, so this is a
-        // no-op for every other caller. Mirrors the noCopy tail of writeTexture().
-        if (!m_noCopyStagingSource.isEmpty()) {
-            __block Vector<uint8_t> retainedStagingSource = WTF::move(m_noCopyStagingSource);
-            [m_commandBuffer addCompletedHandler:^(id<MTLCommandBuffer>) {
-                retainedStagingSource = { };
-            }];
-        }
         id<MTLCommandEncoder> stagingEncoder = m_blitCommandEncoder;
         if (!stagingEncoder)
             stagingEncoder = m_stagedCopyEncoder;
@@ -549,7 +547,7 @@ void Queue::submit(Vector<Ref<WebGPU::Metal::CommandBuffer>>&& commands)
         // filled buffers here. They hold the commands encoded before this one, so they have to be
         // committed first; sequential commits on the same MTLCommandQueue execute in order.
         auto priorCommandBuffers = apiCommandBuffer->takePriorCommandBuffers();
-        for (auto& priorCommandBuffer : priorCommandBuffers)
+        for (auto& priorCommandBuffer : borrow(priorCommandBuffers))
             commitMTLCommandBuffer(priorCommandBuffer.get());
         commitMTLCommandBuffer(commandBuffer);
         apiCommandBuffer->postCommitHandler();
@@ -956,17 +954,9 @@ NSString* Queue::errorValidatingWriteTexture(const WebGPU::TexelCopyTextureInfo&
     return nil;
 }
 
-const Device& Queue::device() const
+RefPtr<WebGPU::Device> Queue::device() const
 {
-    auto device = m_device.get();
-    RELEASE_ASSERT(device);
-    return *device.unsafeGet();
-}
-
-void Queue::generateAValidationError(String&& message)
-{
-    if (RefPtr device = m_device.get())
-        device->generateAValidationError(WTF::move(message));
+    return m_device.get();
 }
 
 void Queue::clearTextureIfNeeded(const WebGPU::TexelCopyTextureInfo& destination, NSUInteger slice)
@@ -1406,7 +1396,7 @@ void Queue::writeTexture(const WebGPU::TexelCopyTextureInfo& destination, std::s
     }
     if (!temporaryBuffer)
         return;
-    ASSERT(temporaryBuffer.length >= newBufferSize);
+    RELEASE_ASSERT(temporaryBuffer.length >= newBufferSize);
 
     switch (texture->dimension()) {
     case WebGPU::TextureDimension::_1d: {
@@ -1815,18 +1805,20 @@ struct WebKitCopyExternalImageVertexOut {
     uint sourceY = (args.flags & webKitCopyExternalImageFlipY) ? (args.copyHeight - 1 - copyPosition.y) : copyPosition.y;
     // Clamped because a caller-supplied rectangle reaching past the end of the source must read the
     // edge rather than whatever the surface's padding holds.
-    uint2 sourcePosition = min(uint2(args.sourceOriginX + copyPosition.x, args.sourceOriginY + sourceY), uint2(args.sourceMaxX, args.sourceMaxY));
+    uint2 sourcePosition = uint2(args.sourceOriginX, args.sourceOriginY) + min(uint2(copyPosition.x, sourceY), uint2(args.sourceMaxX - args.sourceOriginX, args.sourceMaxY - args.sourceOriginY));
     float4 color;
     if (args.flags & webKitCopyExternalImageSourceIsVideoFrame) {
         // A decoded frame's two planes, sampled the way textureSampleBaseClampToEdge samples an
         // external texture: the frame's own crop applied to normalized coordinates, then out of its
         // YCbCr space. A single-plane frame arrives as a swizzled view of the first plane paired with
         // the identity matrix, so both kinds of frame take this one path.
-        float2 frameCoordinates = (float2(sourcePosition) + 0.5f) / float2(args.sourceMaxX + 1, args.sourceMaxY + 1);
+        float2 frameCoordinates = clamp((float2(sourcePosition) + 0.5f) / (float2(args.sourceMaxX, args.sourceMaxY) + 1.f), 0.f, 1.f);
         float2 croppedCoordinates = float2(
             args.uvRemapMatrix[0] * frameCoordinates.x + args.uvRemapMatrix[2] * frameCoordinates.y + args.uvRemapMatrix[4],
             args.uvRemapMatrix[1] * frameCoordinates.x + args.uvRemapMatrix[3] * frameCoordinates.y + args.uvRemapMatrix[5]);
-        float3 ycbcr = float3(source.sample(webKitCopyExternalImageFrameSampler, croppedCoordinates).r, sourceSecondPlane.sample(webKitCopyExternalImageFrameSampler, croppedCoordinates).rg);
+        float2 lumaBounds = 0.5f / float2(source.get_width(), source.get_height());
+        float2 chromaBounds = 0.5f / float2(sourceSecondPlane.get_width(), sourceSecondPlane.get_height());
+        float3 ycbcr = float3(source.sample(webKitCopyExternalImageFrameSampler, clamp(croppedCoordinates, lumaBounds, 1.f - lumaBounds)).r, sourceSecondPlane.sample(webKitCopyExternalImageFrameSampler, clamp(croppedCoordinates, chromaBounds, 1.f - chromaBounds)).rg);
         // Column-major, matching how the host flattened it, and affine: the fourth column is added.
         color = float4(
             args.ycbcrMatrix[0] * ycbcr.x + args.ycbcrMatrix[3] * ycbcr.y + args.ycbcrMatrix[6] * ycbcr.z + args.ycbcrMatrix[9],
@@ -2048,15 +2040,24 @@ void Queue::copyExternalImageToTexture(const WebGPU::ImageCopyExternalImage& sou
         if (!sourceTexture || !sourceSecondPlaneTexture)
             return;
 
-        // The frame's clean aperture, which is both the extent script sees and the extent the crop
-        // matrix normalizes against, rather than the larger extent the planes may be coded at.
-        auto cleanSize = CVImageBufferGetCleanRect(pixelBuffer.get()).size;
-        sourceWidth = static_cast<uint32_t>(cleanSize.width);
-        sourceHeight = static_cast<uint32_t>(cleanSize.height);
-        // A quarter turn presents the frame's extent transposed, and both the copy's coordinates and
-        // the origin script asked to copy from are in the presented image.
-        if (source.pixelBufferRotation == WebGPU::VideoFrameRotation::Right || source.pixelBufferRotation == WebGPU::VideoFrameRotation::Left)
-            std::swap(sourceWidth, sourceHeight);
+        // The size the source presents the frame at, which is the extent script sees and which the
+        // pixel buffer does not carry when a pixel aspect ratio or display size scales it. Unlike the
+        // IOSurface path below, which indexes the surface directly in texels, fsCopyExternalImage divides
+        // sourcePosition by this extent to produce normalized [0, 1] UV coordinates and clamps the mapped
+        // coordinates to each plane's bounds, so a presented size larger than the clean aperture rescales
+        // sampling across the frame rather than reading past the pixel buffer's planes. Fall back to the
+        // frame's clean aperture when the caller did not supply one.
+        sourceWidth = source.sourceSize.width;
+        sourceHeight = source.sourceSize.height;
+        if (!sourceWidth || !sourceHeight) {
+            auto cleanSize = CVImageBufferGetCleanRect(pixelBuffer.get()).size;
+            sourceWidth = static_cast<uint32_t>(cleanSize.width);
+            sourceHeight = static_cast<uint32_t>(cleanSize.height);
+            // A quarter turn presents the frame's extent transposed, and both the copy's coordinates and
+            // the origin script asked to copy from are in the presented image.
+            if (source.pixelBufferRotation == WebGPU::VideoFrameRotation::Right || source.pixelBufferRotation == WebGPU::VideoFrameRotation::Left)
+                std::swap(sourceWidth, sourceHeight);
+        }
         if (!sourceWidth || !sourceHeight)
             return;
 
@@ -2190,8 +2191,8 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     setEncoderForBuffer(commandBuffer, renderCommandEncoder);
 
     CopyExternalImageArguments arguments {
-        .sourceOriginX = source.origin.x,
-        .sourceOriginY = source.origin.y,
+        .sourceOriginX = std::min(source.origin.x, sourceWidth - 1),
+        .sourceOriginY = std::min(source.origin.y, sourceHeight - 1),
         .destinationOriginX = destination.origin.x,
         .destinationOriginY = destination.origin.y,
         .copyWidth = widthForMetal,
@@ -2238,13 +2239,6 @@ void Queue::submit(Vector<Ref<WebGPU::CommandBuffer>>&& commands)
     submit(WTF::map(commands, [](auto& command) {
         return Ref { downcast<CommandBuffer>(command) };
     }));
-}
-
-void Queue::onSubmittedWorkDone(CompletionHandler<void()>&& callback)
-{
-    onSubmittedWorkDone(CompletionHandler<void(bool)> { [callback = WTF::move(callback)](bool) mutable {
-        callback();
-    } });
 }
 
 // The WebGPU::Metal writes only read `data`. They take a mutable span because a large write wraps
@@ -2329,7 +2323,7 @@ void Queue::resolveProvisionalTextureClears(std::optional<uint64_t> committingCo
 
     auto provisionalClears = std::exchange(m_provisionalTextureClears, { });
 
-    for (auto& provisionalClear : provisionalClears) {
+    for (auto& provisionalClear : borrow(provisionalClears)) {
         RefPtr texture = provisionalClear.texture.get();
         if (!texture)
             continue;
@@ -2347,7 +2341,7 @@ void Queue::resolveProvisionalTextureClears(std::optional<uint64_t> committingCo
         return;
 
     bool encodedAnyClear = false;
-    for (auto& provisionalClear : provisionalClears) {
+    for (auto& provisionalClear : borrow(provisionalClears)) {
         if (committingCommandEncoderId && provisionalClear.commandEncoderId == *committingCommandEncoderId)
             continue;
         RefPtr texture = provisionalClear.texture.get();
@@ -2364,77 +2358,8 @@ void Queue::resolveProvisionalTextureClears(std::optional<uint64_t> committingCo
 
 id<MTLDevice> Queue::metalDevice() const
 {
-    return device().device();
+    RefPtr device = m_device;
+    return device ? device->device() : nil;
 }
 
 } // namespace WebGPU::Metal
-
-#pragma mark WGPU Stubs
-
-NODELETE void wgpuQueueAddRef(WGPUQueue queue)
-{
-    WebGPU::Metal::fromAPI(queue).ref();
-}
-
-void wgpuQueueRelease(WGPUQueue queue)
-{
-    @autoreleasepool {
-        WebGPU::Metal::fromAPI(queue).deref();
-    }
-}
-
-// Work that cannot complete, because the device is lost, is WGPUQueueWorkDoneStatus_Error.
-WGPUFuture wgpuQueueOnSubmittedWorkDone(WGPUQueue queue, WGPUQueueWorkDoneCallbackInfo callbackInfo)
-{
-    @autoreleasepool {
-        Ref protectedQueue = WebGPU::Metal::fromAPI(queue);
-        WebGPU::Metal::CAPIFuture future { protect(protectedQueue->device())->instance() };
-        protectedQueue->onSubmittedWorkDone(CompletionHandler<void(bool)> { [callbackInfo, future](bool success) {
-            if (success)
-                callbackInfo.callback(WGPUQueueWorkDoneStatus_Success, WebGPU::Metal::toAPI(""_s), callbackInfo.userdata1, callbackInfo.userdata2);
-            else
-                callbackInfo.callback(WGPUQueueWorkDoneStatus_Error, WebGPU::Metal::toAPI("The device is lost"_s), callbackInfo.userdata1, callbackInfo.userdata2);
-            future.complete();
-        } });
-        return future.future();
-    }
-}
-
-void wgpuQueueSubmit(WGPUQueue queue, size_t commandCount, const WGPUCommandBuffer* commands)
-{
-    @autoreleasepool {
-        Vector<Ref<WebGPU::Metal::CommandBuffer>> commandsToForward;
-        for (auto& command : unsafeMakeSpan(commands, commandCount))
-            commandsToForward.append(protect(WebGPU::Metal::fromAPI(command)));
-        protect(WebGPU::Metal::fromAPI(queue))->submit(WTF::move(commandsToForward));
-    }
-}
-
-void wgpuQueueWriteBuffer(WGPUQueue queue, WGPUBuffer buffer, uint64_t bufferOffset, const void* data, size_t size)
-{
-    @autoreleasepool {
-        auto bytes = unsafeMakeSpan(static_cast<const uint8_t*>(data), size);
-        protect(WebGPU::Metal::fromAPI(queue))->writeBuffer(protect(WebGPU::Metal::fromAPI(buffer)), bufferOffset, spanConstCast<uint8_t>(bytes));
-    }
-}
-
-void wgpuQueueWriteTexture(WGPUQueue queue, const WGPUTexelCopyTextureInfo* destination, const void* data, size_t dataSize, const WGPUTexelCopyBufferLayout* dataLayout, const WGPUExtent3D* writeSize)
-{
-    @autoreleasepool {
-        auto bytes = unsafeMakeSpan(static_cast<const uint8_t*>(data), dataSize);
-        Ref protectedQueue = WebGPU::Metal::fromAPI(queue);
-        auto apiDestination = WebGPU::Metal::fromAPI(*destination);
-        if (!apiDestination) {
-            protectedQueue->generateAValidationError("GPUQueue.writeTexture: the destination has a null texture or an invalid aspect"_s);
-            return;
-        }
-        protectedQueue->writeTexture(*apiDestination, bytes, WebGPU::Metal::fromAPI(*dataLayout), WebGPU::Metal::fromAPI(*writeSize));
-    }
-}
-
-void wgpuQueueSetLabel(WGPUQueue queue, WGPUStringView label)
-{
-    @autoreleasepool {
-        protect(WebGPU::Metal::fromAPI(queue))->setLabel(WebGPU::Metal::fromAPI(label));
-    }
-}

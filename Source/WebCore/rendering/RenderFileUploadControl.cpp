@@ -72,7 +72,7 @@ constexpr int iconFilenameSpacing = afterButtonSpacing;
 constexpr int defaultWidthNumChars = 38;
 #endif
 
-RenderFileUploadControl::RenderFileUploadControl(HTMLInputElement& input, Style::ComputedStyle&& style)
+RenderFileUploadControl::RenderFileUploadControl(HTMLInputElement& input, UniqueRef<Style::ComputedStyle>&& style)
     : RenderBlockFlow(Type::FileUploadControl, input, WTF::move(style))
     , m_canReceiveDroppedFiles(input.canReceiveDroppedFiles())
 {
@@ -190,7 +190,7 @@ void RenderFileUploadControl::paintControl(PaintInfo& paintInfo, const LayoutPoi
             if (CheckedPtr buttonRenderer = downcast<RenderButton>(button->renderer())) {
                 if (CheckedPtr buttonTextRenderer = buttonRenderer->textRenderer()) {
                     if (auto textBox = InlineIterator::lineLeftmostTextBoxFor(*buttonTextRenderer)) {
-                        auto textVisualRect = textBox->visualRectIgnoringBlockDirection();
+                        auto textVisualRect = textBox->blockStartRelativePhysicalRect();
                         textVisualRect.setLocation(buttonTextRenderer->localToContainerPoint(textVisualRect.location(), this));
                         textVisualRect.moveBy(roundPointToDevicePixels(paintOffset, document().deviceScaleFactor()));
 
@@ -315,7 +315,7 @@ std::pair<LayoutUnit, LayoutUnit> RenderFileUploadControl::computeIntrinsicLogic
     ASSERT(hasInvalidContentLogicalWidths());
 
     if (auto fixedLogicalWidth = style().logicalWidth().tryFixed(); fixedLogicalWidth && fixedLogicalWidth->isPositive()) {
-        auto logicalWidth = adjustContentBoxLogicalWidthForBoxSizing(*fixedLogicalWidth);
+        auto logicalWidth = adjustContentBoxLogicalWidthForBoxSizing(style().logicalWidth(), LayoutUnit { fixedLogicalWidth->resolveZoom(style().usedZoomForLength()) }, 0_lu);
         return { logicalWidth, logicalWidth };
     }
     return computeIntrinsicLogicalWidths();

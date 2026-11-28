@@ -32,11 +32,11 @@
 
 namespace WebCore {
 
+class Color;
 class Document;
 class Element;
 class EventTarget;
 class SVGElement;
-class Settings;
 
 enum class AnimationImpact : uint8_t;
 enum class PaginationMode : uint8_t;
@@ -63,6 +63,7 @@ public:
     static void adjustColumnStylesForPaginationMode(Style::ComputedStyle&, PaginationMode);
     static void propagateToDocumentElementAndInitialContainingBlock(Update&, const Document&);
     static std::unique_ptr<Style::ComputedStyle> restoreUsedDocumentElementStyleToComputed(const Style::ComputedStyle&);
+    static bool shouldTreatAutoZIndexAsZero(const Style::ComputedStyle&);
 
     struct AdjustmentForTextAutosizing {
         std::optional<float> newFontSize;
@@ -73,6 +74,8 @@ public:
     static AdjustmentForTextAutosizing adjustmentForTextAutosizing(const Style::ComputedStyle&, const Element&);
     static bool adjustForTextAutosizing(Style::ComputedStyle&, AdjustmentForTextAutosizing);
     static bool adjustForTextAutosizing(Style::ComputedStyle&, const Element&);
+
+    WEBCORE_EXPORT static void setOverrideBackgroundColorForTesting(Element&, std::optional<WebCore::Color>&&);
 
 private:
     NODELETE void adjustDisplayContentsStyle(Style::ComputedStyle&) const;

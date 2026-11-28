@@ -355,9 +355,16 @@ bool CalleeGroup::tryReserveCalleeForInstall(const AbstractLocker& locker, Funct
         break;
 #endif
 #if ENABLE(WEBASSEMBLY_BBQJIT)
-    case CompilationMode::BBQMode:
+    case CompilationMode::BBQMode: {
         // The IPInt tier-up counter's compilation status already serializes BBQ plans for a function.
+        // IPInt OSR should never trigger a BBQ compile while there's a retired but still alive
+        // BBQCallee. In those cases, the retired BBQCallee is reused.
+        auto* slot = optimizedCalleesTuple(locker, functionIndex);
+        ASSERT(slot);
+        Locker bbqLocker { slot->m_bbqCallee.lock() };
+        RELEASE_ASSERT(!slot->m_bbqCallee.get());
         break;
+    }
 #endif
     default:
         RELEASE_ASSERT_NOT_REACHED();
@@ -489,7 +496,7 @@ void CalleeGroup::updateCallsitesToCallUs(const AbstractLocker& locker, CodeLoca
         if (!caller)
             return;
 
-        // FIXME: This should probably be a variant of FixedVector<UnlinkedWasmToWasmCall> and UncheckedKeyHashMap<FunctionIndex, FixedVector<UnlinkedWasmToWasmCall>> for big functions.
+        // FIXME: This should probably be a variant of FixedVector<UnlinkedWasmToWasmCall> and HashMap<FunctionIndex, FixedVector<UnlinkedWasmToWasmCall>> for big functions.
         bool hadCall = false;
         for (UnlinkedWasmToWasmCall& callsite : caller->wasmToWasmCallsites()) {
             if (callsite.functionIndexSpace == functionSpaceIndex) {

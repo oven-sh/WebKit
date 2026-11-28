@@ -40,6 +40,7 @@
 #include <wtf/HashSet.h>
 #include <wtf/ListHashSet.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/UniqueRef.h>
 #include <wtf/WeakHashSet.h>
 #include <wtf/WeakRef.h>
 #include <wtf/text/WTFString.h>
@@ -284,6 +285,7 @@ public:
     void updateLayerPositionsAfterOverflowScroll(RenderLayer&);
     void updateCompositingLayersAfterScrolling() final;
     static WEBCORE_EXPORT bool scrollRectToVisible(const LayoutRect& absoluteRect, const RenderObject&, bool insideFixed, const ScrollRectToVisibleOptions&);
+    WEBCORE_EXPORT void scrollRectToVisibleContinuingFromChildFrame(Frame& childFrame, const IntRect& rectInChildFrameView, const ScrollRectToVisibleOptions&);
 
     bool requestStartKeyboardScrollAnimation(const KeyboardScroll&) final;
     bool requestStopKeyboardScrollAnimation(bool immediate) final;
@@ -320,6 +322,11 @@ public:
     NODELETE WEBCORE_EXPORT void setVisualViewportOverrideRect(std::optional<LayoutRect>);
     std::optional<LayoutRect> visualViewportOverrideRect() const { return m_visualViewportOverrideRect; }
 
+    // The height, in document coordinates, of the part of the view above the software keyboard,
+    // or std::nullopt when no software keyboard covers the view.
+    std::optional<LayoutUnit> heightAboveSoftwareKeyboard() const;
+    WEBCORE_EXPORT void setSoftwareKeyboardHeightForTesting(std::optional<LayoutUnit>);
+
     // These are in document coordinates, unaffected by page scale (but affected by zooming).
     WEBCORE_EXPORT LayoutRect layoutViewportRect() const final;
     WEBCORE_EXPORT LayoutRect visualViewportRect() const;
@@ -347,9 +354,7 @@ public:
 
     WEBCORE_EXPORT void viewportContentsChanged();
     WEBCORE_EXPORT void resumeVisibleImageAnimationsIncludingSubframes();
-#if ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
     void updatePlayStateForAllAnimationsIncludingSubframes();
-#endif
 
     AtomString mediaType() const;
     WEBCORE_EXPORT void setMediaType(const AtomString&);
@@ -466,7 +471,8 @@ public:
 
     void paintOverhangAreas(GraphicsContext&, const IntRect& horizontalOverhangArea, const IntRect& verticalOverhangArea, const IntRect& dirtyRect) final;
     void paintScrollCorner(GraphicsContext&, const IntRect& cornerRect) final;
-    void paintScrollbar(GraphicsContext&, Scrollbar&, const IntRect&) final;
+    void paintScrollbar(GraphicsContext&, Scrollbar&, const IntRect&, OptionSet<ScrollbarPaintBehavior>) final;
+    OptionSet<ScrollbarPaintBehavior> scrollbarPaintBehavior() const final;
 
     WEBCORE_EXPORT Color documentBackgroundColor() const;
 
@@ -492,24 +498,6 @@ public:
 
     WEBCORE_EXPORT void forceLayout(bool allowSubtreeLayout = false);
     WEBCORE_EXPORT void forceLayoutForPagination(const FloatSize& pageSize, const FloatSize& originalPageSize, float maximumShrinkFactor, AdjustViewSize);
-
-    // FIXME: This method is retained because of embedded WebViews in AppKit.  When a WebView is embedded inside
-    // some enclosing view with auto-pagination, no call happens to resize the view.  The new pagination model
-    // needs the view to resize as a result of the breaks, but that means that the enclosing view has to potentially
-    // resize around that view.  Auto-pagination uses the bounds of the actual view that's being printed to determine
-    // the edges of the print operation, so the resize is necessary if the enclosing view's bounds depend on the
-    // web document's bounds.
-    // 
-    // This is already a problem if the view needs to be a different size because of printer fonts or because of print stylesheets.
-    // Mail/Dictionary work around this problem by using the _layoutForPrinting SPI
-    // to at least get print stylesheets and printer fonts into play, but since WebKit doesn't know about the page offset or
-    // page size, it can't actually paginate correctly during _layoutForPrinting.
-    //
-    // We can eventually move Mail to a newer SPI that would let them opt in to the layout-time pagination model,
-    // but that doesn't solve the general problem of how other AppKit views could opt in to the better model.
-    //
-    // NO OTHER PLATFORM BESIDES MAC SHOULD USE THIS METHOD.
-    WEBCORE_EXPORT void adjustPageHeightDeprecated(float* newBottom, float oldTop, float oldBottom, float bottomLimit);
 
     bool scrollToFragment(const URL&);
     void scrollTo(const ScrollPosition&) final;
@@ -759,6 +747,7 @@ public:
     NODELETE Style::ScrollbarGutter scrollbarGutterStyle() const final;
     NODELETE ScrollbarWidth scrollbarWidthStyle() const final;
     std::optional<ScrollbarColor> scrollbarColorStyle() const final;
+    std::optional<ScrollbarStyle> scrollbarStyleOverride() const final;
 
     // overflow:hidden scrollable areas can participate in anchoring, so they need their own set.
     void addScrollableAreaForScrollAnchoring(ScrollableArea&);
@@ -880,9 +869,7 @@ private:
 
     void applyRecursivelyWithVisibleRect(NOESCAPE const Function<void(LocalFrameView& frameView, const IntRect& visibleRect)>&);
     void resumeVisibleImageAnimations(const IntRect& visibleRect);
-#if ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
     void updatePlayStateForAllAnimations(const IntRect& visibleRect);
-#endif
     void updateScriptedAnimationsAndTimersThrottlingState(const IntRect& visibleRect);
 
     WEBCORE_EXPORT void adjustTiledBackingCoverage();
@@ -1013,6 +1000,7 @@ private:
     static MonotonicTime sCurrentPaintTimeStamp; // used for detecting decoded resource thrash in the cache
 
     void scrollRectToVisibleInChildView(const LayoutRect& absoluteRect, EnumSet<BoxAxis> isFixed, const ScrollRectToVisibleOptions&, const HTMLFrameOwnerElement*);
+    void scrollRectToVisibleInRemoteParent(const IntRect& rectInFrameView, const ScrollRectToVisibleOptions&);
     void scrollRectToVisibleInTopLevelView(const LayoutRect& absoluteRect, EnumSet<BoxAxis> isFixed, const ScrollRectToVisibleOptions&);
     LayoutRect getPossiblyFixedRectToExpose(const LayoutRect& visibleRect, const LayoutRect& exposeRect, EnumSet<BoxAxis> isFixed, const ScrollAlignment& alignX, const ScrollAlignment& alignY) const;
     LayoutRect getPossiblyFixedRectToExpose(const LayoutRect& visibleRect, const LayoutRect& exposeRect, bool isFixed, const ScrollAlignment& alignX, const ScrollAlignment& alignY) const;
@@ -1020,7 +1008,7 @@ private:
     NODELETE float deviceScaleFactor() const final;
 
     const Ref<LocalFrame> m_frame;
-    LocalFrameViewLayoutContext m_layoutContext;
+    const UniqueRef<LocalFrameViewLayoutContext> m_layoutContext;
 
     HashSet<SingleThreadWeakRef<Widget>> m_widgetsInRenderTree;
     const std::unique_ptr<ListHashSet<SingleThreadWeakRef<RenderEmbeddedObject>>> m_embeddedObjectsToUpdate;
@@ -1065,6 +1053,7 @@ private:
     LayoutPoint m_layoutViewportOrigin;
     std::optional<LayoutRect> m_layoutViewportOverrideRect;
     std::optional<LayoutRect> m_visualViewportOverrideRect; // Used when the iOS keyboard is showing.
+    std::optional<LayoutUnit> m_softwareKeyboardHeightForTesting;
 
     std::optional<FloatRect> m_viewExposedRect;
     std::optional<IntRect> m_visibleRectFromParentFrameProcess;

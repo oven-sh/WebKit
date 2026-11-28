@@ -189,29 +189,65 @@ endif()
 
 set(JavaScriptCore_SCRIPTS_SOURCES_DIR "${JAVASCRIPTCORE_DIR}/Scripts")
 
-# Globbing relies on the fact that generator-specific file names are prefixed with their directory.
 # Top-level scripts should have a file extension, since they are invoked during the build.
-set(JavaScriptCore_SCRIPTS_SOURCES_PATHS
-    ${JavaScriptCore_SCRIPTS_SOURCES_DIR}/*.pl
-    ${JavaScriptCore_SCRIPTS_SOURCES_DIR}/*.py
-    ${JavaScriptCore_SCRIPTS_SOURCES_DIR}/wkbuiltins/builtins*.py
+set(JavaScriptCore_SCRIPTS_SOURCES
+    ${JavaScriptCore_SCRIPTS_SOURCES_DIR}/UpdateContents.py
+    ${JavaScriptCore_SCRIPTS_SOURCES_DIR}/cssmin.py
+    ${JavaScriptCore_SCRIPTS_SOURCES_DIR}/generate-combined-inspector-json.py
+    ${JavaScriptCore_SCRIPTS_SOURCES_DIR}/generate-js-builtins.py
+    ${JavaScriptCore_SCRIPTS_SOURCES_DIR}/inline-and-minify-stylesheets-and-scripts.py
+    ${JavaScriptCore_SCRIPTS_SOURCES_DIR}/jsmin.py
+    ${JavaScriptCore_SCRIPTS_SOURCES_DIR}/lazywriter.py
+    ${JavaScriptCore_SCRIPTS_SOURCES_DIR}/make-js-file-arrays.py
+    ${JavaScriptCore_SCRIPTS_SOURCES_DIR}/xxd.pl
+    ${JavaScriptCore_SCRIPTS_SOURCES_DIR}/wkbuiltins/builtins_generate_combined_header.py
+    ${JavaScriptCore_SCRIPTS_SOURCES_DIR}/wkbuiltins/builtins_generate_combined_implementation.py
+    ${JavaScriptCore_SCRIPTS_SOURCES_DIR}/wkbuiltins/builtins_generate_internals_wrapper_header.py
+    ${JavaScriptCore_SCRIPTS_SOURCES_DIR}/wkbuiltins/builtins_generate_internals_wrapper_implementation.py
+    ${JavaScriptCore_SCRIPTS_SOURCES_DIR}/wkbuiltins/builtins_generate_separate_header.py
+    ${JavaScriptCore_SCRIPTS_SOURCES_DIR}/wkbuiltins/builtins_generate_separate_implementation.py
+    ${JavaScriptCore_SCRIPTS_SOURCES_DIR}/wkbuiltins/builtins_generate_wrapper_header.py
+    ${JavaScriptCore_SCRIPTS_SOURCES_DIR}/wkbuiltins/builtins_generate_wrapper_implementation.py
+    ${JavaScriptCore_SCRIPTS_SOURCES_DIR}/wkbuiltins/builtins_generator.py
+    ${JavaScriptCore_SCRIPTS_SOURCES_DIR}/wkbuiltins/builtins_model.py
+    ${JavaScriptCore_SCRIPTS_SOURCES_DIR}/wkbuiltins/builtins_templates.py
     ${JavaScriptCore_SCRIPTS_SOURCES_DIR}/wkbuiltins/wkbuiltins.py
 )
 
 # JavaScriptCore_SCRIPTS_DIR is the framework's PrivateHeaders here, which is where
 # clients above WebKit look for the inspector protocol generator.
 if (USE_FRAMEWORK_BUNDLES)
-    list(APPEND JavaScriptCore_SCRIPTS_SOURCES_PATHS
-        ${JAVASCRIPTCORE_DIR}/inspector/scripts/generate*.py
-        ${JAVASCRIPTCORE_DIR}/inspector/scripts/codegen/generate*.py
-        ${JAVASCRIPTCORE_DIR}/inspector/scripts/codegen/*generator*.py
+    list(APPEND JavaScriptCore_SCRIPTS_SOURCES
+        ${JAVASCRIPTCORE_DIR}/inspector/scripts/generate-inspector-protocol-bindings.py
+        ${JAVASCRIPTCORE_DIR}/inspector/scripts/codegen/cpp_generator.py
+        ${JAVASCRIPTCORE_DIR}/inspector/scripts/codegen/cpp_generator_templates.py
+        ${JAVASCRIPTCORE_DIR}/inspector/scripts/codegen/generate_cpp_alternate_backend_dispatcher_header.py
+        ${JAVASCRIPTCORE_DIR}/inspector/scripts/codegen/generate_cpp_backend_dispatcher_header.py
+        ${JAVASCRIPTCORE_DIR}/inspector/scripts/codegen/generate_cpp_backend_dispatcher_implementation.py
+        ${JAVASCRIPTCORE_DIR}/inspector/scripts/codegen/generate_cpp_frontend_dispatcher_header.py
+        ${JAVASCRIPTCORE_DIR}/inspector/scripts/codegen/generate_cpp_frontend_dispatcher_implementation.py
+        ${JAVASCRIPTCORE_DIR}/inspector/scripts/codegen/generate_cpp_protocol_types_header.py
+        ${JAVASCRIPTCORE_DIR}/inspector/scripts/codegen/generate_cpp_protocol_types_implementation.py
+        ${JAVASCRIPTCORE_DIR}/inspector/scripts/codegen/generate_js_backend_commands.py
+        ${JAVASCRIPTCORE_DIR}/inspector/scripts/codegen/generate_objc_backend_dispatcher_header.py
+        ${JAVASCRIPTCORE_DIR}/inspector/scripts/codegen/generate_objc_backend_dispatcher_implementation.py
+        ${JAVASCRIPTCORE_DIR}/inspector/scripts/codegen/generate_objc_configuration_header.py
+        ${JAVASCRIPTCORE_DIR}/inspector/scripts/codegen/generate_objc_configuration_implementation.py
+        ${JAVASCRIPTCORE_DIR}/inspector/scripts/codegen/generate_objc_frontend_dispatcher_implementation.py
+        ${JAVASCRIPTCORE_DIR}/inspector/scripts/codegen/generate_objc_header.py
+        ${JAVASCRIPTCORE_DIR}/inspector/scripts/codegen/generate_objc_internal_header.py
+        ${JAVASCRIPTCORE_DIR}/inspector/scripts/codegen/generate_objc_protocol_type_conversions_header.py
+        ${JAVASCRIPTCORE_DIR}/inspector/scripts/codegen/generate_objc_protocol_type_conversions_implementation.py
+        ${JAVASCRIPTCORE_DIR}/inspector/scripts/codegen/generate_objc_protocol_types_implementation.py
+        ${JAVASCRIPTCORE_DIR}/inspector/scripts/codegen/generator.py
+        ${JAVASCRIPTCORE_DIR}/inspector/scripts/codegen/generator_templates.py
         ${JAVASCRIPTCORE_DIR}/inspector/scripts/codegen/models.py
+        ${JAVASCRIPTCORE_DIR}/inspector/scripts/codegen/objc_generator.py
+        ${JAVASCRIPTCORE_DIR}/inspector/scripts/codegen/objc_generator_templates.py
     )
 endif ()
 
 # The directory flattening performed below mirrors what the Mac port does with private headers.
-file(GLOB JavaScriptCore_SCRIPTS_SOURCES ${JavaScriptCore_SCRIPTS_SOURCES_PATHS})
-
 foreach(_file ${JavaScriptCore_SCRIPTS_SOURCES})
     get_filename_component(_script "${_file}" NAME)
     add_custom_command(
@@ -2117,6 +2153,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     ffi/tests/FFITestFixtures.h
 
     runtime/BufferAccessorRegistry.h
+    runtime/HelperThreadPool.h
     dfg/DFGDataViewData.h
 
     bytecode/GlobalCodeBlock.h
@@ -2149,6 +2186,7 @@ if (ENABLE_JAVASCRIPTCORE_TOOLS)
         corpse/CorpseRegion.h
         corpse/CorpseSnapshot.h
         corpse/CorpseSymbol.h
+        corpse/CorpseTaskHandle.h
         corpse/CorpseThread.h
     )
 endif ()
@@ -2348,6 +2386,13 @@ WEBKIT_SYMLINK_FILES(JavaScriptCore_CopyPrivateHeaders
     FILES ${JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS}
     FLATTENED
 )
+if (APPLE)
+    # JavaScriptCore_Private.modulemap's umbrella is PrivateHeaders.
+    WEBKIT_ADD_UMBRELLA_INVALIDATION_HEADER(JavaScriptCore_CopyPrivateHeaders
+        DESTINATION ${JavaScriptCore_PRIVATE_HEADERS_DIR}
+        FILES ${JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS}
+    )
+endif ()
 
 add_dependencies(JavaScriptCore_CopyPrivateHeaders Bytecodes JSCBuiltins JSCWebPreferenceOptions)
 

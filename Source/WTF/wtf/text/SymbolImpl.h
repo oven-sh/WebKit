@@ -168,7 +168,7 @@ inline SymbolRegistry* SymbolImpl::symbolRegistry() const
 
 inline RegisteredSymbolImpl* SymbolImpl::asRegisteredSymbolImpl()
 {
-    ASSERT(isRegistered());
+    RELEASE_ASSERT(isRegistered());
     return uncheckedDowncast<RegisteredSymbolImpl>(this);
 }
 

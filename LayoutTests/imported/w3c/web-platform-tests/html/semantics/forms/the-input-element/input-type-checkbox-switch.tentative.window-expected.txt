@@ -1,5 +1,0 @@
-
-PASS switch IDL attribute, setter
-PASS switch IDL attribute, getter
-PASS Cloning a switch control
-

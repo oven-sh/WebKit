@@ -647,7 +647,7 @@ public:
         return m_unlinkedCode->llintExecuteCounter();
     }
 
-    typedef UncheckedKeyHashMap<std::tuple<StructureID, BytecodeIndex>, FixedVector<LLIntPrototypeLoadAdaptiveStructureWatchpoint>> StructureWatchpointMap;
+    typedef HashMap<std::tuple<StructureID, BytecodeIndex>, FixedVector<LLIntPrototypeLoadAdaptiveStructureWatchpoint>> StructureWatchpointMap;
     StructureWatchpointMap& llintGetByIdWatchpointMap() LIFETIME_BOUND { return m_llintGetByIdWatchpointMap; }
 
     // Functions for controlling when tiered compilation kicks in. This
@@ -1072,7 +1072,7 @@ public:
     void* m_jitData { nullptr };
 private:
 #endif
-    RefPtr<MetadataTable> m_metadata;
+    const RefPtr<MetadataTable> m_metadata;
 #if ENABLE(DFG_JIT)
     // This is relevant to non-DFG code blocks that serve as the profiled code block
     // for DFG code blocks.
@@ -1107,7 +1107,7 @@ private:
 
 #if ASSERT_ENABLED
     Lock m_cachedIdentifierUidsLock;
-    UncheckedKeyHashSet<UniquedStringImpl*> m_cachedIdentifierUids;
+    HashSet<UniquedStringImpl*> m_cachedIdentifierUids;
     uint32_t m_magic;
 #endif
 };

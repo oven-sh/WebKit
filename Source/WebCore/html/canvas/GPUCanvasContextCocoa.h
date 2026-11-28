@@ -59,6 +59,7 @@ public:
 
     ColorSpace colorSpace() const override;
     bool compositingResultsNeedUpdating() const override { return m_compositingResultsNeedsUpdating; }
+    bool hasFrameForPlaceholder() const override;
     RefPtr<GraphicsLayerContentsDisplayDelegate> layerContentsDisplayDelegate() override;
     bool needsPreparationForDisplay() const override { return true; }
     void prepareForDisplay() override;
@@ -89,7 +90,7 @@ public:
 #endif
 
 private:
-    explicit GPUCanvasContextCocoa(CanvasBase&, Ref<GPUCompositorIntegration>&&, Ref<GPUPresentationContext>&&, Document*);
+    explicit GPUCanvasContextCocoa(CanvasBase&, Ref<WebGPUIntegration>&&, Ref<GPUCompositorIntegration>&&, Ref<GPUPresentationContext>&&, Document*);
 
     void willUpdateDisplayBufferContents();
 
@@ -120,15 +121,18 @@ private:
         PredefinedColorSpace colorSpace { PredefinedColorSpace::SRGB };
         GPUCanvasToneMapping toneMapping;
         GPUCanvasAlphaMode compositingAlphaMode { GPUCanvasAlphaMode::Opaque };
-        Vector<MachSendRight> renderBuffers;
+        uint32_t renderBufferCount { 0 };
         unsigned frameCount { 0 };
         std::optional<unsigned> lastPresentedFrameIndex;
+        MachSendRight lastPresentedDisplayBuffer;
     };
     std::optional<Configuration> m_configuration;
 
     const Ref<GPUDisplayBufferDisplayDelegate> m_layerContentsDisplayDelegate;
-    const Ref<GPUCompositorIntegration> m_compositorIntegration;
-    const Ref<GPUPresentationContext> m_presentationContext;
+    // The integration that m_compositorIntegration and m_presentationContext came from.
+    Ref<WebGPUIntegration> m_integration;
+    Ref<GPUCompositorIntegration> m_compositorIntegration;
+    Ref<GPUPresentationContext> m_presentationContext;
     RefPtr<GPUTexture> m_currentTexture;
     WebGPUFramePacer m_framePacer;
     std::optional<FramesPerSecond> m_lastPreferredFrameRate;
@@ -139,7 +143,7 @@ private:
 #if HAVE(SUPPORT_HDR_DISPLAY)
     using ScreenPropertiesChangedObserver = Observer<void(PlatformDisplayID)>;
     const RefPtr<ScreenPropertiesChangedObserver> m_screenPropertiesChangedObserver;
-    RefPtr<GPUOffMainThreadScreenHeadroom> m_offMainThreadScreenHeadroom;
+    const RefPtr<GPUOffMainThreadScreenHeadroom> m_offMainThreadScreenHeadroom;
     PlatformDynamicRangeLimit m_dynamicRangeLimit { PlatformDynamicRangeLimit::initialValue() };
     float m_currentEDRHeadroom { 1 };
     float m_screenEDRHeadroom { 0.f };

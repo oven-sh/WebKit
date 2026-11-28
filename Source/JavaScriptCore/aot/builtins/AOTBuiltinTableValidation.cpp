@@ -385,7 +385,7 @@ static void checkInheritance(RealmComparison& comparison)
 static void checkObjectIdentities(RealmComparison& comparison)
 {
     auto& table = comparison.table;
-    UncheckedKeyHashMap<JSObject*, BuiltinID> canonicalIDs;
+    HashMap<JSObject*, BuiltinID> canonicalIDs;
     forEachFoundObject(comparison, [&](BuiltinID id, JSObject* object) {
         BuiltinID canonicalID = table.canonicalID(id);
         BuiltinID earlierID = canonicalIDs.add(object, canonicalID).iterator->value;
@@ -408,7 +408,7 @@ static bool isOnObjectPrototype(const Identifier& key)
 {
     if (key.isSymbol())
         return false;
-    auto utf8 = key.utf8();
+    auto utf8 = makeUTF8CString(key.string());
     return Typed::isOnObjectPrototype(Typed::classifyName(byteCast<uint8_t>(utf8.span())));
 }
 

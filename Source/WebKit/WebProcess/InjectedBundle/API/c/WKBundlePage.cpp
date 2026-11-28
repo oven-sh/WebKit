@@ -300,11 +300,6 @@ WKStringRef WKBundlePageCopyRenderTreeExternalRepresentationForPrinting(WKBundle
     return WebKit::toCopiedAPI(protect(WebKit::toImpl(pageRef))->renderTreeExternalRepresentationForPrinting());
 }
 
-WKImageRef WKBundlePageCreateCSSPageBoxesSnapshotForTesting(WKBundlePageRef pageRef, WKSize defaultPageBoxSize, double defaultPageMargin)
-{
-    return WebKit::toAPILeakingRef(protect(WebKit::toImpl(pageRef))->cssPageBoxesSnapshotForTesting(WebKit::toIntSize(defaultPageBoxSize), static_cast<int>(defaultPageMargin)));
-}
-
 void WKBundlePageClose(WKBundlePageRef pageRef)
 {
     protect(WebKit::toImpl(pageRef))->sendClose();
@@ -323,11 +318,6 @@ double WKBundlePageGetTextZoomFactor(WKBundlePageRef pageRef)
 double WKBundlePageGetPageZoomFactor(WKBundlePageRef pageRef)
 {
     return protect(WebKit::toImpl(pageRef))->pageZoomFactor();
-}
-
-WKStringRef WKBundlePageDumpHistoryForTesting(WKBundlePageRef page, WKStringRef directory)
-{
-    return WebKit::toCopiedAPI(protect(WebKit::toImpl(page))->dumpHistoryForTesting(WebKit::toWTFString(directory)));
 }
 
 WKBundleBackForwardListRef WKBundlePageGetBackForwardList(WKBundlePageRef pageRef)

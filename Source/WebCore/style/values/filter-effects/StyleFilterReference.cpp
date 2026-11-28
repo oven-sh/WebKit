@@ -31,8 +31,7 @@
 #include "SVGURIReference.h"
 #include "StyleBuilderState.h"
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 void FilterReference::loadExternalDocumentIfNeeded(CachedResourceLoader& cachedResourceLoader, const ResourceLoaderOptions& options)
 {
@@ -41,7 +40,7 @@ void FilterReference::loadExternalDocumentIfNeeded(CachedResourceLoader& cachedR
     if (!SVGURIReference::isExternalURIReference(url.resolved.string(), *protect(cachedResourceLoader.document())))
         return;
     lazyInitialize(cachedSVGDocumentReference, CachedSVGDocumentReference::create(url));
-    cachedSVGDocumentReference->load(protect(cachedResourceLoader), options);
+    protect(cachedSVGDocumentReference)->load(protect(cachedResourceLoader), options);
 }
 
 // MARK: - Conversion
@@ -63,5 +62,4 @@ auto ToStyle<CSS::FilterReference>::operator()(const CSS::FilterReference& value
     };
 }
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

@@ -65,7 +65,6 @@
 #include "WebExtensionControllerProxy.h"
 #include "WebFrame.h"
 #include "WebFullScreenManager.h"
-#include "WebGPUDowncastConvertToBackingContext.h"
 #include "WebHitTestResultData.h"
 #include "WebImage.h"
 #include "WebLocalFrameLoaderClient.h"
@@ -531,6 +530,19 @@ bool WebChromeClient::isPopup() const
         return false;
     return page->isPopup();
 }
+
+#if ENABLE(DOCUMENT_PIP)
+bool WebChromeClient::supportsDocumentPictureInPicture() const
+{
+    return true;
+}
+
+void WebChromeClient::startDocumentPictureInPictureWindowDrag()
+{
+    if (RefPtr page = m_page)
+        page->send(Messages::WebPageProxy::StartDocumentPictureInPictureWindowDrag());
+}
+#endif
 
 void WebChromeClient::setResizable(bool resizable)
 {
@@ -1336,7 +1348,7 @@ RefPtr<WebCore::WebGPUIntegration> WebChromeClient::createGPUForWebGPU() const
     RefPtr page = m_page.get();
     if (!page)
         return nullptr;
-    return RemoteGPUProxy::create(WebGPU::DowncastConvertToBackingContext::create(), ModelDowncastConvertToBackingContext::create(), page.releaseNonNull());
+    return RemoteGPUProxy::create(ModelDowncastConvertToBackingContext::create(), page.releaseNonNull());
 #else
     return WebCore::createWebGPUIntegration([](Function<void()>&& workItem) {
         callOnMainRunLoop(WTF::move(workItem));
@@ -1768,6 +1780,18 @@ bool WebChromeClient::supportsFullScreenForElement(const Element& element, bool 
     return page && protect(page->fullScreenManager())->supportsFullScreenForElement(element, withKeyboard);
 }
 
+void WebChromeClient::beginRequestFullscreen()
+{
+    if (RefPtr page = m_page)
+        protect(page->fullScreenManager())->beginRequestFullscreen();
+}
+
+void WebChromeClient::endRequestFullscreen()
+{
+    if (RefPtr page = m_page)
+        protect(page->fullScreenManager())->endRequestFullscreen();
+}
+
 void WebChromeClient::enterFullScreenForElement(Element& element, HTMLMediaElementEnums::VideoFullscreenMode mode, CompletionHandler<void(ExceptionOr<void>)>&& willEnterFullscreen, CompletionHandler<bool(bool)>&& didEnterFullscreen)
 {
     RefPtr page = m_page.get();
@@ -1907,10 +1931,10 @@ void WebChromeClient::allowImmersiveElement(CompletionHandler<void(bool)>&& comp
         completion(false);
 }
 
-void WebChromeClient::presentImmersiveElement(const LayerHostingContextIdentifier contextID, CompletionHandler<void(bool)>&& completion) const
+void WebChromeClient::presentImmersiveElement(ImmersiveElement& element, CompletionHandler<void(bool)>&& completion) const
 {
     if (RefPtr page = m_page.get())
-        page->presentImmersiveElement(contextID, WTF::move(completion));
+        page->presentImmersiveElement(element, WTF::move(completion));
     else
         completion(false);
 }
@@ -2116,6 +2140,12 @@ bool WebChromeClient::shouldDispatchFakeMouseMoveEvents() const
 {
     auto* page = m_page.get();
     return page && page->shouldDispatchFakeMouseMoveEvents();
+}
+
+void WebChromeClient::dispatchFakeMouseMoveEventInRemoteFrame(FrameIdentifier frameID, const DoublePoint& eventPoint, const DoublePoint& globalPoint)
+{
+    if (RefPtr page = m_page)
+        page->send(Messages::WebPageProxy::DispatchFakeMouseMoveEventInRemoteFrame(frameID, eventPoint, globalPoint));
 }
 
 RefPtr<API::Object> userDataFromJSONData(JSON::Value& value)

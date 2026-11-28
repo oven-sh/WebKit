@@ -58,6 +58,13 @@ enum class IsSyntheticClick : bool;
 enum class StorageAccessWasGranted : uint8_t;
 enum class UserAgentType;
 
+enum class ConsistentQueryParameterFilteringLevel : uint8_t {
+    Disabled,
+    Low,
+    Medium,
+    High,
+};
+
 namespace Style {
 class ComputedStyle;
 }
@@ -88,6 +95,7 @@ public:
 
 #if ENABLE(TOUCH_EVENTS) || ENABLE(TOUCH_EVENT_REGIONS)
     bool shouldDispatchSimulatedMouseEvents(const EventTarget*) const;
+    bool mayDispatchSimulatedMouseEvents() const;
     bool shouldPreventDispatchOfTouchEvent(const AtomString&, EventTarget*) const;
 #endif
 #if ENABLE(TOUCH_EVENTS)
@@ -111,6 +119,7 @@ public:
     WEBCORE_EXPORT static bool needsPartitionedCookies(const ResourceRequest&);
     WEBCORE_EXPORT static Vector<String> cnameCloakingCookieCapExemptTargetPatterns(const URL& firstPartyURL);
     WEBCORE_EXPORT static bool anyPatternMatchesCNAMETarget(const Vector<String>& patterns, const String& cnameHostName);
+    WEBCORE_EXPORT static bool isSingleOwnerLoginDomainPair(const RegistrableDomain& topFrameDomain, const RegistrableDomain& subResourceDomain);
     WEBCORE_EXPORT static bool shouldExemptCookieFromITPDataRemoval(const String& cookieName);
 
     NODELETE WEBCORE_EXPORT static std::optional<Vector<HashSet<String>>> defaultVisibilityAdjustmentSelectors(const URL&);
@@ -165,7 +174,8 @@ public:
 
     bool needsPopupFromMicrosoftOfficeToOneDrive(const String& targetURLString) const;
 
-    WEBCORE_EXPORT bool needsConsistentQueryParameterFilteringQuirk(const URL&) const;
+    bool needsConsistentQueryParameterFilteringQuirkForScript(const URL&) const;
+    WEBCORE_EXPORT ConsistentQueryParameterFilteringLevel consistentQueryParameterFilteringLevel(const URL& sourceURL, const URL& destinationURL) const;
     bool mayBenefitFromFingerprintingProtectionQuirk(const URL&) const;
     static String standardUserAgentWithApplicationNameIncludingCompatOverrides(const String&, const String&, UserAgentType);
 

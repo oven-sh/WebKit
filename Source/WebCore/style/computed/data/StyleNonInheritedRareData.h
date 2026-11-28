@@ -29,6 +29,7 @@
 #include <WebCore/ScrollTypes.h>
 #include <WebCore/StyleAnchorName.h>
 #include <WebCore/StyleBlockStepSize.h>
+#include <WebCore/StyleBorderShape.h>
 #include <WebCore/StyleClip.h>
 #include <WebCore/StyleClipPath.h>
 #include <WebCore/StyleColor.h>
@@ -51,6 +52,7 @@
 #include <WebCore/StyleOffsetPosition.h>
 #include <WebCore/StyleOffsetRotate.h>
 #include <WebCore/StyleOverflowClipMargin.h>
+#include <WebCore/StylePageName.h>
 #include <WebCore/StylePageSize.h>
 #include <WebCore/StylePerspective.h>
 #include <WebCore/StylePerspectiveOrigin.h>
@@ -94,8 +96,7 @@
 #include <WebCore/StyleEnvironmentMap.h>
 #endif
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 class BackdropFilterData;
 class CustomPropertyData;
@@ -138,6 +139,9 @@ public:
 
     Clip clip;
     ClipPath clipPath;
+
+    BorderShape borderShape;
+
     OverflowClipMargin overflowClipMargin;
 
     ScrollMarginBox scrollMargin;
@@ -155,6 +159,7 @@ public:
 
     WebkitBoxReflect boxReflect;
 
+    PageName pageName;
     PageSize pageSize;
 
     ShapeOutside shapeOutside;
@@ -214,8 +219,6 @@ public:
     std::optional<size_t> usedPositionOptionIndex;
 
     std::optional<BlendMode> overrideBlendMode;
-    // If set, this overrides the background color in NonInheritedData::backgroundData
-    Markable<Color> overrideBackgroundColor;
 
     BlockStepSize blockStepSize;
 
@@ -281,5 +284,4 @@ private:
     NonInheritedRareData(const NonInheritedRareData&);
 };
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

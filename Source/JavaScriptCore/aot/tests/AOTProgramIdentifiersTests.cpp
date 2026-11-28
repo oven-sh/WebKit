@@ -329,7 +329,7 @@ static void testTableOfIdentifiers()
     };
     AOT_TEST_CHECK(!table.find(0x123456, isNoText) && numberOfLooks == 3);
     numberOfLooks = 0;
-    UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> hashes;
+    HashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> hashes;
     for (const IdentifierTable::Key& key : keys)
         hashes.add(key.hash);
     unsigned numberOfSearches = 0;

@@ -250,7 +250,7 @@ struct State {
     uint64_t keptByCleanup { 0 };
     static constexpr size_t numberOfFieldsUnderDeclaredNames = 64;
     FieldUnderDeclaredName* fieldsUnderDeclaredNames { nullptr };
-    UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> functionsEnteredThatRunOnce;
+    HashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> functionsEnteredThatRunOnce;
     std::array<uint64_t, 8> writesCountedForEffectsNet { };
     EncodedJSValue receiverOfPendingRead { 0 };
     uint32_t keyOfPendingRead { 0 };

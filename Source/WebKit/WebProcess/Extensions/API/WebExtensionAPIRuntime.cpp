@@ -54,12 +54,27 @@ static inline JSValueRef makeErrorValue(JSGlobalContextRef contextRef, const Str
     return JSObjectMakeError(contextRef, 1, &argument, 0);
 }
 
+bool shouldSkipFrameForRuntimeEvent(const WebExtensionMessageSenderParameters& senderParameters, const WebFrame& frame)
+{
+    RefPtr page = frame.page();
+    if (!page || senderParameters.pageProxyIdentifier != page->webPageProxyIdentifier())
+        return false;
+
+    // Extension senders never send to listeners in their own page.
+    // A web page sender can share its page with extension frames (e.g. an iframe in an offscreen document),
+    // so only skip the sender's own frame.
+    if (senderParameters.contentWorldType != WebExtensionContentWorldType::WebPage || !senderParameters.frameIdentifier)
+        return true;
+
+    return matchesFrame(*senderParameters.frameIdentifier, frame);
+}
+
 JSValueRef WebExtensionAPIRuntimeBase::reportError(String errorMessage, JSGlobalContextRef contextRef, NOESCAPE const Function<void()>& handler)
 {
     ASSERT(!errorMessage.isEmpty());
     ASSERT(contextRef);
 
-    RELEASE_LOG_ERROR(Extensions, "Runtime error reported: %" PUBLIC_LOG_STRING, errorMessage.utf8());
+    RELEASE_LOG_ERROR(Extensions, "Runtime error reported: %" PUBLIC_LOG_STRING, makeUTF8CString(errorMessage));
 
     auto result = Protected(contextRef, makeErrorValue(contextRef, errorMessage));
 
@@ -175,8 +190,8 @@ void WebExtensionAPIRuntime::getPlatformInfo(Ref<WebExtensionCallbackHandler>&& 
 
 #if CPU(X86_64)
     static constexpr auto archValue = x86_64Key;
-#elif CPU(ARM) || CPU(ARM64)
-    static constexpr auto archValue = armKey;
+#elif CPU(ARM64)
+    static constexpr auto archValue = arm64Key;
 #else
     static constexpr auto archValue = "unknown"_s;
 #endif
@@ -296,17 +311,6 @@ JSValueRef WebExtensionAPIRuntime::lastError()
     return m_lastError.get();
 }
 
-static JSValueRef makeEnumObject(JSContextRef context, std::initializer_list<std::pair<ASCIILiteral, ASCIILiteral>> entries)
-{
-    auto globalContext = JSContextGetGlobalContext(context);
-
-    HashMap<String, Protected<JSValueRef>> object;
-    for (auto& [name, value] : entries)
-        object.add(String { name }, Protected(globalContext, JSValueMakeString(context, toJSString(value).get())));
-
-    return fromObject(context, WTF::move(object));
-}
-
 JSValueRef WebExtensionAPIRuntime::onInstalledReason(JSContextRef context)
 {
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/runtime/OnInstalledReason
@@ -323,7 +327,7 @@ JSValueRef WebExtensionAPIRuntime::platformArch(JSContextRef context)
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/runtime/PlatformArch
 
     return makeEnumObject(context, {
-        { "ARM"_s, armKey },
+        { "ARM64"_s, arm64Key },
         { "X86_64"_s, x86_64Key },
     });
 }
@@ -680,9 +684,9 @@ void WebExtensionContextProxy::internalDispatchRuntimeConnectEvent(WebExtensionC
     auto sourceContentWorldType = senderParameters.contentWorldType;
 
     enumerateFramesAndNamespaceObjects([&](auto& frame, auto& namespaceObject) {
-        // Don't send the event to any listeners in the sender's page.
-        auto webPageProxyIdentifier = frame.page()->webPageProxyIdentifier();
-        if (senderParameters.pageProxyIdentifier == webPageProxyIdentifier)
+        // Don't send the event to any listeners in the sender's page. A web page sender can share its page with
+        // extension frames (e.g. an iframe in an offscreen document), so only skip the sender's own frame for those.
+        if (shouldSkipFrameForRuntimeEvent(senderParameters, frame))
             return;
 
         // Skip all frames that don't match the target parameters.
@@ -698,7 +702,7 @@ void WebExtensionContextProxy::internalDispatchRuntimeConnectEvent(WebExtensionC
         if (listeners.isEmpty())
             return;
 
-        firedEventCounts.add(webPageProxyIdentifier, listeners.size());
+        firedEventCounts.add(frame.page()->webPageProxyIdentifier(), listeners.size());
 
         std::optional<WebCore::UserGestureIndicator> gestureIndicator;
         if (userGesture) {

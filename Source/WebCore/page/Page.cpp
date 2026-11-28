@@ -189,6 +189,7 @@
 #include "ScriptRunner.h"
 #include "ScriptedAnimationController.h"
 #include "ScrollLatchingController.h"
+#include "ScrollbarTheme.h"
 #include "ScrollingCoordinator.h"
 #include "ServiceWorkerGlobalScope.h"
 #include "ServiceWorkerThread.h"
@@ -2204,9 +2205,30 @@ void Page::lockAllOverlayScrollbarsToHidden(bool lockOverlayScrollbars)
         if (!scrollableAreas)
             continue;
 
-        for (CheckedRef area : *scrollableAreas)
-            area->lockOverlayScrollbarStateToHidden(lockOverlayScrollbars);
+        // Unlocking runs pending scroll bar style updates, which can add and remove scrollable areas.
+        for (auto& weakArea : copyToVectorOf<WeakPtr<ScrollableArea>>(*scrollableAreas)) {
+            if (CheckedPtr area = weakArea.get())
+                area->lockOverlayScrollbarStateToHidden(lockOverlayScrollbars);
+        }
     }
+}
+
+void Page::setScrollbarStyleOverride(std::optional<ScrollbarStyle> styleOverride)
+{
+    if (styleOverride == m_scrollbarStyleOverride)
+        return;
+
+    m_scrollbarStyleOverride = styleOverride;
+
+    forEachLocalFrame([](LocalFrame& frame) {
+        if (RefPtr frameView = frame.view())
+            frameView->scrollbarStyleDidChange();
+    });
+}
+
+ScrollbarStyle Page::scrollbarStyle() const
+{
+    return m_scrollbarStyleOverride.value_or(ScrollbarTheme::theme().scrollbarStyle());
 }
 
 PageGroup& Page::group()
@@ -2467,7 +2489,7 @@ void Page::enumerateLocalFrameGeometry(NOESCAPE const Function<void(LocalFrame&,
                 ownerIsFullyClipped,
                 frameView->childFrameOwnerToRootContentTransform(*child),
                 WTF::move(absoluteToChildFrameOwnerLocalTransform),
-                frame.frameScaleFactorForChild(*child),
+                frame.frameOwnerZoomFactorForChild(*child),
                 contentBoxLocation,
                 frameView->appearanceOfOwnerElementOfChildFrame(*child)
             ));
@@ -2979,7 +3001,6 @@ bool Page::imageAnimationEnabled() const
     return m_imageAnimationTimeline->allowsAnimation();
 }
 
-#if ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
 void Page::setImageAnimationEnabled(bool enabled)
 {
     // This method overrides any individually set animation play-states (so we need to do work even if `enabled` is
@@ -2991,7 +3012,6 @@ void Page::setImageAnimationEnabled(bool enabled)
     updatePlayStateForAllAnimations();
     chrome().client().isAnyAnimationAllowedToPlayDidChange(enabled);
 }
-#endif // ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
 
 #if ENABLE(ACCESSIBILITY_VIDEO_AUTOPLAY_CONTROL)
 void Page::setVideoAutoplayPreviewsEnabled(bool enabled)
@@ -4365,7 +4385,7 @@ void Page::setVisitedLinkStore(Ref<VisitedLinkStore>&& visitedLinkStore)
 
 std::optional<uint64_t> Page::noiseInjectionHashSaltForDomain(const RegistrableDomain& domain)
 {
-    if (!m_noiseInjectionHashSalts.isValidKey(domain))
+    if (domain.string().isNull())
         return std::nullopt;
 
     return m_noiseInjectionHashSalts.ensure(domain, [] {
@@ -5454,7 +5474,7 @@ void Page::resetImageAnalysisQueue()
 
 void Page::updateElementsWithTextRecognitionResults()
 {
-    if (m_textRecognitionResults.isEmptyIgnoringNullReferences())
+    if (m_textRecognitionResults.computeIsEmpty())
         return;
 
     m_textRecognitionResults.removeNullReferences();
@@ -5534,7 +5554,7 @@ JSC::JSGlobalObject* Page::serviceWorkerGlobalObject(DOMWrapperWorld& world)
 
 void Page::setServiceWorkerGlobalScope(ServiceWorkerGlobalScope& serviceWorkerGlobalScope)
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     ASSERT(m_isServiceWorkerPage);
     m_serviceWorkerGlobalScope = serviceWorkerGlobalScope;
 }
@@ -5609,7 +5629,6 @@ void Page::forceRepaintAllFrames()
     }
 }
 
-#if ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
 void Page::updatePlayStateForAllAnimations()
 {
     for (auto& rootFrame : m_rootFrames) {
@@ -5638,7 +5657,6 @@ void Page::removeIndividuallyPlayingAnimationElement(HTMLImageElement& element)
     if (!m_individuallyPlayingAnimationElements.computeSize() && !imageAnimationEnabled())
         chrome().client().isAnyAnimationAllowedToPlayDidChange(false);
 }
-#endif // ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
 
 ScreenOrientationManager* Page::screenOrientationManager() const
 {
@@ -5688,12 +5706,12 @@ void Page::removeRootFrame(LocalFrame& frame)
     chrome().client().rootFrameRemoved(frame);
 }
 
-String Page::ensureMediaKeysStorageDirectoryForOrigin(const SecurityOriginData& origin)
+String Page::ensureMediaKeysStorageDirectoryForOrigin(const SecurityOriginData& origin, std::optional<FrameIdentifier> frameID)
 {
     if (usesEphemeralSession())
         return emptyString();
 
-    return m_storageProvider->ensureMediaKeysStorageDirectoryForOrigin(origin);
+    return m_storageProvider->ensureMediaKeysStorageDirectoryForOrigin(origin, frameID);
 }
 
 void Page::setMediaKeysStorageDirectory(const String& directory)
@@ -6258,7 +6276,7 @@ bool Page::requiresScriptTrackingPrivacyProtections(const URL& scriptURL) const
 {
     RefPtr localMainFrame = dynamicDowncast<LocalFrame>(m_mainFrame.get());
     if (RefPtr document = localMainFrame ? localMainFrame->document() : nullptr) {
-        if (document->quirks().needsConsistentQueryParameterFilteringQuirk(scriptURL))
+        if (document->quirks().needsConsistentQueryParameterFilteringQuirkForScript(scriptURL))
             return true;
     }
     if (!advancedPrivacyProtections().contains(AdvancedPrivacyProtections::ScriptTrackingPrivacy))

@@ -98,7 +98,7 @@ private:
 
         VM* vm { nullptr };
         Vector<std::pair<JSCell*, JSCell*>> list;
-        mutable UncheckedKeyHashSet<std::tuple<JSCell*, JSCell*, UniquedStringImpl*>> variablesShown;
+        mutable HashSet<std::tuple<JSCell*, JSCell*, UniquedStringImpl*>> variablesShown;
     };
     ScopesOfClosures m_scopesOfClosures;
 };

@@ -213,7 +213,7 @@ void MomentumEventDispatcher::didStartMomentumPhase(WebCore::PageIdentifier page
     tracePoint(SyntheticMomentumStart);
 
     m_currentGesture.active = true;
-    m_currentGesture.momentumCurve = event.inputSource() == WebEventInputSource::Automation ? MomentumCurve::Simple : MomentumCurve::Default;
+    m_currentGesture.momentumCurve = event.inputSource() == WebEventInputSource::Touch ? MomentumCurve::Simple : MomentumCurve::Default;
     m_currentGesture.pageIdentifier = pageIdentifier;
     m_currentGesture.initiatingEvent = &event;
     m_currentGesture.currentOffset = { };
@@ -261,7 +261,7 @@ void MomentumEventDispatcher::setScrollingAccelerationCurve(WebCore::PageIdentif
 #if ENABLE(MOMENTUM_EVENT_DISPATCHER_TEMPORARY_LOGGING)
     WTF::TextStream stream(WTF::TextStream::LineMode::SingleLine);
     stream << curve;
-    RELEASE_LOG(ScrollAnimations, "MomentumEventDispatcher set curve %" PUBLIC_LOG_STRING, stream.release().utf8());
+    RELEASE_LOG(ScrollAnimations, "MomentumEventDispatcher set curve %" PUBLIC_LOG_STRING, makeUTF8CString(stream.release()));
 #endif
 
     Locker locker { m_accelerationCurvesLock };

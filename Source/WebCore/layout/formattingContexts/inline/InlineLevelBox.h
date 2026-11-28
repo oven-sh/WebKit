@@ -38,8 +38,7 @@
 #include <WebCore/StyleWebKitLineBoxContain.h>
 #include <wtf/EnumSet.h>
 
-namespace WebCore {
-namespace Layout {
+namespace WebCore::Layout {
 
 class LineBox;
 class LineBoxBuilder;
@@ -71,6 +70,7 @@ public:
 
     using VerticalAlignment = Variant<CSS::Keyword::Baseline, CSS::Keyword::Sub, CSS::Keyword::Super, CSS::Keyword::Top, CSS::Keyword::TextTop, CSS::Keyword::Middle, CSS::Keyword::Bottom, CSS::Keyword::TextBottom, CSS::Keyword::WebkitBaselineMiddle, InlineLayoutUnit>;
     const VerticalAlignment& verticalAlign() const LIFETIME_BOUND { return m_style.verticalAlignment; }
+    AlignmentBaseline alignmentBaseline() const { return m_style.alignmentBaseline; }
     bool hasLineBoxRelativeAlignment() const;
 
     InlineLayoutUnit preferredLineHeight() const;
@@ -85,6 +85,8 @@ public:
     Style::TextBoxEdge textBoxEdge() const { return m_style.textBoxEdge; }
     Style::LineFitEdge lineFitEdge() const { return m_style.lineFitEdge; }
     InlineLayoutUnit inlineBoxContentOffsetForTextBoxTrim() const { return m_inlineBoxContentOffsetForTextBoxTrim; }
+    // How far alignment-baseline raises the box from where its vertical-align puts it.
+    InlineLayoutUnit alignmentBaselineOffset() const { return m_alignmentBaselineOffset; }
 
     bool hasTextEmphasis() const { return (hasContent() || isAtomicInlineBox()) && m_textEmphasis.has_value(); };
     std::optional<InlineLayoutUnit> textEmphasisAbove() const { return hasTextEmphasis() ? std::optional { m_textEmphasis->above } : std::nullopt; }
@@ -94,7 +96,6 @@ public:
     bool isRootInlineBox() const { return m_type == Type::RootInlineBox; }
     bool isLineSpanningInlineBox() const { return m_type == Type::LineSpanningInlineBox; }
     bool isAtomicInlineBox() const { return m_type == Type::AtomicInlineBox; }
-    bool isListMarker() const { return isAtomicInlineBox() && layoutBox().isListMarkerBox(); }
     bool isLineBreakBox() const { return m_type == Type::LineBreakBox; }
 
     enum class Type : uint8_t {
@@ -142,6 +143,7 @@ private:
     void setAscentAndDescent(AscentAndDescent ascentAndDescent) { m_ascentAndDescent = ascentAndDescent; }
     void setLayoutBounds(const AscentAndDescent& layoutBounds) { m_layoutBounds = layoutBounds; }
     void setInlineBoxContentOffsetForTextBoxTrim(InlineLayoutUnit offset) { m_inlineBoxContentOffsetForTextBoxTrim = offset; }
+    void setAlignmentBaselineOffset(InlineLayoutUnit offset) { m_alignmentBaselineOffset = offset; }
 
     void setIsFirstBox() { m_isFirstWithinLayoutBox = true; }
     void setIsLastBox() { m_isLastWithinLayoutBox = true; }
@@ -155,6 +157,7 @@ private:
     AscentAndDescent m_layoutBounds;
     AscentAndDescent m_ascentAndDescent;
     InlineLayoutUnit m_inlineBoxContentOffsetForTextBoxTrim { 0.f };
+    InlineLayoutUnit m_alignmentBaselineOffset { 0.f };
     bool m_hasContent { false };
     // These bits are about whether this inline level box is the first/last generated box of the associated Layout::Box
     // (e.g. always true for atomic inline level boxes, but inline boxes spanning over multiple lines can produce separate first/last boxes).
@@ -172,6 +175,7 @@ private:
         WebCore::Style::WebkitLineBoxContain lineBoxContain;
         InlineLayoutUnit primaryFontSize { 0 };
         VerticalAlignment verticalAlignment { };
+        AlignmentBaseline alignmentBaseline { AlignmentBaseline::Baseline };
     };
     Style m_style;
 
@@ -212,5 +216,4 @@ inline bool InlineLevelBox::hasLineBoxRelativeAlignment() const
         || WTF::holdsAlternative<CSS::Keyword::Bottom>(m_style.verticalAlignment);
 }
 
-} // namespace Layout
-} // namespace WebCore
+} // namespace WebCore::Layout

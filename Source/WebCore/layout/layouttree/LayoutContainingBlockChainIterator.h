@@ -28,8 +28,7 @@
 #include <WebCore/LayoutElementBox.h>
 #include <WebCore/LayoutInitialContainingBlock.h>
 
-namespace WebCore {
-namespace Layout {
+namespace WebCore::Layout {
 
 class LayoutContainingBlockChainIterator {
 public:
@@ -42,18 +41,18 @@ public:
     friend bool operator==(LayoutContainingBlockChainIterator, LayoutContainingBlockChainIterator) = default;
 
 private:
-    const ElementBox* m_current { nullptr };
+    CheckedPtr<const ElementBox> m_current;
 };
 
 class LayoutContainingBlockChainIteratorAdapter {
 public:
     LayoutContainingBlockChainIteratorAdapter(const ElementBox&, const ElementBox* stayWithin = nullptr);
-    auto begin() { return LayoutContainingBlockChainIterator(&m_containingBlock); }
+    auto begin() { return LayoutContainingBlockChainIterator(m_containingBlock.ptr()); }
     auto end() { return LayoutContainingBlockChainIterator(m_stayWithin); }
 
 private:
-    const ElementBox& m_containingBlock;
-    const ElementBox* m_stayWithin { nullptr };
+    const CheckedRef<const ElementBox> m_containingBlock;
+    const CheckedPtr<const ElementBox> m_stayWithin;
 };
 
 const ElementBox& containingBlock(const Box&);
@@ -70,7 +69,7 @@ inline LayoutContainingBlockChainIterator::LayoutContainingBlockChainIterator(co
 inline LayoutContainingBlockChainIterator& LayoutContainingBlockChainIterator::operator++()
 {
     ASSERT(m_current);
-    m_current = m_current->isInitialContainingBlock() ? nullptr : &containingBlock(*m_current);
+    m_current = m_current->isInitialContainingBlock() ? nullptr : &containingBlock(protect(*m_current));
     return *this;
 }
 
@@ -97,5 +96,4 @@ inline LayoutContainingBlockChainIteratorAdapter containingBlockChainWithinForma
     return containingBlockChain(layoutBox, root);
 }
 
-}
 }

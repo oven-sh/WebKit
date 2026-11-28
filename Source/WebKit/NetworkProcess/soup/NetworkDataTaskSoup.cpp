@@ -45,6 +45,7 @@
 #include <WebCore/MIMETypeRegistry.h>
 #include <WebCore/OriginAccessPatterns.h>
 #include <WebCore/PublicSuffixStore.h>
+#include <WebCore/RegistrableDomain.h>
 #include <WebCore/SecurityOrigin.h>
 #include <WebCore/SharedBuffer.h>
 #include <WebCore/ShouldRelaxThirdPartyCookieBlocking.h>
@@ -157,7 +158,7 @@ void NetworkDataTaskSoup::createRequest(ResourceRequest&& request, WasBlockingCo
 {
     m_currentRequest = WTF::move(request);
     if (m_currentRequest.url().protocolIsFile()) {
-        m_file = gFileNewForPath(m_currentRequest.url().fileSystemPath().utf8());
+        m_file = gFileNewForPath(makeUTF8CString(m_currentRequest.url().fileSystemPath()));
         return;
     }
 
@@ -176,6 +177,9 @@ void NetworkDataTaskSoup::createRequest(ResourceRequest&& request, WasBlockingCo
 
     restrictRequestReferrerToOriginIfNeeded(m_currentRequest);
 
+    if (RegistrableDomain(m_currentRequest.firstPartyForCookies()).isEmpty())
+        m_currentRequest.setAllowCookies(false);
+
     m_soupMessage = m_currentRequest.createSoupMessage(m_session->blobRegistry());
     if (!m_soupMessage) {
         scheduleFailure(FailureType::InvalidURL);
@@ -189,7 +193,7 @@ void NetworkDataTaskSoup::createRequest(ResourceRequest&& request, WasBlockingCo
         auto& match = *m_compressionDictionary->match;
         GRefPtr hash = gBytesNew(std::span { match.hash });
         soup_message_set_compression_dictionary_hash(m_soupMessage.get(), hash.get());
-        auto dictionaryID = match.id.utf8();
+        auto dictionaryID = makeUTF8CString(match.id);
         soup_message_set_compression_dictionary_id(m_soupMessage.get(), match.id.isEmpty() ? nullptr : dictionaryID.legacyCStringPointer());
         g_signal_connect(m_soupMessage.get(), "request-compression-dictionary", G_CALLBACK(requestCompressionDictionaryCallback), this);
     }
@@ -650,10 +654,10 @@ void NetworkDataTaskSoup::completeAuthentication(const AuthenticationChallenge& 
     case ProtectionSpace::AuthenticationScheme::NTLM:
     case ProtectionSpace::AuthenticationScheme::Negotiate:
     case ProtectionSpace::AuthenticationScheme::OAuth:
-        soup_auth_authenticate(challenge.soupAuth(), credential.user().utf8().legacyCStringPointer(), credential.password().utf8().legacyCStringPointer());
+        soup_auth_authenticate(challenge.soupAuth(), makeUTF8CString(credential.user()).legacyCStringPointer(), makeUTF8CString(credential.password()).legacyCStringPointer());
         break;
     case ProtectionSpace::AuthenticationScheme::ClientCertificatePINRequested: {
-        auto password = credential.password().utf8();
+        auto password = makeUTF8CString(credential.password());
         g_tls_password_set_value(challenge.tlsPassword(), reinterpret_cast<const unsigned char*>(password.data()), password.length());
         soup_message_tls_client_certificate_password_request_complete(m_soupMessage.get());
         break;
@@ -910,7 +914,7 @@ void NetworkDataTaskSoup::continueHTTPRedirection()
     clearRequest();
 
     auto response = ResourceResponse(m_response);
-    m_client->willPerformHTTPRedirection(WTF::move(response), WTF::move(request), [this, protectedThis = protect(*this), wasBlockingCookies, userAgent = WTF::move(userAgent)](const ResourceRequest& newRequest) {
+    m_client->willPerformHTTPRedirection(WTF::move(response), WTF::move(request), [this, protectedThis = protect(*this), wasBlockingCookies, isCrossOrigin, userAgent = WTF::move(userAgent)](const ResourceRequest& newRequest) {
         if (newRequest.isNull() || m_state == State::Canceling)
             return;
 
@@ -928,6 +932,12 @@ void NetworkDataTaskSoup::continueHTTPRedirection()
 #if HAVE(SOUP_COMPRESSION_DICTIONARY_SUPPORT)
         // A redirect is followed here rather than in NetworkResourceLoader, so the best match has to
         // be recomputed for the new URL. https://fetch.spec.whatwg.org/#http-network-compression-dictionary-fetch
+        // To be added with https://github.com/whatwg/fetch/pull/1854
+        // 3. If request's mode is "no-cors", then return the result of running fallback.
+        // Only same-origin no-cors loads get here, and one that has left its origin stays opaque.
+        if (m_compressionDictionary && m_compressionDictionary->isNoCors && isCrossOrigin)
+            m_compressionDictionary = std::nullopt;
+
         if (m_compressionDictionary) {
             m_compressionDictionary->match = std::nullopt;
             if (m_session && request.url().protocolIs("https"_s) && !shouldBlockCookies(request, wasBlockingCookies)) {
@@ -937,6 +947,8 @@ void NetworkDataTaskSoup::continueHTTPRedirection()
                 }
             }
         }
+#else
+        UNUSED_VARIABLE(isCrossOrigin);
 #endif
 
         createRequest(WTF::move(request), wasBlockingCookies);
@@ -1290,7 +1302,7 @@ void NetworkDataTaskSoup::download()
         return;
     }
 
-    auto downloadDestinationPath = m_pendingDownloadLocation.utf8();
+    auto downloadDestinationPath = makeUTF8CString(m_pendingDownloadLocation);
     m_downloadDestinationFile = gFileNewForPath(downloadDestinationPath);
     GRefPtr<GFileOutputStream> outputStream;
     GUniqueOutPtr<GError> error;
@@ -1303,7 +1315,7 @@ void NetworkDataTaskSoup::download()
         return;
     }
 
-    auto intermediatePath = makeString(m_pendingDownloadLocation, ".wkdownload"_s).utf8();
+    auto intermediatePath = makeUTF8CString(makeString(m_pendingDownloadLocation, ".wkdownload"_s));
     m_downloadIntermediateFile = gFileNewForPath(intermediatePath);
     outputStream = adoptGRef(g_file_replace(m_downloadIntermediateFile.get(), nullptr, TRUE, G_FILE_CREATE_NONE, nullptr, &error.outPtr()));
     if (!outputStream) {
@@ -1312,7 +1324,7 @@ void NetworkDataTaskSoup::download()
     }
     m_downloadOutputStream = adoptGRef(G_OUTPUT_STREAM(outputStream.leakRef()));
 
-    auto& downloadManager = m_session->networkProcess().downloadManager();
+    auto& downloadManager = protect(NetworkProcess::singleton())->downloadManager();
     Ref download = Download::create(downloadManager, *m_pendingDownloadID, *this, *m_session, suggestedFilename());
     downloadManager.dataTaskBecameDownloadTask(*m_pendingDownloadID, download.copyRef());
     download->didCreateDestination(m_pendingDownloadLocation);
@@ -1349,7 +1361,7 @@ void NetworkDataTaskSoup::writeDownload()
 void NetworkDataTaskSoup::didWriteDownload(gsize bytesWritten)
 {
     ASSERT(bytesWritten == m_readBuffer.size());
-    auto* download = m_session->networkProcess().downloadManager().download(*m_pendingDownloadID);
+    auto* download = protect(NetworkProcess::singleton())->downloadManager().download(*m_pendingDownloadID);
     ASSERT(download);
     download->didReceiveData(bytesWritten, 0, 0);
     read();
@@ -1371,13 +1383,13 @@ void NetworkDataTaskSoup::didFinishDownload()
     }
 
     GRefPtr<GFileInfo> info = adoptGRef(g_file_info_new());
-    auto uri = m_response.url().string().utf8();
+    auto uri = makeUTF8CString(m_response.url().string());
     g_file_info_set_attribute_string(info.get(), "metadata::download-uri", uri.legacyCStringPointer());
     g_file_info_set_attribute_string(info.get(), "xattr::xdg.origin.url", uri.legacyCStringPointer());
     g_file_set_attributes_async(m_downloadDestinationFile.get(), info.get(), G_FILE_QUERY_INFO_NONE, RunLoopSourcePriority::AsyncIONetwork, nullptr, nullptr, nullptr);
 
     clearRequest();
-    auto* download = m_session->networkProcess().downloadManager().download(*m_pendingDownloadID);
+    auto* download = protect(NetworkProcess::singleton())->downloadManager().download(*m_pendingDownloadID);
     ASSERT(download);
     download->didFinish();
 }
@@ -1389,7 +1401,7 @@ void NetworkDataTaskSoup::didFailDownload(const ResourceError& error)
     if (m_client)
         dispatchDidCompleteWithError(error);
     else {
-        auto* download = m_session->networkProcess().downloadManager().download(*m_pendingDownloadID);
+        auto* download = protect(NetworkProcess::singleton())->downloadManager().download(*m_pendingDownloadID);
         ASSERT(download);
         download->didFail(error, { });
     }
@@ -1628,7 +1640,7 @@ void NetworkDataTaskSoup::enumerateFileChildrenCallback(GFile* file, GAsyncResul
     if (error)
         task->didFail(ResourceError(String::fromLatin1(g_quark_to_string(error->domain)), error->code, task->m_firstRequest.url(), String::fromUTF8(error->message)));
     else
-        task->didReadFile(webkitDirectoryInputStreamNew(WTF::move(enumerator), task->m_firstRequest.url().string().utf8()));
+        task->didReadFile(webkitDirectoryInputStreamNew(WTF::move(enumerator), makeUTF8CString(task->m_firstRequest.url().string())));
 }
 
 void NetworkDataTaskSoup::didReadFile(GRefPtr<GInputStream>&& inputStream)

@@ -165,8 +165,7 @@ static FragmentAndResources createFragmentInternal(LocalFrame& frame, NSAttribut
     fragment->parseHTML(markup, dummyBodyToForceInBodyInsertionMode, { });
 
     result.fragment = WTF::move(fragment);
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL WebArchiveResourceFromNSAttributedString *resource in subresources)
+    for (WebArchiveResourceFromNSAttributedString *resource in subresources)
         result.resources.append(protect(*resource->resource));
 
     return result;
@@ -593,7 +592,7 @@ static String sanitizeMarkupWithArchive(LocalFrame& frame, Document& destination
             subframeMainResource.releaseNonNull(), subframeArchive.copyRef() };
         auto subframeMarkup = sanitizeMarkupWithArchive(frame, destinationDocument, subframeContent, MSOListQuirks::Disabled, canShowMIMETypeAsHTML);
 
-        auto blob = Blob::create(&destinationDocument, Vector(byteCast<uint8_t>(subframeMarkup.utf8().span())), type);
+        auto blob = Blob::create(&destinationDocument, Vector(byteCast<uint8_t>(makeUTF8CString(subframeMarkup).span())), type);
 
         String subframeBlobURL = DOMURL::createObjectURL(destinationDocument, blob);
         blobOrDataURLMap.set(AtomString { subframeURL.string() }, AtomString { subframeBlobURL });

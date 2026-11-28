@@ -50,6 +50,8 @@ public:
         return adoptRef(*new SearchInputType(element));
     }
 
+    WEBCORE_EXPORT virtual ~SearchInputType();
+
     // PopupMenuClient ref-counting (disambiguating from InputType)
     void ref() const final { InputType::ref(); }
     void deref() const final { InputType::deref(); }
@@ -80,14 +82,22 @@ public:
     HostWindow* hostWindow() const override;
 #endif
 
-    Vector<RecentSearch>& recentSearches() LIFETIME_BOUND { return m_recentSearches; }
+    bool popupIsVisible() const { return m_searchPopupIsVisible; }
+    void showPopup();
+    void hidePopup();
+    WEBCORE_EXPORT std::span<const RecentSearch> recentSearches() LIFETIME_BOUND;
 
 private:
     explicit SearchInputType(HTMLInputElement&);
 
+    SearchPopupMenu* searchPopup();
+    void saveRecentSearches();
+    void disconnectSearchPopup();
+    void detach() final;
+
     void addSearchResult() final;
     void attributeChanged(const QualifiedName&) final;
-    RenderPtr<RenderElement> createInputRenderer(Style::ComputedStyle&&) final;
+    RenderPtr<RenderElement> createInputRenderer(UniqueRef<Style::ComputedStyle>&&) final;
     const AtomString& formControlType() const final;
     bool needsContainer() const final;
     void createShadowSubtree() final;
@@ -104,6 +114,8 @@ private:
     RefPtr<HTMLElement> m_cancelButton;
 
     Vector<RecentSearch> m_recentSearches;
+    RefPtr<SearchPopupMenu> m_searchPopup;
+    bool m_searchPopupIsVisible { false };
 };
 
 } // namespace WebCore

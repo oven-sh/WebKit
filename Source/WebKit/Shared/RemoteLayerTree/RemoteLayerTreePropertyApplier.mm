@@ -527,10 +527,15 @@ void RemoteLayerTreePropertyApplier::applyPropertiesToLayer(CALayer *layer, Remo
     if (properties.changedProperties & LayerChange::FiltersChanged)
         PlatformCAFilters::setFiltersOnLayer(layer, properties.filters ? *properties.filters : FilterOperations(), layerTreeNode && layerTreeNode->backdropRootIsOpaque());
 
+#if ENABLE(THREADED_ANIMATIONS)
+    if (properties.changedProperties & LayerChange::AnimationExtentChanged && layerTreeNode)
+        layerTreeNode->setAnimationExtent(properties.animationExtent);
+#endif
+
     if (properties.changedProperties & LayerChange::AnimationsChanged) {
 #if ENABLE(THREADED_ANIMATIONS)
         // FIXME: layerTreeHost will be null if this method is called from within the Web process.
-        if (layerTreeHost && layerTreeHost->threadedAnimationsEnabled()) {
+        if (layerTreeHost && layerTreeHost->isPrimary() && layerTreeHost->threadedAnimationsEnabled()) {
             LOG_WITH_STREAM(Animations, stream << "RemoteLayerTreePropertyApplier::applyProperties() for layer " << layerTreeNode->layerID() << " found " << properties.animationChanges.effects.size() << " effects.");
             layerTreeNode->setAcceleratedEffectsAndBaseValues(properties.animationChanges.effects, properties.animationChanges.baseValues, *layerTreeHost);
         }
@@ -546,6 +551,9 @@ void RemoteLayerTreePropertyApplier::applyPropertiesToLayer(CALayer *layer, Remo
 
     if (properties.changedProperties & LayerChange::BackdropRootChanged)
         layer.shouldRasterize = properties.backdropRoot;
+
+    if (properties.changedProperties & LayerChange::HidesFromScreenCaptureChanged)
+        [layer _web_setHidesFromScreenCapture:properties.hidesFromScreenCapture];
 
     if (properties.changedProperties & LayerChange::TonemappingEnabledChanged) {
 #if HAVE(SUPPORT_HDR_DISPLAY_APIS)

@@ -190,6 +190,9 @@ public:
 #if ENABLE(THREADED_ANIMATIONS)
     virtual void clearAcceleratedEffectsAndBaseValues();
     virtual void setAcceleratedEffectsAndBaseValues(const AcceleratedEffects&, const AcceleratedEffectValues&);
+    // The area, in this layer's coordinate space without its own transform, that the content affected by
+    // the accelerated effects set on this layer, descendants included, may cover over the course of the effects.
+    virtual void setAnimationExtent(std::optional<FloatRect>);
 #endif
 
     virtual void setMaskLayer(RefPtr<PlatformCALayer>&&);
@@ -292,6 +295,8 @@ public:
 
     virtual Path shadowPath() const = 0;
     virtual void setShadowPath(const Path&) = 0;
+
+    virtual void setHidesFromScreenCapture(bool) = 0;
 
     virtual void setAntialiasesEdges(bool) = 0;
 

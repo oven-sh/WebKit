@@ -749,7 +749,7 @@ private:
     BitVector m_isLayoutOfInitializer;
     BitVector m_sparseRecords;
     BitVector m_typesWithFewSparseRecords;
-    UncheckedKeyHashMap<uint32_t, TypeID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_partsWithoutSparseRecords;
+    HashMap<uint32_t, TypeID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_partsWithoutSparseRecords;
     BitVector m_isNameOfSomeInstance;
     Vector<uint32_t> m_firstNameOfHierarchiesIn;
     Vector<uint32_t> m_namesOfHierarchies;

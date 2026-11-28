@@ -37,6 +37,7 @@
 #import "CompletionHandlerCallChecker.h"
 #import "PDFPluginIdentifier.h"
 #import "WKAPICast.h"
+#import "WKAppKitGestureController.h"
 #import "WKIntelligenceTextEffectCoordinator.h"
 #import "WKTextFinderClient.h"
 #import "WKWebViewConfigurationPrivate.h"
@@ -61,10 +62,6 @@
 #import <wtf/StdLibExtras.h>
 #import <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
 #import <wtf/cocoa/TypeCastsCocoa.h>
-
-#if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/WKWebViewMacAdditionsBefore.mm>)
-#import <WebKitAdditions/WKWebViewMacAdditionsBefore.mm>
-#endif
 
 _WKOverlayScrollbarStyle toAPIScrollbarStyle(std::optional<WebCore::ScrollbarOverlayStyle> coreScrollbarStyle)
 {
@@ -261,6 +258,21 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
         _impl->renewGState();
     [super renewGState];
 }
+
+#if HAVE(APPKIT_GESTURES_SUPPORT)
+- (_NSMouseEmulationGestureConfig)_gestureRecognizersViewConfigForMouseEmulation
+{
+    return 0;
+}
+
+- (NSView *)_hitTestToBlockWindowResizingForResizeDirection:(NSWindowFrameResizePosition)direction context:(NSHitTestContext *)context
+{
+    if (context.source == NSHitTestContextSourceTouch && _impl && _impl->isPointInScrollbar([self convertPoint:context.point fromView:nil]))
+        return self;
+
+    return [super _hitTestToBlockWindowResizingForResizeDirection:direction context:context];
+}
+#endif // HAVE(APPKIT_GESTURES_SUPPORT)
 
 #pragma mark - macOS IBAction/NSResponder
 
@@ -562,17 +574,17 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 
 - (void)mouseDown:(NSEvent *)event
 {
-    _impl->mouseDown(event, WebKit::WebEventInputSource::UserDriven);
+    _impl->mouseDown(event, WebKit::WebEventInputSource::Default);
 }
 
 - (void)mouseUp:(NSEvent *)event
 {
-    _impl->mouseUp(event, WebKit::WebEventInputSource::UserDriven);
+    _impl->mouseUp(event, WebKit::WebEventInputSource::Default);
 }
 
 - (void)mouseDragged:(NSEvent *)event
 {
-    _impl->mouseDragged(event, WebKit::WebEventInputSource::UserDriven);
+    _impl->mouseDragged(event, WebKit::WebEventInputSource::Default);
 }
 
 - (void)otherMouseDown:(NSEvent *)event
@@ -1306,9 +1318,60 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 
 @end
 
-#if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/WKWebViewMacAdditionsAfter.mm>)
-#import <WebKitAdditions/WKWebViewMacAdditionsAfter.mm>
-#endif
+#if ENABLE(TWO_PHASE_CLICKS)
+
+@implementation WKWebView (TwoPhaseClicks)
+
+- (void)_didNotHandleTapAsClick:(const WebCore::IntPoint&)point
+{
+    if (RetainPtr gestureController = _impl->appKitGestureController())
+        [gestureController didNotHandleTapAsClick:point];
+}
+
+- (void)_didHandleTapAsHover
+{
+    if (RetainPtr gestureController = _impl->appKitGestureController())
+        [gestureController didHandleTapAsHover];
+}
+
+- (void)_didCompleteSyntheticClick
+{
+    if (RetainPtr gestureController = _impl->appKitGestureController())
+        [gestureController didCompleteSyntheticClick];
+}
+
+- (void)_commitPotentialTapFailed
+{
+    if (RetainPtr gestureController = _impl->appKitGestureController())
+        [gestureController commitPotentialTapFailed];
+}
+
+- (void)_didGetTapHighlightGeometries:(WebKit::TapIdentifier)requestID color:(const WebCore::Color&)color quads:(const Vector<WebCore::FloatQuad>&)highlightedQuads cornerRadii:(WebCore::CornerRadii&&)cornerRadii nodeHasBuiltInClickHandling:(BOOL)nodeHasBuiltInClickHandling
+{
+    if (RetainPtr gestureController = _impl->appKitGestureController())
+        [gestureController didGetTapHighlightForRequest:requestID color:color quads:highlightedQuads cornerRadii:WTF::move(cornerRadii) nodeHasBuiltInClickHandling:nodeHasBuiltInClickHandling];
+}
+
+- (BOOL)_isPotentialTapInProgress
+{
+    if (RetainPtr gestureController = _impl->appKitGestureController())
+        return [gestureController isPotentialTapInProgress];
+    return NO;
+}
+
+- (void)_disableDoubleTapGesturesDuringTapIfNecessary:(WebKit::TapIdentifier)requestID
+{
+    if (RetainPtr gestureController = _impl->appKitGestureController())
+        [gestureController disableDoubleTapGesturesDuringTapIfNecessary:requestID];
+}
+
+- (void)_handleSmartMagnificationInformationForPotentialTap:(WebKit::TapIdentifier)requestID renderRect:(const WebCore::FloatRect&)renderRect fitEntireRect:(BOOL)fitEntireRect viewportMinimumScale:(double)viewportMinimumScale viewportMaximumScale:(double)viewportMaximumScale nodeIsRootLevel:(BOOL)nodeIsRootLevel nodeIsPluginElement:(BOOL)nodeIsPluginElement
+{
+}
+
+@end
+
+#endif // ENABLE(TWO_PHASE_CLICKS)
 
 #pragma mark -
 
@@ -1634,8 +1697,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
         if (!receiver)
             return;
 
-        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-        for (SUPPRESS_UNRETAINED_LOCAL NSString *typeIdentifier in [receiver fileTypes]) {
+        for (NSString *typeIdentifier in [receiver fileTypes]) {
             RetainPtr type = [UTType typeWithIdentifier:typeIdentifier];
             if (!type)
                 continue;
@@ -1650,8 +1712,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
         if (!filenames)
             return { };
 
-        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-        for (SUPPRESS_UNRETAINED_LOCAL id name in filenames.get()) {
+        for (id name in filenames.get()) {
             RetainPtr pathExtension = [dynamic_objc_cast<NSString>(name) pathExtension];
             if (![pathExtension length])
                 continue;

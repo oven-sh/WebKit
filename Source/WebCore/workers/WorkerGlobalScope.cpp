@@ -55,6 +55,7 @@
 #include "RTCDataChannelRemoteHandlerConnection.h"
 #include "ReportingScope.h"
 #include "ScheduledAction.h"
+#include "Scheduler.h"
 #include "ScriptExecutionContextInlines.h"
 #include "ScriptSourceCode.h"
 #include "SecurityOrigin.h"
@@ -90,10 +91,6 @@
 #include <wtf/WorkQueue.h>
 #include <wtf/threads/BinarySemaphore.h>
 
-#if ENABLE(WEBDRIVER_BIDI)
-#include "AutomationInstrumentation.h"
-#endif
-
 namespace WebCore {
 using namespace Inspector;
 
@@ -101,7 +98,7 @@ static Lock allWorkerGlobalScopeIdentifiersLock;
 NODELETE static HashSet<ScriptExecutionContextIdentifier>& allWorkerGlobalScopeIdentifiers() WTF_REQUIRES_LOCK(allWorkerGlobalScopeIdentifiersLock)
 {
     static NeverDestroyed<HashSet<ScriptExecutionContextIdentifier>> identifiers;
-    ASSERT(allWorkerGlobalScopeIdentifiersLock.isLocked());
+    RELEASE_ASSERT(allWorkerGlobalScopeIdentifiersLock.isLocked());
     return identifiers;
 }
 
@@ -156,7 +153,7 @@ WorkerGlobalScope::WorkerGlobalScope(WorkerThreadType type, const WorkerParamete
 
 WorkerGlobalScope::~WorkerGlobalScope()
 {
-    ASSERT(thread()->thread() == &Thread::currentSingleton());
+    RELEASE_ASSERT(thread()->thread() == &Thread::currentSingleton());
 
     {
         Locker locker { allWorkerGlobalScopeIdentifiersLock };
@@ -165,6 +162,7 @@ WorkerGlobalScope::~WorkerGlobalScope()
 
     m_performance = nullptr;
     m_crypto = nullptr;
+    m_scheduler = nullptr;
 
     // Notify proxy that we are going away. This can free the WorkerThread object and the proxy, so do not access them after this.
     // FIXME: A CheckedPtr cannot be used here since the proxy may get destroyed on the main thread before it goes out of scope.
@@ -508,9 +506,6 @@ void WorkerGlobalScope::addConsoleMessage(std::unique_ptr<Inspector::ConsoleMess
     if (settingsValues().logsPageMessagesToSystemConsoleEnabled && sessionID && !sessionID->isEphemeral()) [[unlikely]]
         FrameConsoleClient::logMessageToSystemConsole(*message);
 
-#if ENABLE(WEBDRIVER_BIDI)
-    AutomationInstrumentation::addMessageToConsole(message);
-#endif
     InspectorInstrumentation::addMessageToConsole(*this, WTF::move(message));
 }
 
@@ -532,9 +527,6 @@ void WorkerGlobalScope::addMessage(MessageSource source, MessageLevel level, con
     else
         message = makeUnique<Inspector::ConsoleMessage>(source, MessageType::Log, level, messageText, sourceURL, lineNumber, columnNumber, state, requestIdentifier);
 
-#if ENABLE(WEBDRIVER_BIDI)
-    AutomationInstrumentation::addMessageToConsole(message);
-#endif
     InspectorInstrumentation::addMessageToConsole(*this, WTF::move(message));
 }
 
@@ -588,6 +580,13 @@ Crypto& WorkerGlobalScope::crypto()
 Performance& WorkerGlobalScope::performance() const
 {
     return *m_performance;
+}
+
+Scheduler& WorkerGlobalScope::scheduler()
+{
+    if (!m_scheduler)
+        m_scheduler = Scheduler::create(this);
+    return *m_scheduler;
 }
 
 CacheStorageConnection& WorkerGlobalScope::cacheStorageConnection()
@@ -653,9 +652,9 @@ Ref<FontFaceSet> WorkerGlobalScope::fonts()
     return cssFontSelector()->fontFaceSet();
 }
 
-RefPtr<FontLoadRequest> WorkerGlobalScope::fontLoadRequest(const String& url, bool, bool, LoadedFromOpaqueSource loadedFromOpaqueSource)
+RefPtr<FontLoadRequest> WorkerGlobalScope::fontLoadRequest(const CSS::URL& location, bool, bool)
 {
-    return WorkerFontLoadRequest::create(parseURL(url), loadedFromOpaqueSource);
+    return WorkerFontLoadRequest::create(parseURL(location.resolved.string()), location.modifiers, location.provenance);
 }
 
 void WorkerGlobalScope::beginLoadingFontSoon(FontLoadRequest& request)
@@ -670,7 +669,7 @@ Ref<WorkerThread> WorkerGlobalScope::thread() const
 
 void WorkerGlobalScope::releaseMemory(Synchronous synchronous)
 {
-    ASSERT(isContextThread());
+    RELEASE_ASSERT(isContextThread());
     deleteJSCodeAndGC(synchronous);
     clearDecodedScriptData();
 }
@@ -739,7 +738,7 @@ void WorkerGlobalScope::reportErrorToWorkerObject(const String& errorMessage)
 
 void WorkerGlobalScope::clearDecodedScriptData()
 {
-    ASSERT(isContextThread());
+    RELEASE_ASSERT(isContextThread());
 
     if (RefPtr provider = m_mainScriptSourceProvider.get())
         provider->clearDecodedData();
@@ -752,14 +751,14 @@ void WorkerGlobalScope::clearDecodedScriptData()
 
 bool WorkerGlobalScope::crossOriginIsolated() const
 {
-    if (documentIsolationPolicy().value != DocumentIsolationPolicyValue::None)
+    if (documentIsolationPolicy().value != DocumentIsolationPolicyValue::None || crossOriginEmbedderPolicy().value == CrossOriginEmbedderPolicyValue::Credentialless)
         return m_canBeCrossOriginIsolated == CanBeCrossOriginIsolated::Yes;
     return crossOriginEmbedderPolicy().value == CrossOriginEmbedderPolicyValue::RequireCORP;
 }
 
 void WorkerGlobalScope::updateSourceProviderBuffers(const ScriptBuffer& mainScript, const HashMap<URL, ScriptBuffer>& importedScripts)
 {
-    ASSERT(isContextThread());
+    RELEASE_ASSERT(isContextThread());
 
     if (mainScript) {
         if (RefPtr provider = m_mainScriptSourceProvider.get())

@@ -97,7 +97,7 @@ public:
     WEBCORE_EXPORT bool shouldDisplayPosterImage() const;
 
     URL posterImageURL() const;
-    RenderPtr<RenderElement> createElementRenderer(Style::ComputedStyle&&, const RenderTreePosition&) final;
+    RenderPtr<RenderElement> createElementRenderer(UniqueRef<Style::ComputedStyle>&&, const RenderTreePosition&) final;
     bool isReplaced(const Style::ComputedStyle* = nullptr) const final { return true; }
 
 #if ENABLE(VIDEO_PRESENTATION_MODE)
@@ -165,6 +165,11 @@ public:
     double fieldOfView() const;
     void spatialCameraDidMove(double yaw, double pitch, double fieldOfView);
 
+    bool isSpatialVideoRendererActive() const { return m_spatialVideoRendererActive; }
+    void setSpatialVideoRendererActive(bool);
+
+    bool hasSpatialVideoProjection() const;
+
 private:
     friend class HTMLVideoElementPictureInPicture;
     HTMLVideoElement(const QualifiedName&, Document&, bool createdByParser);
@@ -216,6 +221,7 @@ private:
     std::optional<double> m_cameraYaw;
     std::optional<double> m_cameraPitch;
     std::optional<double> m_cameraFieldOfView;
+    bool m_spatialVideoRendererActive { false };
 
     bool m_renderingCanBeAccelerated { false };
 

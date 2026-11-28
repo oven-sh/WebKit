@@ -114,6 +114,7 @@ public:
     String spatialVideoProjectionKind() const;
     std::optional<int32_t> spatialVideoHorizontalFieldOfView() const;
     void spatialCameraDidMove(double yaw, double pitch, double fieldOfView);
+    void setSpatialVideoRendererActive(bool);
     NODELETE bool isAVExperienceControllerFullscreenEnabled() const;
 
     void captionPreferencesChanged();
@@ -135,7 +136,6 @@ public:
 
     static String generateUUID();
 
-    Vector<String, 2> shadowRootStyleSheets() const;
     static String base64StringForIconNameAndType(const String& iconName, const String& iconType);
 
 #if ENABLE(MEDIA_CONTROLS_CONTEXT_MENUS)

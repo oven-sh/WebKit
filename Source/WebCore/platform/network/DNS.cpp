@@ -38,11 +38,8 @@
 #include <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
 #endif
 
-#if OS(UNIX)
+#if OS(UNIX) || OS(QNX)
 #include <arpa/inet.h>
-#endif
-
-#if OS(QNX)
 #include <sys/socket.h>
 #endif
 
@@ -50,7 +47,7 @@ namespace WebCore {
 
 void prefetchDNS(const String& hostname)
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     if (hostname.isEmpty())
         return;
 
@@ -59,7 +56,7 @@ void prefetchDNS(const String& hostname)
 
 void resolveDNS(const String& hostname, uint64_t identifier, DNSCompletionHandler&& completionHandler)
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     if (hostname.isEmpty())
         return completionHandler(makeUnexpected(DNSError::CannotResolve));
 
@@ -125,11 +122,11 @@ std::optional<IPAddress> IPAddress::fromString(const String& string)
 {
 #if OS(UNIX)
     struct in6_addr addressV6;
-    if (inet_pton(AF_INET6, string.utf8().legacyCStringPointer(), &addressV6))
+    if (inet_pton(AF_INET6, makeUTF8CString(string).legacyCStringPointer(), &addressV6))
         return IPAddress { addressV6 };
 
     struct in_addr addressV4;
-    if (inet_pton(AF_INET, string.utf8().legacyCStringPointer(), &addressV4))
+    if (inet_pton(AF_INET, makeUTF8CString(string).legacyCStringPointer(), &addressV4))
         return IPAddress { addressV4 };
 #else
     // FIXME: Add support for this method on Windows.

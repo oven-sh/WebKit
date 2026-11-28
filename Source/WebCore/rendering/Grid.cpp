@@ -170,6 +170,17 @@ bool Grid::isEmptyAutoRepeatTrack(Style::GridTrackSizingDirection direction, uns
     return autoRepeatEmptyTracks(direction)->contains(line);
 }
 
+bool Grid::containsEmptyAutoRepeatTrack(Style::GridTrackSizingDirection direction, const GridSpan& position) const
+{
+    if (!hasAutoRepeatEmptyTracks(direction))
+        return false;
+    for (auto line : position) {
+        if (isEmptyAutoRepeatTrack(direction, line))
+            return true;
+    }
+    return false;
+}
+
 OrderedTrackIndexSet* Grid::autoRepeatEmptyTracks(Style::GridTrackSizingDirection direction) const
 {
     ASSERT(hasAutoRepeatEmptyTracks(direction));
@@ -305,7 +316,7 @@ GridIterator GridIterator::createForSubgrid(const RenderGrid& subgrid, const Gri
     unsigned fixedIndex = (outer.direction() == Style::GridTrackSizingDirection::Columns) ? outer.m_columnIndex : outer.m_rowIndex;
     fixedIndex -= subgridSpanInOuter.startLine();
 
-    auto innerDirection = GridLayoutFunctions::flowAwareDirectionForGridItem(*parent, subgrid, outer.direction());
+    auto innerDirection = GridLayoutFunctions::flowAwareDirection(*parent, subgrid, outer.direction());
     ASSERT(subgrid.isSubgrid(innerDirection));
 
     if (GridLayoutFunctions::isSubgridReversedDirection(*parent, outer.direction(), subgrid)) {

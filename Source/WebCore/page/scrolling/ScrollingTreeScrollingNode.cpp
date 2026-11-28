@@ -208,7 +208,10 @@ bool ScrollingTreeScrollingNode::shouldRubberBandOnSide(BoxSide side, RectEdges<
 
 bool ScrollingTreeScrollingNode::shouldRubberBand(const PlatformWheelEvent& wheelEvent, EventTargeting eventTargeting) const
 {
-    if (isLatchedNode())
+    // A root latched while it couldn't scroll rubber-bands as if it weren't latched. Check that first: in the web process, the
+    // EventDispatcher queue clears the latch when the next gesture starts while the scrolling thread may be here, and checking
+    // isLatchedNode() first could then see the latch but miss, by the second check, that it was this kind of latch.
+    if (!scrollingTree()->isLatchedToUnscrollableRoot() && isLatchedNode())
         return true;
 
     if (eventTargeting == EventTargeting::NodeOnly)
@@ -264,8 +267,7 @@ FloatPoint ScrollingTreeScrollingNode::minimumScrollPosition() const
 FloatPoint ScrollingTreeScrollingNode::maximumScrollPosition() const
 {
     FloatPoint contentSizePoint(totalContentsSize());
-    // FIXME: Remove suppression once rdar://189998444 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST auto maximumScrollOffset = FloatPoint(contentSizePoint - scrollableAreaSize()).expandedTo(FloatPoint());
+    auto maximumScrollOffset = FloatPoint(contentSizePoint - scrollableAreaSize()).expandedTo(FloatPoint());
     return ScrollableArea::scrollPositionFromOffset(maximumScrollOffset, toFloatSize(scrollOrigin()));
 }
 
@@ -670,6 +672,16 @@ void ScrollingTreeScrollingNode::scrollbarMinimumThumbLengthDidChange(ScrollbarO
 {
     if (RefPtr tree = scrollingTree())
         tree->scrollingTreeNodeScrollbarMinimumThumbLengthDidChange(scrollingNodeID(), orientation, minimumThumbLength);
+}
+
+bool ScrollingTreeScrollingNode::allowsHorizontalScrolling() const
+{
+    return m_scrollableAreaParameters.allowsHorizontalScrolling;
+}
+
+bool ScrollingTreeScrollingNode::allowsVerticalScrolling() const
+{
+    return m_scrollableAreaParameters.allowsVerticalScrolling;
 }
 
 } // namespace WebCore

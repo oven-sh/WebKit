@@ -499,9 +499,9 @@ private:
     const Vector<BasicBlock*>& m_preOrder;
     IndexMap<Value*, Uses> m_uses;
     IndexMap<Value*, Clone> m_clones;
-    UncheckedKeyHashMap<Value*, Clone> m_secondClones;
-    UncheckedKeyHashMap<Value*, PartOfAddresses> m_partsOfAddresses;
-    UncheckedKeyHashSet<Value*> m_cloneValues;
+    HashMap<Value*, Clone> m_secondClones;
+    HashMap<Value*, PartOfAddresses> m_partsOfAddresses;
+    HashSet<Value*> m_cloneValues;
     Vector<Value*, 8> m_clonesSeenInBlock;
     std::optional<DominatorJumpPointers> m_jumpPointers;
     IndexMap<BasicBlock*, bool> m_isOrdered;

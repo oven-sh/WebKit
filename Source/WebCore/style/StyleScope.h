@@ -61,7 +61,6 @@ class ProcessingInstruction;
 class RenderBoxModelObject;
 class StyleSheet;
 class StyleSheetContents;
-class StyleSheetList;
 class ShadowRoot;
 class TreeScope;
 class WeakPtrImplWithEventTargetData;
@@ -209,7 +208,7 @@ private:
     NODELETE TreeScope& treeScope();
 
     const CheckedRef<Document> m_document;
-    ShadowRoot* m_shadowRoot { nullptr };
+    const CheckedPtr<ShadowRoot> m_shadowRoot;
 
     RefPtr<Resolver> m_resolver;
 

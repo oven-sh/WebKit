@@ -53,6 +53,9 @@ private:
 #endif
 };
 
+// Hands libpas's prefault thread the options that govern it, so it runs once Options are final.
+void configurePrefaultSupply();
+
 // A process whose cells live in a cage asks this allocator for the blocks of array storage alone, and may end before it has asked for as many
 // as the supply waits for. The cage's allocator has counted that many blocks of its own: the heap is ramping up.
 void didPassWarmUpStartThresholdInAnotherAllocator();

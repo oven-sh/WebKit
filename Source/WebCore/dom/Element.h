@@ -353,6 +353,7 @@ public:
 
     // This updates layout, and has custom handling for SVG.
     WEBCORE_EXPORT IntRect boundsInRootViewSpace();
+    IntRect boundsInMainFrameViewSpace();
     // This does not update layout, and uses absoluteBoundingBoxRect().
     WEBCORE_EXPORT IntRect boundingBoxInRootViewCoordinates() const;
     WEBCORE_EXPORT IntRect boundingBoxInMainFrameViewCoordinates() const;
@@ -457,7 +458,7 @@ public:
 
     virtual void copyNonAttributePropertiesFromElement(const Element&) { }
 
-    virtual RenderPtr<RenderElement> createElementRenderer(Style::ComputedStyle&&, const RenderTreePosition&);
+    virtual RenderPtr<RenderElement> createElementRenderer(UniqueRef<Style::ComputedStyle>&&, const RenderTreePosition&);
     virtual bool rendererIsNeeded(const Style::ComputedStyle&);
     virtual bool isReplaced(const Style::ComputedStyle* = nullptr) const { return false; }
 
@@ -487,6 +488,12 @@ public:
     void enqueueToUpgrade(JSCustomElementInterface&);
     NODELETE CustomElementReactionQueue* reactionQueue() const;
     CustomElementRegistry* customElementRegistry() const;
+    bool keepsCustomElementRegistryNull() const { return hasStateFlag(StateFlag::KeepsCustomElementRegistryNull); }
+    void setKeepsCustomElementRegistryNull()
+    {
+        ASSERT(usesNullCustomElementRegistry());
+        setStateFlag(StateFlag::KeepsCustomElementRegistryNull);
+    }
 
     CustomElementDefaultARIA& customElementDefaultARIA();
     NODELETE CustomElementDefaultARIA* customElementDefaultARIAIfExists() const;
@@ -858,6 +865,8 @@ public:
     // custom (not style based) renderers. This is expensive and should be avoided.
     // Elements newly added to the tree are also in this state.
     void invalidateStyleAndRenderersForSubtree();
+    // As above, for an element that moved to a different slot while staying in the tree.
+    void invalidateStyleAndRenderersAfterSlotReassignment();
     void invalidateRenderer();
 
     void invalidateStyleForAnimation();
@@ -1050,7 +1059,7 @@ private:
     void disconnectFromIntersectionObserversSlow(IntersectionObserverData&);
 
     void disconnectFromResizeObservers();
-    void disconnectFromResizeObserversSlow(ResizeObserverData&);
+    void disconnectFromResizeObserversSlow();
 
     // The cloneNode function is private so that non-virtual cloneElementWith/WithoutChildren are used instead.
     Ref<Node> cloneNodeInternal(Document&, CloningOperation, CustomElementRegistry*) const override;

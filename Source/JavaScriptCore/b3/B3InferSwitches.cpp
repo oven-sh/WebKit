@@ -488,7 +488,7 @@ private:
     std::optional<UseCountsWithoutUsingInstructions> m_useCounts;
     SwitchValue* m_grown { nullptr };
     unsigned m_numberOfGrownCases { 0 };
-    UncheckedKeyHashSet<int64_t, IntHash<int64_t>, WTF::SignedWithZeroKeyHashTraits<int64_t>> m_grownValues;
+    HashSet<int64_t, IntHash<int64_t>, WTF::SignedWithZeroKeyHashTraits<int64_t>> m_grownValues;
     IndexSet<BasicBlock*> m_grownTargets;
 };
 

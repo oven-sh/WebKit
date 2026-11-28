@@ -44,8 +44,8 @@ class RenderFlexibleBox : public RenderBlock {
     WTF_MAKE_TZONE_ALLOCATED(RenderFlexibleBox);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderFlexibleBox);
 public:
-    RenderFlexibleBox(Type, Element&, Style::ComputedStyle&&);
-    RenderFlexibleBox(Type, Document&, Style::ComputedStyle&&);
+    RenderFlexibleBox(Type, Element&, UniqueRef<Style::ComputedStyle>&&);
+    RenderFlexibleBox(Type, Document&, UniqueRef<Style::ComputedStyle>&&);
     virtual ~RenderFlexibleBox();
 
     using Direction = FlowDirection;
@@ -60,8 +60,6 @@ public:
 
     void styleDidChange(Style::Difference, const Style::ComputedStyle*) override;
     void flexItemWillBeRemoved(const RenderBox& flexItem);
-    bool hitTestChildren(const HitTestRequest&, HitTestResult&, const HitTestLocation&, const LayoutPoint& adjustedLocation, HitTestAction) override;
-    void paintChildren(PaintInfo& forSelf, const LayoutPoint&, PaintInfo& forChild, bool usePrintRect) override;
 
     bool willStretchItem(const RenderBox& item, LogicalBoxAxis containingAxis, StretchingMode = StretchingMode::Normal) const override;
 
@@ -88,6 +86,8 @@ public:
 
     NODELETE bool isComputingFlexBaseSizes() const;
     NODELETE bool isInCrossAxisStretchLayout() const;
+
+    const LayoutIntegration::FlexLayout& flexLayout() const LIFETIME_BOUND { return m_flexLayout; }
 
 protected:
     std::pair<LayoutUnit, LayoutUnit> computeIntrinsicLogicalWidths() const override;

@@ -35,17 +35,19 @@ messages -> RemoteGraphicsContext Stream {
     Scale(WebCore::FloatSize scale) StreamBatched
     SetCTM(WebCore::AffineTransform ctm) StreamBatched
     ConcatCTM(WebCore::AffineTransform ctm) StreamBatched
+    SaveTransform() StreamBatched
+    RestoreTransform() StreamBatched
     SetFillPackedColor(struct WebCore::PackedColor::RGBA color) StreamBatched
     SetFillColor(WebCore::Color color) StreamBatched
     SetFillCachedGradient(WebKit::RemoteGradientIdentifier identifier, WebCore::AffineTransform spaceTransform) StreamBatched
-    SetFillGradient(Ref<WebCore::Gradient> gradient, WebCore::AffineTransform spaceTransform) StreamBatched
+    SetFillGradient(Ref<const WebCore::Gradient> gradient, WebCore::AffineTransform spaceTransform) StreamBatched
     SetFillPatternNativeImage(WebCore::RenderingResourceIdentifier nativeImageIdentifier, WebCore::PatternParameters pattern) StreamBatched
     SetFillPatternImageBuffer(WebCore::RenderingResourceIdentifier imageBufferIdentifier, WebCore::PatternParameters pattern) StreamBatched
     SetFillRule(enum:bool WebCore::WindRule rule) StreamBatched
     SetStrokePackedColor(WebCore::PackedColor::RGBA color) StreamBatched
     SetStrokeColor(WebCore::Color color) StreamBatched
     SetStrokeCachedGradient(WebKit::RemoteGradientIdentifier identifier, WebCore::AffineTransform spaceTransform) StreamBatched
-    SetStrokeGradient(Ref<WebCore::Gradient> gradient, WebCore::AffineTransform spaceTransform) StreamBatched
+    SetStrokeGradient(Ref<const WebCore::Gradient> gradient, WebCore::AffineTransform spaceTransform) StreamBatched
     SetStrokePatternNativeImage(WebCore::RenderingResourceIdentifier nativeImageIdentifier, WebCore::PatternParameters pattern) StreamBatched
     SetStrokePatternImageBuffer(WebCore::RenderingResourceIdentifier imageBufferIdentifier, WebCore::PatternParameters pattern) StreamBatched
     SetStrokePackedColorAndThickness(WebCore::PackedColor::RGBA color, float thickness) StreamBatched
@@ -69,7 +71,7 @@ messages -> RemoteGraphicsContext Stream {
     ClipRoundedRect(WebCore::FloatRoundedRect rect) StreamBatched
     ClipOut(WebCore::FloatRect rect) StreamBatched
     ClipOutRoundedRect(WebCore::FloatRoundedRect rect) StreamBatched
-    ClipToImageBuffer(WebCore::RenderingResourceIdentifier renderingResourceIdentifier, WebCore::FloatRect destinationRect) StreamBatched
+    ClipToNativeImage(WebCore::RenderingResourceIdentifier imageIdentifier, WebCore::FloatRect destinationRect) StreamBatched
     ClipOutToPath(WebCore::Path path) StreamBatched
     ClipPath(WebCore::Path path, enum:bool WebCore::WindRule windRule) StreamBatched
     ClipCachedPath(WebKit::RemotePathImplIdentifier identifier, enum:bool WebCore::WindRule windRule) StreamBatched
@@ -94,6 +96,7 @@ messages -> RemoteGraphicsContext Stream {
     DrawLine(WebCore::FloatPoint point1, WebCore::FloatPoint point2) StreamBatched
     DrawLinesForText(WebCore::FloatPoint point, float thickness, std::span<const WebCore::FloatSegment> lineSegments, bool printing, bool doubleLines, enum:uint8_t WebCore::StrokeStyle strokeStyle) StreamBatched
     DrawDotsForDocumentMarker(WebCore::FloatRect rect, struct WebCore::DocumentMarkerLineStyle style) StreamBatched
+    DrawFreeformGradient(WebKit::RemoteFreeformGradientIdentifier identifier, WebCore::FloatRect destination) StreamBatched
     DrawMeshGradient(WebKit::RemoteMeshGradientIdentifier identifier, WebCore::FloatRect destination) StreamBatched
     DrawEllipse(WebCore::FloatRect rect) StreamBatched
     DrawPath(WebCore::Path path) StreamBatched
@@ -101,8 +104,8 @@ messages -> RemoteGraphicsContext Stream {
     DrawFocusRingRects(Vector<WebCore::FloatRect> rects, float outlineWidth, WebCore::Color color, float zoomFactor) StreamBatched
     FillRect(WebCore::FloatRect rect, enum:bool WebCore::RequiresClipToRect requiresClipToRect) StreamBatched
     FillRectWithColor(WebCore::FloatRect rect, WebCore::Color color) StreamBatched
-    FillRectWithGradient(WebCore::FloatRect rect, Ref<WebCore::Gradient> gradient) StreamBatched
-    FillRectWithGradientAndSpaceTransform(WebCore::FloatRect rect, Ref<WebCore::Gradient> gradient, WebCore::AffineTransform transform, enum:bool WebCore::RequiresClipToRect requiresClipToRect) StreamBatched
+    FillRectWithGradient(WebCore::FloatRect rect, Ref<const WebCore::Gradient> gradient) StreamBatched
+    FillRectWithGradientAndSpaceTransform(WebCore::FloatRect rect, Ref<const WebCore::Gradient> gradient, WebCore::AffineTransform transform, enum:bool WebCore::RequiresClipToRect requiresClipToRect) StreamBatched
     FillCompositedRect(WebCore::FloatRect rect, WebCore::Color color, enum:uint8_t WebCore::CompositeOperator op, enum:uint8_t WebCore::BlendMode blendMode) StreamBatched
     FillRoundedRect(WebCore::FloatRoundedRect rect, WebCore::Color color, enum:uint8_t WebCore::BlendMode blendMode) StreamBatched
     FillRectWithRoundedHole(WebCore::FloatRect rect, WebCore::FloatRoundedRect roundedHoleRect, WebCore::Color color) StreamBatched
@@ -119,6 +122,7 @@ messages -> RemoteGraphicsContext Stream {
     StrokeLine(struct WebCore::PathDataLine line) StreamBatched
     StrokeLinesWithColorAndThickness(std::span<const WebCore::PathDataLineColorThickness> lines) StreamBatched
     StrokeArc(struct WebCore::PathArc arc) StreamBatched
+    StrokeArcsWithColorAndThickness(std::span<const WebCore::PathArcColorThickness> arcs) StreamBatched
     StrokeClosedArc(struct WebCore::PathClosedArc closedArc) StreamBatched
     StrokeQuadCurve(struct WebCore::PathDataQuadCurve curve) StreamBatched
     StrokeBezierCurve(struct WebCore::PathDataBezierCurve curve) StreamBatched
@@ -127,10 +131,6 @@ messages -> RemoteGraphicsContext Stream {
     StrokeEllipse(WebCore::FloatRect rect) StreamBatched
     ClearRect(WebCore::FloatRect rect) StreamBatched
     DrawControlPart(Ref<WebCore::ControlPart> part, WebCore::FloatRoundedRect borderRect, float deviceScaleFactor, WebCore::ControlStyle style) StreamBatched
-#if USE(CG)
-    ApplyStrokePattern() StreamBatched
-    ApplyFillPattern() StreamBatched
-#endif
     ApplyDeviceScaleFactor(float scaleFactor) StreamBatched
 
     BeginPage(WebCore::FloatRect pageRect)

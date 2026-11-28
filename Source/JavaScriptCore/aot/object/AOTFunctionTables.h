@@ -92,7 +92,7 @@ struct FunctionTables {
     }
     NativeExecutable* executableOf(FunctionID) const;
 
-    using SourceTextMap = UncheckedKeyHashMap<FunctionID, Weak<JSString>>;
+    using SourceTextMap = HashMap<FunctionID, Weak<JSString>>;
 
     const uint64_t* words;
     std::array<Strong<JSCell>, numberOfExecutables> executables;

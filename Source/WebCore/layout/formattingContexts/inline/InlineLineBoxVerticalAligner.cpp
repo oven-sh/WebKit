@@ -34,8 +34,7 @@
 #include "StyleComputedStyle+GettersInlines.h"
 #include "StyleComputedStyle+InitialInlines.h"
 
-namespace WebCore {
-namespace Layout {
+namespace WebCore::Layout {
 
 LineBoxVerticalAligner::LineBoxVerticalAligner(const InlineFormattingContext& inlineFormattingContext)
     : m_inlineFormattingContext(inlineFormattingContext)
@@ -62,7 +61,7 @@ InlineLayoutUnit LineBoxVerticalAligner::computeLogicalHeightAndAlign(LineBox& l
                     return false;
                 // Baseline aligned, non-stretchy direct children are considered to be simple for now.
                 CheckedRef layoutBox = inlineLevelBox.layoutBox();
-                if (&layoutBox->parent() != &rootInlineBox.layoutBox() || !WTF::holdsAlternative<CSS::Keyword::Baseline>(inlineLevelBox.verticalAlign()))
+                if (&layoutBox->parent() != &rootInlineBox.layoutBox() || !WTF::holdsAlternative<CSS::Keyword::Baseline>(inlineLevelBox.verticalAlign()) || inlineLevelBox.alignmentBaselineOffset())
                     return false;
 
                 if (inlineLevelBox.isAtomicInlineBox()) {
@@ -148,7 +147,7 @@ InlineLayoutUnit LineBoxVerticalAligner::logicalTopOffsetFromParentBaseline(cons
     auto ascent = isInlineLevelBoxAlignment == IsInlineLevelBoxAlignment::Yes ? inlineLevelBox.ascent() : inlineLevelBox.layoutBounds().ascent;
     auto height = isInlineLevelBoxAlignment == IsInlineLevelBoxAlignment::Yes ? inlineLevelBox.logicalHeight() : inlineLevelBox.layoutBounds().height();
 
-    return WTF::switchOn(inlineLevelBox.verticalAlign(),
+    auto topOffsetFromParentBaseline = WTF::switchOn(inlineLevelBox.verticalAlign(),
         [&](const CSS::Keyword::Baseline&) -> InlineLayoutUnit {
             return ascent;
         },
@@ -188,6 +187,7 @@ InlineLayoutUnit LineBoxVerticalAligner::logicalTopOffsetFromParentBaseline(cons
             return baselineOffset + ascent;
         }
     );
+    return topOffsetFromParentBaseline + inlineLevelBox.alignmentBaselineOffset();
 }
 
 LineBoxVerticalAligner::LineBoxAlignmentContent LineBoxVerticalAligner::computeLineBoxLogicalHeight(LineBox& lineBox) const
@@ -521,5 +521,3 @@ InlineLayoutUnit LineBoxVerticalAligner::adjustForAnnotationIfNeeded(LineBox& li
 }
 
 }
-}
-

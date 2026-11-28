@@ -151,7 +151,7 @@ void LibWebRTCNetworkManager::networksChanged(const Vector<RTCNetwork>& networks
 
 void LibWebRTCNetworkManager::networksChanged(const Vector<RTCNetwork>& networks, const RTCNetwork::IPAddress& ipv4, const RTCNetwork::IPAddress& ipv6, bool forceSignaling)
 {
-    ASSERT(isMainRunLoop());
+    RELEASE_ASSERT(isMainRunLoop());
 
     Vector<RTCNetwork> filteredNetworks;
     if (m_enableEnumeratingAllNetworkInterfaces)
@@ -210,7 +210,7 @@ const String& LibWebRTCNetworkManager::interfaceNameForTesting() const
 
 void LibWebRTCNetworkManager::signalUsedInterface(String&& name)
 {
-    ASSERT(isMainRunLoop());
+    RELEASE_ASSERT(isMainRunLoop());
     if (!m_allowedInterfaces.add(WTF::move(name)).isNewEntry || m_useMDNSCandidates || !m_enableEnumeratingVisibleNetworkInterfaces)
         return;
 
@@ -241,7 +241,7 @@ void LibWebRTCNetworkManager::CreateNameForAddress(const webrtc::IPAddress& addr
             WebCore::LibWebRTCProvider::callOnWebRTCNetworkThread([address, callback = WTF::move(callback), name = WTF::move(name).isolatedCopy(), error] {
                 RELEASE_LOG_ERROR_IF(error, WebRTC, "MDNS registration of a host candidate failed with error %hhu", std::to_underlying(*error));
                 // In case of error, we provide the name to let gathering complete.
-                callback(address, std::string_view { byteCast<char>(name.utf8().span()) });
+                callback(address, std::string_view { byteCast<char>(makeUTF8CString(name).span()) });
             });
         });
     });

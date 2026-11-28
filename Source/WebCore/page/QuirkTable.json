@@ -1,4 +1,18 @@
 {
+    "constants": {
+        "userAgents": {
+            "chrome": {
+                "mac": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+                "v143Mac": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+            },
+            "safari": {
+                "v18_6Mac": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Safari/605.1.15"
+            }
+        },
+        "styleSheets": {
+            "expediaGroupMenuAnimation": ".uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open { animation: menu-grow-left 0.18s 0s, menu-fade-in 0.06s 0.06s both; }"
+        }
+    },
     "quirks": [
         {
             "bugs": ["rdar://116491386"],
@@ -19,7 +33,7 @@
         {
             "bugs": ["https://webkit.org/b/317375"],
             "matches": ["*://*.airindiaexpress.com/*"],
-            "behaviors": [{ "id": "NeedsAirIndiaExpressLayeringQuirk" }]
+            "behaviors": [{ "id": "NeedsStyleSheetInjectedQuirk", "styleSheet": ".new-trip-type-and-guest-selection-container { z-index: 2; }" }]
         },
         {
             "bugs": ["rdar://49124313"],
@@ -44,7 +58,7 @@
             "behaviors": [
                 {
                     "id": "NeedsUserAgentStringOverrideQuirk",
-                    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+                    "userAgent": { "constant": "userAgents.chrome.v143Mac" }
                 }
             ]
         },
@@ -64,12 +78,17 @@
             "behaviors": [{ "id": "ShouldDisableScrollAnchoringQuirk" }]
         },
         {
+            "bugs": ["rdar://192546531"],
+            "matches": ["*://*.arbor-technology.com/*"],
+            "behaviors": [{ "id": "ShouldDisableCSSSizeShorthandQuirk" }]
+        },
+        {
             "bugs": ["rdar://157636545"],
             "matches": ["*://studio.atomm.com/*"],
             "behaviors": [
                 {
                     "id": "NeedsUserAgentStringOverrideQuirk",
-                    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36"
+                    "userAgent": { "constant": "userAgents.chrome.mac" }
                 }
             ]
         },
@@ -109,12 +128,10 @@
         {
             "bugs": ["rdar://126494734", "rdar://157499149"],
             "matches": ["*://*.bbc.co.uk/*", "*://*.bbc.com/*"],
-            "behaviors": [{ "id": "ReturnNullPictureInPictureElementDuringFullscreenChangeQuirk" }]
-        },
-        {
-            "bugs": ["rdar://162447105"],
-            "matches": ["*://*.bbc.co.uk/*", "*://*.bbc.com/*"],
-            "behaviors": [{ "id": "NeedsDarkAppearanceWithoutColorSchemeQuirk" }]
+            "behaviors": [
+                { "id": "ReturnNullPictureInPictureElementDuringFullscreenChangeQuirk" },
+                { "id": "NeedsPerDocumentAutoplayBehaviorQuirk" }
+            ]
         },
         {
             "bugs": ["rdar://136235936"],
@@ -132,7 +149,7 @@
             "behaviors": [
                 {
                     "id": "NeedsUserAgentStringOverrideQuirk",
-                    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Safari/605.1.15"
+                    "userAgent": { "constant": "userAgents.safari.v18_6Mac" }
                 }
             ]
         },
@@ -184,7 +201,7 @@
             "behaviors": [
                 {
                     "id": "NeedsUserAgentStringOverrideQuirk",
-                    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36"
+                    "userAgent": { "constant": "userAgents.chrome.mac" }
                 }
             ]
         },
@@ -281,7 +298,7 @@
             "behaviors": [
                 {
                     "id": "NeedsUserAgentStringOverrideQuirk",
-                    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36"
+                    "userAgent": { "constant": "userAgents.chrome.mac" }
                 }
             ]
         },
@@ -299,7 +316,7 @@
             "behaviors": [
                 {
                     "id": "NeedsUserAgentStringOverrideQuirk",
-                    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36"
+                    "userAgent": { "constant": "userAgents.chrome.mac" }
                 }
             ]
         },
@@ -310,7 +327,7 @@
                 { "id": "NeedsCustomUserAgentData" },
                 {
                     "id": "NeedsUserAgentStringOverrideQuirk",
-                    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+                    "userAgent": { "constant": "userAgents.chrome.mac" },
                     "bugs": ["rdar://158721595"]
                 }
             ]
@@ -342,7 +359,7 @@
             "behaviors": [
                 {
                     "id": "NeedsUserAgentStringOverrideQuirk",
-                    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36"
+                    "userAgent": { "constant": "userAgents.chrome.mac" }
                 }
             ]
         },
@@ -391,12 +408,20 @@
             ]
         },
         {
+            "bugs": ["rdar://174765438"],
+            "comment": "Media volume is locked on iPhone, so the player's volume slider does nothing. Hide it, the mute button keeps working.",
+            "matches": ["*://*.espn.com/*"],
+            "environment": "SmallScreen",
+            "available": "iOS",
+            "behaviors": [{ "id": "NeedsStyleSheetInjectedQuirk", "styleSheet": ":root { --volume-bar-container-display: none !important; }" }]
+        },
+        {
             "bugs": ["rdar://59424306"],
             "matches": ["*://tool.european-calculator.eu/*"],
             "behaviors": [
                 {
                     "id": "NeedsUserAgentStringOverrideQuirk",
-                    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36"
+                    "userAgent": { "constant": "userAgents.chrome.mac" }
                 }
             ]
         },
@@ -417,8 +442,9 @@
             ],
             "behaviors": [
                 {
-                    "id": "NeedsExpediaGroupAnimationQuirk",
-                    "elementSelector": ".uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open"
+                    "id": "NeedsStyleSheetInjectedQuirk",
+                    "comment": "Reset animation styles that are mistakenly overridden.",
+                    "styleSheet": { "constant": "styleSheets.expediaGroupMenuAnimation" }
                 }
             ]
         },
@@ -427,8 +453,9 @@
             "matches": ["*://*.ebookers.*/*"],
             "behaviors": [
                 {
-                    "id": "NeedsExpediaGroupAnimationQuirk",
-                    "elementSelector": ".uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open"
+                    "id": "NeedsStyleSheetInjectedQuirk",
+                    "comment": "Reset animation styles that are mistakenly overridden.",
+                    "styleSheet": { "constant": "styleSheets.expediaGroupMenuAnimation" }
                 }
             ]
         },
@@ -437,8 +464,9 @@
             "matches": ["*://*.expedia.*/*"],
             "behaviors": [
                 {
-                    "id": "NeedsExpediaGroupAnimationQuirk",
-                    "elementSelector": ".uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open"
+                    "id": "NeedsStyleSheetInjectedQuirk",
+                    "comment": "Reset animation styles that are mistakenly overridden.",
+                    "styleSheet": { "constant": "styleSheets.expediaGroupMenuAnimation" }
                 }
             ]
         },
@@ -451,7 +479,11 @@
         {
             "matches": ["*://*.facebook.com/*"],
             "behaviors": [
-                { "id": "NeedsFacebookRemoveNotSupportedQuirk", "bugs": ["rdar://100871402"] },
+                {
+                    "id": "NeedsStyleSheetInjectedQuirk",
+                    "bugs": ["rdar://100871402", "https://webkit.org/b/295071"],
+                    "styleSheet": "div.xnw9j1v { display: none; }"
+                },
                 {
                     "id": "ShouldDispatchSimulatedMouseEventsAssumeDefaultPreventedQuirk",
                     "elementSelector": "[role=slider]",
@@ -481,7 +513,7 @@
             "behaviors": [
                 {
                     "id": "NeedsUserAgentStringOverrideQuirk",
-                    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+                    "userAgent": { "constant": "userAgents.chrome.v143Mac" }
                 }
             ]
         },
@@ -496,12 +528,6 @@
             "behaviors": [{ "id": "RequiresUserGestureToPauseInPictureInPictureQuirk" }]
         },
         {
-            "bugs": ["https://webkit.org/b/303622"],
-            "comment": "FIXME: Remove as soon as nvidia adjusts the site for Safari. https://webkit.org/b/303718",
-            "matches": ["*://play.geforcenow.com/*"],
-            "behaviors": [{ "id": "NeedsStyleSheetInjectedQuirk", "styleSheet": "div.cdk-overlay-container, div.unsupported-scenario-container { display: none !important; }" }]
-        },
-        {
             "bugs": ["https://webkit.org/b/319011", "rdar://181825035"],
             "matches": ["*://*.github.com/*"],
             "behaviors": [{ "id": "NeedsChromeCompatibilityUserAgentQuirk", "chromeCompatibilityVersion": "151" }]
@@ -510,6 +536,12 @@
             "bugs": ["rdar://102227302"],
             "matches": ["*://*.gizmodo.com/*"],
             "behaviors": [{ "id": "NeedsFullscreenDisplayNoneQuirk" }]
+        },
+        {
+            "bugs": ["rdar://162717044"],
+            "comment": "The author bio sits flush against an overflow:hidden column, which clips the auto focus ring drawn outside the border box.",
+            "matches": ["*://*.goodreads.com/*"],
+            "behaviors": [{ "id": "NeedsStyleSheetInjectedQuirk", "styleSheet": ".TruncatedContent:focus-visible, .TruncatedContent__text:focus-visible { outline-offset: inset; }" }]
         },
         {
             "bugs": ["rdar://57670064", "rdar://59893415"],
@@ -536,9 +568,19 @@
                     "bugs": ["rdar://152194074"]
                 },
                 { "id": "NeedsGoogleMapsMagnificationWheelDeltaScalingQuirk", "bugs": ["rdar://185857498"] },
-                { "id": "NeedsGoogleMapsScrollingQuirk", "bugs": ["rdar://67358928"] },
                 { "id": "ShouldAvoidResizingWhenInputViewBoundsChangeQuirk", "bugs": ["https://webkit.org/b/214945"] },
                 { "id": "ShouldDispatchSimulatedMouseEventsQuirk", "bugs": ["rdar://49124313"] }
+            ]
+        },
+        {
+            "bugs": ["rdar://67358928"],
+            "matches": ["*://*.google.*/maps", "*://*.google.*/maps?*", "*://*.google.*/maps/*"],
+            "available": "iOSFamily",
+            "behaviors": [
+                {
+                    "id": "NeedsStyleSheetInjectedQuirk",
+                    "styleSheet": "body.PUtLdf { touch-action: auto; }"
+                }
             ]
         },
         {
@@ -559,6 +601,11 @@
                 {
                     "id": "IsTouchBarUpdateSuppressedForHiddenContentEditableQuirk",
                     "bugs": ["https://webkit.org/b/161984"]
+                },
+                {
+                    "id": "MayNeedToIgnoreContentObservation",
+                    "elementSelector": ".navigation-item-list, .navigation-item-list *",
+                    "bugs": ["rdar://54102411"]
                 },
                 {
                     "id": "NeedsGoogleDocsNavigationWidgetScrollQuirk",
@@ -597,6 +644,21 @@
             ]
         },
         {
+            "bugs": ["rdar://73582895"],
+            "comment": "home.nest.com checks the Google session from an accounts.google.com iframe. Treating the pair as a login pair keeps the popup sign-in's storage access across tabs.",
+            "matches": ["*://*.nest.com/*"],
+            "behaviors": [
+                {
+                    "id": "NeedsSingleOwnerLoginStorageAccessQuirk",
+                    "secondaryURL": ["*://*.google.com/*"]
+                },
+                {
+                    "id": "NeedsStorageAccessOnLoginButtonClickQuirk",
+                    "elementSelector": "[data-test=\"google-button-login\"], [data-test=\"google-button-login\"] *"
+                }
+            ]
+        },
+        {
             "bugs": ["rdar://49403416"],
             "matches": ["*://mail.google.com/*"],
             "behaviors": [{ "id": "NeedsGMailOverflowScrollQuirk" }]
@@ -631,7 +693,7 @@
             "behaviors": [
                 {
                     "id": "NeedsUserAgentStringOverrideQuirk",
-                    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36"
+                    "userAgent": { "constant": "userAgents.chrome.mac" }
                 }
             ]
         },
@@ -646,7 +708,7 @@
             "behaviors": [
                 {
                     "id": "NeedsUserAgentStringOverrideQuirk",
-                    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Safari/605.1.15"
+                    "userAgent": { "constant": "userAgents.safari.v18_6Mac" }
                 }
             ]
         },
@@ -674,7 +736,7 @@
             "behaviors": [
                 {
                     "id": "NeedsUserAgentStringOverrideQuirk",
-                    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36"
+                    "userAgent": { "constant": "userAgents.chrome.mac" }
                 }
             ]
         },
@@ -750,6 +812,17 @@
             ]
         },
         {
+            "bugs": ["rdar://154776801"],
+            "matches": ["*://*.imdb.com/*"],
+            "behaviors": [
+                { "id": "NeedsStyleSheetInjectedQuirk", "styleSheet": "#inline50_wrapper, #inline50_wrapper * { max-width: 100%; }" },
+                {
+                    "id": "NeedsScriptToEvaluateBeforeRunningScriptFromURLQuirk",
+                    "script": "(function() {\n    let advertisement = document.getElementById('inline50_responsive_wrapper');\n    let observed = Symbol.for('WebKitIMDbStaleAdQuirk');\n    if (!advertisement || advertisement[observed] || window.__webkitIMDbStaleAdQuirk !== undefined)\n        return;\n    advertisement[observed] = true;\n    new ResizeObserver(() => {\n        let api = window.ad_utils?.responsiveAdAPI;\n        if (window.__webkitIMDbStaleAdQuirk !== undefined || !api || api.previousWindowWidth === Infinity)\n            return;\n        if (api.getLastAdResponse()?.slots?.inline50?.creativeMetadata?.creativeWidth > document.documentElement.clientWidth) {\n            api.previousWindowWidth = Infinity;\n            dispatchEvent(new Event('resize'));\n        }\n    }).observe(advertisement);\n})();"
+                }
+            ]
+        },
+        {
             "bugs": ["rdar://113978106"],
             "matches": ["*://www.indiatimes.com/*"],
             "behaviors": [{ "id": "NeedsIPadMiniUserAgentQuirk" }]
@@ -760,7 +833,7 @@
             "behaviors": [
                 {
                     "id": "NeedsUserAgentStringOverrideQuirk",
-                    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36"
+                    "userAgent": { "constant": "userAgents.chrome.mac" }
                 }
             ]
         },
@@ -785,7 +858,7 @@
                 },
                 {
                     "id": "NeedsUserAgentStringOverrideQuirk",
-                    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36"
+                    "userAgent": { "constant": "userAgents.chrome.mac" }
                 }
             ]
         },
@@ -795,7 +868,7 @@
             "behaviors": [
                 {
                     "id": "NeedsUserAgentStringOverrideQuirk",
-                    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36"
+                    "userAgent": { "constant": "userAgents.chrome.mac" }
                 }
             ]
         },
@@ -805,7 +878,7 @@
             "behaviors": [
                 {
                     "id": "NeedsUserAgentStringOverrideQuirk",
-                    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36"
+                    "userAgent": { "constant": "userAgents.chrome.mac" }
                 }
             ]
         },
@@ -850,7 +923,7 @@
                 },
                 {
                     "id": "NeedsUserAgentStringOverrideQuirk",
-                    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+                    "userAgent": { "constant": "userAgents.chrome.v143Mac" }
                 },
                 { "id": "ShouldAllowTouchMoveToChangeSelectionQuirk", "bugs": ["rdar://151851274"] }
             ]
@@ -985,7 +1058,6 @@
             "matches": ["*://*.netflix.com/*"],
             "behaviors": [
                 { "id": "NeedsSeekingSupportDisabledQuirk", "bugs": ["https://webkit.org/b/173030"] },
-                { "id": "NeedsNetflixVolumeSliderQuirk", "bugs": ["rdar://178545839"] },
                 {
                     "id": "ShouldDispatchPointerOutAndLeaveAfterHandlingSyntheticClick",
                     "bugs": ["https://webkit.org/b/304608"]
@@ -997,6 +1069,17 @@
             "matches": ["*://*.netflix.com/*"],
             "available": "vision",
             "behaviors": [{ "id": "NeedsNowPlayingFullscreenSwapQuirk" }]
+        },
+        {
+            "bugs": ["rdar://178545839"],
+            "matches": ["*://*.netflix.com/*"],
+            "available": "iOS || vision",
+            "behaviors": [
+                {
+                    "id": "NeedsStyleSheetInjectedQuirk",
+                    "styleSheet": "div[data-uia=\"scrubber\"][aria-orientation=\"vertical\"] { touch-action: none; }"
+                }
+            ]
         },
         {
             "matches": ["*://*.nfl.com/*"],
@@ -1032,6 +1115,11 @@
             ]
         },
         {
+            "bugs": ["rdar://192538351"],
+            "matches": ["*://*.purpletie.com/*"],
+            "behaviors": [{ "id": "ShouldDisableCSSSizeShorthandQuirk" }]
+        },
+        {
             "bugs": ["rdar://55629493"],
             "matches": ["*://*.ralphlauren.com/*"],
             "behaviors": [{ "id": "ShouldIgnoreAriaForFastPathContentObservationCheckQuirk" }]
@@ -1049,9 +1137,21 @@
             "behaviors": [{ "id": "ShouldDisableScrollAnchoringQuirk", "documentSelector": "#sink-it-back-to-top" }]
         },
         {
+            "bugs": ["rdar://192757830"],
+            "matches": ["*://*.reddit.com/*"],
+            "available": "iOS",
+            "environment": "SmallScreen",
+            "behaviors": [{ "id": "ShouldDisableElementFullscreenQuirk" }]
+        },
+        {
             "bugs": ["rdar://61733101"],
             "matches": ["*://*.roblox.com/*"],
             "behaviors": [{ "id": "NeedsIPadMiniUserAgentQuirk" }]
+        },
+        {
+            "bugs": ["rdar://192472804"],
+            "matches": ["*://*.routine.co/*"],
+            "behaviors": [{ "id": "ShouldDisableCSSSizeShorthandQuirk" }]
         },
         {
             "bugs": ["rdar://60314791"],
@@ -1059,7 +1159,7 @@
             "behaviors": [
                 {
                     "id": "NeedsUserAgentStringOverrideQuirk",
-                    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36"
+                    "userAgent": { "constant": "userAgents.chrome.mac" }
                 }
             ]
         },
@@ -1134,7 +1234,7 @@
             "behaviors": [
                 {
                     "id": "NeedsUserAgentStringOverrideQuirk",
-                    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36"
+                    "userAgent": { "constant": "userAgents.chrome.mac" }
                 }
             ]
         },
@@ -1185,7 +1285,7 @@
             "behaviors": [
                 {
                     "id": "NeedsUserAgentStringOverrideQuirk",
-                    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36"
+                    "userAgent": { "constant": "userAgents.chrome.mac" }
                 }
             ]
         },
@@ -1216,7 +1316,7 @@
             "behaviors": [
                 {
                     "id": "NeedsUserAgentStringOverrideQuirk",
-                    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36"
+                    "userAgent": { "constant": "userAgents.chrome.mac" }
                 }
             ]
         },
@@ -1244,7 +1344,7 @@
                 { "id": "ShouldComputeSimulatedMouseEventMovementDeltaQuirk", "bugs": ["rdar://174179805"] },
                 {
                     "id": "NeedsUserAgentStringOverrideQuirk",
-                    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Safari/605.1.15",
+                    "userAgent": { "constant": "userAgents.safari.v18_6Mac" },
                     "bugs": ["rdar://154893648"]
                 },
                 {
@@ -1253,9 +1353,9 @@
                     "bugs": ["rdar://148759791"]
                 },
                 {
-                    "id": "NeedsTikTokCaptchaSliderTouchActionQuirk",
-                    "elementSelector": "#secsdk-captcha-drag-wrapper",
-                    "bugs": ["rdar://183445905"]
+                    "id": "NeedsStyleSheetInjectedQuirk",
+                    "bugs": ["rdar://183445905"],
+                    "styleSheet": "#secsdk-captcha-drag-wrapper { touch-action: none; }"
                 }
             ]
         },
@@ -1290,7 +1390,7 @@
             "behaviors": [
                 {
                     "id": "NeedsUserAgentStringOverrideQuirk",
-                    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36"
+                    "userAgent": { "constant": "userAgents.chrome.mac" }
                 }
             ]
         },
@@ -1324,6 +1424,13 @@
             "behaviors": [{ "id": "NeedsFormControlToBeMouseFocusableQuirk" }]
         },
         {
+            "bugs": ["rdar://192913439"],
+            "matches": ["*://*.weather.com/*", "*://weather.com/*"],
+            "environment": "SmallScreen",
+            "available": "iOS",
+            "behaviors": [{ "id": "ShouldDisableElementFullscreenQuirk" }]
+        },
+        {
             "matches": ["*://*.webex.com/*"],
             "available": "appleTV",
             "environment": "HomeView",
@@ -1333,7 +1440,12 @@
                     "script": "Object.defineProperty(window, 'Touch', { get: () => undefined });",
                     "secondaryURL": ["*://*/pushdownload.*", "*://*/*/pushdownload.*"]
                 },
-                { "id": "NeedsWebExScrollabilityQuirk", "bugs": ["rdar://143715630"] }
+                {
+                    "id": "NeedsStyleSheetInjectedQuirk",
+                    "bugs": ["rdar://143715630"],
+                    "comment": "Keep the page scrollable and drop the width constraints on #wrapper so the desktop layout fits the viewport.",
+                    "styleSheet": "body, #wrapper { overflow: auto; } #wrapper { min-width: auto; max-width: none; }"
+                }
             ]
         },
         {
@@ -1401,9 +1513,18 @@
             ]
         },
         {
+            "bugs": ["rdar://189631518"],
+            "matches": ["*://news.yahoo.co.jp/*"],
+            "behaviors": [{ "id": "ShouldDisableCSSSizeShorthandQuirk" }]
+        },
+        {
             "matches": ["*://*.yahoo.*/*"],
             "behaviors": [
-                { "id": "NeedsYahooVolumeSliderQuirk", "bugs": ["rdar://170502516"] },
+                {
+                    "id": "NeedsStyleSheetInjectedQuirk",
+                    "bugs": ["rdar://170502516"],
+                    "styleSheet": "div.vjs-volume-control { min-height: 100%; align-items: center; }"
+                },
                 { "id": "ShouldAvoidStartingSelectionOnMouseDownOverPointerCursor", "bugs": ["rdar://136767005"] }
             ]
         },
@@ -1434,6 +1555,20 @@
             "bugs": ["rdar://127246368"],
             "matches": ["*://news.ycombinator.com/*"],
             "behaviors": [{ "id": "ShouldIgnoreTextAutoSizingQuirk" }]
+        },
+        {
+            "matches": ["*://*.google.*/*"],
+            "behaviors": [
+                {
+                    "id": "NeedsStorageAccessForGoogleMyAccountProfilePictureIframeQuirk",
+                    "secondaryURL": ["*://myaccount.google.com/*?*startPath=profile-picture*"]
+                }
+            ]
+        },
+        {
+            "matches": ["*://login.microsoftonline.com/*?*"],
+            "excludeMatches": ["*://login.microsoftonline.com/*redirect_uri=https%3A%2F%2Fteams.microsoft.com*"],
+            "behaviors": [{ "id": "ShouldSkipStorageAccessIframeDomainListQuirk" }]
         },
         {
             "bugs": ["rdar://64549429"],

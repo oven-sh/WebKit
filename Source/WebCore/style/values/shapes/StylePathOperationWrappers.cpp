@@ -41,8 +41,7 @@
 #include "StylePrimitiveNumericTypes+Conversions.h"
 #include "StylePrimitiveNumericTypes+Logging.h"
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 // MARK: - Conversion
 
@@ -157,6 +156,8 @@ NODELETE static std::optional<AcceleratedEffectCoordBox> toAcceleratedEffectCoor
         return AcceleratedEffectCoordBox::MarginBox;
     case CSSBoxType::BorderBox:
         return AcceleratedEffectCoordBox::BorderBox;
+    case CSSBoxType::HalfBorderBox:
+        return AcceleratedEffectCoordBox::HalfBorderBox;
     case CSSBoxType::PaddingBox:
         return AcceleratedEffectCoordBox::PaddingBox;
     case CSSBoxType::ContentBox:
@@ -229,5 +230,4 @@ WTF::TextStream& operator<<(WTF::TextStream& ts, const BoxPath& value)
     return ts;
 }
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

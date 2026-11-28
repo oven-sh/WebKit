@@ -30,7 +30,6 @@
 
 #include "BufferIdentifierSet.h"
 #include "GPUConnectionToWebProcess.h"
-#include "ImageBufferRemoteDisplayListBackend.h"
 #include "ImageBufferShareableBitmapBackend.h"
 #include "Logging.h"
 #include "PrepareBackingStoreBuffersData.h"
@@ -104,8 +103,13 @@ RemoteRenderingBackendProxy::~RemoteRenderingBackendProxy()
 
 void RemoteRenderingBackendProxy::ensureGPUProcessConnection()
 {
-    if (m_connection)
+    if (m_connection && m_gpuProcessIPCConnection && m_gpuProcessIPCConnection->isValid())
         return;
+    if (m_connection) {
+        gpuProcessConnectionDidClose();
+        if (m_connection)
+            return;
+    }
     constexpr unsigned connectionBufferSizeLog2 = 21u;
     auto connectionPair = IPC::StreamClientConnection::create(connectionBufferSizeLog2, WebProcess::singleton().gpuProcessTimeoutDuration());
     if (!connectionPair)
@@ -181,10 +185,29 @@ bool RemoteRenderingBackendProxy::isCurrent() const
     return dispatcher && dispatcher->isCurrent();
 }
 
+void RemoteRenderingBackendProxy::gpuProcessConnectionDidClose(IPC::Connection& connection)
+{
+    assertIsCurrent(*this);
+    if (m_gpuProcessIPCConnection != &connection)
+        return;
+    gpuProcessConnectionDidClose();
+}
+
 void RemoteRenderingBackendProxy::didClose(IPC::Connection&)
+{
+    gpuProcessConnectionDidClose();
+}
+
+void RemoteRenderingBackendProxy::gpuProcessConnectionDidClose()
 {
     if (!m_connection)
         return;
+    Ref protectedThis { *this };
+    if (RefPtr gpuProcessIPCConnection = m_gpuProcessIPCConnection) {
+        ensureOnMainRunLoop([gpuProcessIPCConnection = WTF::move(gpuProcessIPCConnection)] {
+            WebProcess::singleton().gpuProcessConnectionDidClose(*gpuProcessIPCConnection);
+        });
+    }
     disconnectGPUProcess();
     m_remoteResourceCacheProxy->disconnect();
 
@@ -277,12 +300,9 @@ RefPtr<RemoteImageBufferProxy> RemoteRenderingBackendProxy::createImageBuffer(co
             imageBuffer = RemoteImageBufferProxy::create<ImageBufferShareableBitmapBackend>(parameters, *this, creationContext);
         break;
 
-    case RenderingMode::DisplayList:
-        imageBuffer = RemoteImageBufferProxy::create<ImageBufferRemoteDisplayListBackend>(parameters, *this);
-        break;
-
     case RenderingMode::PDFDocument:
-        // FIXME: PDFDocument is only meaningful for a GraphicsContext. Add a type-specific rendering mode, such as ImageBufferRenderingMode, so that it cannot be passed here.
+    case RenderingMode::DisplayList:
+        // FIXME: PDFDocument and DisplayList are only meaningful for a GraphicsContext. Add a type-specific rendering mode, such as ImageBufferRenderingMode, so that they cannot be passed here.
         RELEASE_ASSERT_NOT_REACHED();
     }
 
@@ -364,10 +384,9 @@ static std::unique_ptr<ImageBufferBackend> createBackendForSerializedBuffer(cons
         if (handle && std::holds_alternative<ShareableBitmap::Handle>(*handle))
             return ImageBufferShareableBitmapBackend::create(parameters, std::get<ShareableBitmap::Handle>(WTF::move(*handle)));
         return nullptr;
-    case RenderingMode::DisplayList:
-        return ImageBufferRemoteDisplayListBackend::create(parameters);
     case RenderingMode::PDFDocument:
-        // FIXME: PDFDocument is only meaningful for a GraphicsContext. Add a type-specific rendering mode, such as ImageBufferRenderingMode, so that it cannot be passed here.
+    case RenderingMode::DisplayList:
+        // FIXME: PDFDocument and DisplayList are only meaningful for a GraphicsContext. Add a type-specific rendering mode, such as ImageBufferRenderingMode, so that they cannot be passed here.
         RELEASE_ASSERT_NOT_REACHED();
     }
     return nullptr;
@@ -419,9 +438,9 @@ void RemoteRenderingBackendProxy::createSnapshot(RemoteSnapshotIdentifier snapsh
     sendSync(Messages::RemoteRenderingBackend::CreateSnapshot(snapshotIdentifier, rootFrameIdentifier, size));
 }
 
-UniqueRef<RemoteSnapshotRecorderProxy> RemoteRenderingBackendProxy::createSnapshotRecorder(const FloatRect& initialClip, RemoteSnapshotIdentifier snapshotIdentifier, RenderingMode renderingMode)
+UniqueRef<RemoteSnapshotRecorderProxy> RemoteRenderingBackendProxy::createSnapshotRecorder(const FloatRect& initialClip, const FloatSize& scale, RemoteSnapshotIdentifier snapshotIdentifier, RenderingMode renderingMode)
 {
-    auto recorder = makeUniqueRef<RemoteSnapshotRecorderProxy>(initialClip, renderingMode, *this);
+    auto recorder = makeUniqueRef<RemoteSnapshotRecorderProxy>(initialClip, scale, renderingMode, *this);
     send(Messages::RemoteRenderingBackend::CreateSnapshotRecorder(recorder->identifier(), snapshotIdentifier));
     return recorder;
 }
@@ -544,7 +563,7 @@ void RemoteRenderingBackendProxy::releaseFontCustomPlatformData(RenderingResourc
     send(Messages::RemoteRenderingBackend::ReleaseFontCustomPlatformData(identifier));
 }
 
-void RemoteRenderingBackendProxy::cacheGradient(Ref<Gradient>&& gradient, RemoteGradientIdentifier identifier)
+void RemoteRenderingBackendProxy::cacheGradient(Ref<const Gradient>&& gradient, RemoteGradientIdentifier identifier)
 {
     send(Messages::RemoteRenderingBackend::CacheGradient(WTF::move(gradient), identifier));
 }
@@ -554,6 +573,18 @@ void RemoteRenderingBackendProxy::releaseGradient(RemoteGradientIdentifier ident
     if (!m_connection)
         return;
     send(Messages::RemoteRenderingBackend::ReleaseGradient(identifier));
+}
+
+void RemoteRenderingBackendProxy::cacheFreeformGradient(Ref<FreeformGradient>&& gradient, RemoteFreeformGradientIdentifier identifier)
+{
+    send(Messages::RemoteRenderingBackend::CacheFreeformGradient(WTF::move(gradient), identifier));
+}
+
+void RemoteRenderingBackendProxy::releaseFreeformGradient(RemoteFreeformGradientIdentifier identifier)
+{
+    if (!m_connection)
+        return;
+    send(Messages::RemoteRenderingBackend::ReleaseFreeformGradient(identifier));
 }
 
 void RemoteRenderingBackendProxy::cacheMeshGradient(Ref<MeshGradient>&& gradient, RemoteMeshGradientIdentifier identifier)

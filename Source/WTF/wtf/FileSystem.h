@@ -113,6 +113,7 @@ WTF_EXPORT_PRIVATE String lastComponentOfPathIgnoringTrailingSlash(const String&
 WTF_EXPORT_PRIVATE void removeTrailingSlash(String& path);
 WTF_EXPORT_PRIVATE bool makeAllDirectories(const String& path);
 WTF_EXPORT_PRIVATE String pathFileName(const String&);
+WTF_EXPORT_PRIVATE StringView pathExtension(StringView path LIFETIME_BOUND);
 WTF_EXPORT_PRIVATE String parentPath(const String&);
 WTF_EXPORT_PRIVATE String lexicallyNormal(const String&);
 WTF_EXPORT_PRIVATE bool isAncestor(const String& first, const String& second);
@@ -171,6 +172,10 @@ WTF_EXPORT_PRIVATE String decodeFromFilename(const String&);
 
 WTF_EXPORT_PRIVATE bool filesHaveSameVolume(const String&, const String&);
 
+#if USE(GLIB) || PLATFORM(COCOA)
+WTF_EXPORT_PRIVATE String createTemporaryDirectory(const String& directoryPrefix = nullString());
+#endif
+
 #if USE(CF)
 WTF_EXPORT_PRIVATE RetainPtr<CFURLRef> pathAsURL(const String&);
 #endif
@@ -185,7 +190,6 @@ WTF_EXPORT_PRIVATE String filenameForDisplay(const String&);
 WTF_EXPORT_PRIVATE UTF8CString currentExecutablePath();
 WTF_EXPORT_PRIVATE String userCacheDirectory();
 WTF_EXPORT_PRIVATE String userDataDirectory();
-WTF_EXPORT_PRIVATE String createTemporaryDirectory(const String& directoryPrefix = nullString());
 #if ENABLE(DEVELOPER_MODE)
 WTF_EXPORT_PRIVATE UTF8CString webkitTopLevelDirectory();
 #endif

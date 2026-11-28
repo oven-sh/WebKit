@@ -51,7 +51,7 @@ template<typename T> class ValueOrReference;
 
 // StringView is a non-owning reference to a string, similar to the proposed std::string_view.
 
-class StringView final {
+class WTF_VIEW_TYPE StringView final {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(StringView);
 public:
     StringView();
@@ -129,12 +129,6 @@ public:
 #endif
 
     WTF_EXPORT_PRIVATE ASCIICString ascii() const;
-
-    WTF_EXPORT_PRIVATE std::expected<UTF8CString, UTF8ConversionError> tryGetUTF8(ConversionMode = LenientConversion) const;
-    WTF_EXPORT_PRIVATE UTF8CString utf8(ConversionMode = LenientConversion) const;
-
-    template<typename Func>
-    std::expected<std::invoke_result_t<Func, std::span<const char8_t>>, UTF8ConversionError> tryGetUTF8(NOESCAPE const Func&, ConversionMode = LenientConversion) const;
 
     template<size_t N>
     class UpconvertedCharactersWithSize;
@@ -291,6 +285,8 @@ WTF_EXPORT_PRIVATE StringViewWithUnderlyingString normalizedNFC(StringView);
 
 WTF_EXPORT_PRIVATE String normalizedNFC(const String&);
 
+WTF_EXPORT_PRIVATE Vector<uint8_t> utf8Bytes(StringView);
+
 inline StringView nullStringView() { return { }; }
 inline StringView emptyStringView() { return ""_span; }
 
@@ -299,6 +295,14 @@ NODELETE inline bool codePointCompareLessThan(StringView a, StringView b)
 {
     return codePointCompare(a, b) < 0;
 }
+
+WTF_EXPORT_PRIVATE size_t utf8Length(StringView);
+
+WTF_EXPORT_PRIVATE std::expected<UTF8CString, UTF8ConversionError> tryMakeUTF8CString(StringView, ConversionMode = ConversionMode::Lenient);
+WTF_EXPORT_PRIVATE UTF8CString makeUTF8CString(StringView, ConversionMode = ConversionMode::Lenient);
+
+template<typename Func>
+std::expected<std::invoke_result_t<Func, std::span<const char8_t>>, UTF8ConversionError> tryGetUTF8(NOESCAPE const Func&, StringView, ConversionMode = ConversionMode::Lenient);
 
 } // namespace WTF
 
@@ -508,14 +512,14 @@ inline void StringView::clear()
 
 inline std::span<const Latin1Character> StringView::span8() const LIFETIME_BOUND
 {
-    ASSERT(is8Bit());
+    ASSERT_WITH_SECURITY_IMPLICATION(is8Bit());
     ASSERT(underlyingStringIsValid());
     return unsafeMakeSpan(static_cast<const Latin1Character*>(m_characters), m_length);
 }
 
 inline std::span<const char16_t> StringView::span16() const LIFETIME_BOUND
 {
-    ASSERT(!is8Bit() || isEmpty());
+    ASSERT_WITH_SECURITY_IMPLICATION(!is8Bit() || isEmpty());
     ASSERT(underlyingStringIsValid());
     return unsafeMakeSpan(static_cast<const char16_t*>(m_characters), m_length);
 }
@@ -1073,7 +1077,7 @@ inline auto StringView::CodePoints::Iterator::operator++() -> Iterator&
 #if CHECK_STRINGVIEW_LIFETIME
     ASSERT(m_stringView.underlyingStringIsValid());
 #endif
-    ASSERT(m_current < m_end);
+    ASSERT_WITH_SECURITY_IMPLICATION(m_current < m_end);
     if (m_is8Bit)
         m_current = static_cast<const Latin1Character*>(m_current) + 1;
     else {
@@ -1097,7 +1101,7 @@ inline auto StringView::CodePoints::Iterator::operator--() -> Iterator&
 #if CHECK_STRINGVIEW_LIFETIME
     ASSERT(m_stringView.underlyingStringIsValid());
 #endif
-    ASSERT(m_current > m_begin);
+    ASSERT_WITH_SECURITY_IMPLICATION(m_current > m_begin);
     if (m_is8Bit)
         m_current = static_cast<const Latin1Character*>(m_current) - 1;
     else {
@@ -1122,7 +1126,7 @@ inline char32_t StringView::CodePoints::Iterator::operator*() const
 #if CHECK_STRINGVIEW_LIFETIME
     ASSERT(m_stringView.underlyingStringIsValid());
 #endif
-    ASSERT(m_current < m_end);
+    ASSERT_WITH_SECURITY_IMPLICATION(m_current < m_end);
     if (m_is8Bit)
         return *static_cast<const Latin1Character*>(m_current);
     char32_t codePoint;
@@ -1580,12 +1584,20 @@ inline bool AtomString::endsWithIgnoringASCIICase(StringView string) const
 }
 
 template<typename Func>
-inline std::expected<std::invoke_result_t<Func, std::span<const char8_t>>, UTF8ConversionError> StringView::tryGetUTF8(NOESCAPE const Func& function, ConversionMode mode) const
+inline std::expected<std::invoke_result_t<Func, std::span<const char8_t>>, UTF8ConversionError> tryGetUTF8(NOESCAPE const Func& function, StringView string, ConversionMode mode)
 {
-    if (is8Bit())
-        return StringImpl::tryGetUTF8ForCharacters(function, span8());
-    return StringImpl::tryGetUTF8ForCharacters(function, span16(), mode);
+    if (string.is8Bit())
+        return tryGetUTF8(function, string.span8());
+    return tryGetUTF8(function, string.span16(), mode);
 }
+
+#ifdef __swift__
+// Swift does not convert a String to a StringView.
+inline UTF8CString makeUTF8CString(const String& string, ConversionMode mode = ConversionMode::Lenient)
+{
+    return makeUTF8CString(StringView { string }, mode);
+}
+#endif
 
 template<> struct VectorTraits<StringView> : VectorTraitsBase<false, void> {
     static constexpr bool canMoveWithMemcpy = true;
@@ -1605,7 +1617,12 @@ using WTF::makeStringBySimplifyingNewLines;
 using WTF::StringView;
 using WTF::StringViewWithUnderlyingString;
 using WTF::hasUnpairedSurrogate;
+using WTF::utf8Length;
+using WTF::tryGetUTF8;
+using WTF::makeUTF8CString;
+using WTF::tryMakeUTF8CString;
 using WTF::nullStringView;
 using WTF::emptyStringView;
 using WTF::codePointCompare;
 using WTF::codePointCompareLessThan;
+using WTF::utf8Bytes;

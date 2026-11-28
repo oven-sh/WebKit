@@ -44,6 +44,7 @@
 
 #if ENABLE(THREADED_ANIMATIONS)
 #include "RemoteAnimationStack.h"
+#include "RemoteAnimationVisibility.h"
 #include "RemoteMonotonicTimelineRegistry.h"
 #endif
 
@@ -53,8 +54,10 @@ class AcceleratedTimeline;
 #endif
 class PlatformWheelEvent;
 class WheelEventDeltaFilter;
+struct FrameIdentifierType;
 struct WheelEventHandlingResult;
 struct ScrollingNodeIDType;
+using FrameIdentifier = ObjectIdentifier<FrameIdentifierType>;
 using ScrollingNodeID = ProcessQualified<ObjectIdentifier<ScrollingNodeIDType>>;
 enum class WheelScrollGestureState : uint8_t;
 enum class WheelEventProcessingSteps : uint8_t;
@@ -94,7 +97,7 @@ public:
     void cacheWheelEventScrollingAccelerationCurve(const NativeWebWheelEvent&);
 
     void handleWheelEvent(Ref<WebWheelEvent>&&, WebCore::RectEdges<WebCore::RubberBandingBehavior> rubberBandableEdges);
-    void wheelEventHandlingCompleted(const WebCore::PlatformWheelEvent&, std::optional<WebCore::ScrollingNodeID>, std::optional<WebCore::WheelScrollGestureState>, bool wasHandled);
+    void wheelEventHandlingCompleted(const WebCore::PlatformWheelEvent&, std::optional<WebCore::FrameIdentifier> defaultHandlingFrameID, std::optional<WebCore::ScrollingNodeID>, std::optional<WebCore::WheelScrollGestureState>, bool wasHandled);
 
     void setScrollingTree(RefPtr<RemoteScrollingTree>&&);
 
@@ -120,6 +123,8 @@ public:
     RefPtr<const RemoteAnimationStack> animationStackForNodeWithIDForTesting(WebCore::PlatformLayerIdentifier) const;
     HashSet<Ref<RemoteProgressBasedTimeline>> timelinesForScrollingNodeIDForTesting(WebCore::ScrollingNodeID);
     HashSet<Ref<RemoteMonotonicTimeline>> monotonicTimelinesForProcessForTesting(WebCore::ProcessIdentifier) const;
+    void updateAnimatedContentVisibilityAfterCommit();
+    bool hasVisibleMonotonicAnimations();
 #endif
 
 private:
@@ -160,6 +165,7 @@ private:
     void endFingerDownSignpostInterval();
     void startMomentumSignpostInterval();
     void endMomentumSignpostInterval();
+    void endMomentumSignpostIntervalBecauseMomentumIsIgnored();
 
     void didStartRubberbanding();
 
@@ -167,6 +173,8 @@ private:
 #if ENABLE(THREADED_ANIMATIONS)
     enum class AnimationStacksToUpdate : bool { All, ProgressBasedOnly };
     bool updateAnimations(AnimationStacksToUpdate = AnimationStacksToUpdate::All);
+    enum class ApplyEffectsToAnimationsThatBecameVisible : bool { No, Yes };
+    bool updateAnimatedContentVisibilityIfNeeded(ApplyEffectsToAnimationsThatBecameVisible) WTF_REQUIRES_LOCK(m_animationLock);
 #endif
 
 #if ENABLE(MOMENTUM_EVENT_DISPATCHER)
@@ -218,6 +226,9 @@ private:
     friend class RemoteScrollingCoordinatorProxyMac;
     Lock m_animationLock;
     HashMap<WebCore::PlatformLayerIdentifier, Ref<RemoteAnimationStack>> m_animationStacks WTF_GUARDED_BY_LOCK(m_animationLock);
+    HashMap<WebCore::PlatformLayerIdentifier, RetainPtr<CALayer>> m_animatedLayers WTF_GUARDED_BY_LOCK(m_animationLock);
+    RetainPtr<CALayer> m_rootLayer WTF_GUARDED_BY_LOCK(m_animationLock);
+    RemoteAnimationVisibility m_animationVisibility WTF_GUARDED_BY_LOCK(m_animationLock);
     std::unique_ptr<RemoteMonotonicTimelineRegistry> m_monotonicTimelineRegistry WTF_GUARDED_BY_LOCK(m_animationLock);
 #endif
 

@@ -30,7 +30,7 @@ inline String joinLinesOfReason(StringView text)
 
 [[noreturn]] inline void failNativeTestBecause(const char* file, int line, const String& reason)
 {
-    CString text = joinLinesOfReason(reason).utf8();
+    CString text = makeUTF8CString(joinLinesOfReason(reason));
     failNativeTest(file, line, byteCast<char>(text.data()));
 }
 

@@ -138,7 +138,7 @@ AudioNode::~AudioNode()
 {
     ALWAYS_LOG(LOGIDENTIFIER);
 
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
 #if DEBUG_AUDIONODE_REFERENCES
     --s_nodeCount[nodeType()];
     fprintf(stderr, "%p: %d: AudioNode::~AudioNode() %d %d\n", this, nodeType(), m_normalRefCount.load(), m_connectionRefCount.load());
@@ -459,7 +459,7 @@ ScriptExecutionContext* AudioNode::scriptExecutionContext() const
 void AudioNode::processIfNecessary(size_t framesToProcess)
 {
     Ref context = this->context();
-    ASSERT(context->isAudioThread());
+    ASSERT_WITH_SECURITY_IMPLICATION(context->isAudioThread());
 
     if (!isInitialized())
         return;
@@ -491,7 +491,7 @@ void AudioNode::processIfNecessary(size_t framesToProcess)
 
 void AudioNode::checkNumberOfChannelsForInput(AudioNodeInput* input)
 {
-    ASSERT(context().isAudioThread() && context().isGraphOwner());
+    RELEASE_ASSERT(protect(context())->isAudioThread() && protect(context())->isGraphOwner());
 
     ASSERT(m_inputs.findIf([&](auto& associatedInput) { return associatedInput.ptr() == input; }) != notFound);
     input->updateInternalBus();
@@ -504,7 +504,7 @@ bool AudioNode::propagatesSilence() const
 
 void AudioNode::pullInputs(size_t framesToProcess)
 {
-    ASSERT(context().isAudioThread());
+    ASSERT_WITH_SECURITY_IMPLICATION(context().isAudioThread());
     
     // Process all of the AudioNodes connected to our inputs.
     for (auto& input : m_inputs)
@@ -615,24 +615,28 @@ void AudioNode::decrementConnectionCount()
 
 void AudioNode::decrementConnectionCountWithLock()
 {
-    ASSERT(context().isGraphOwner());
+    RELEASE_ASSERT(protect(context())->isGraphOwner());
 
-    ASSERT(m_connectionRefCount > 0);
+    RELEASE_ASSERT(m_connectionRefCount > 0);
     --m_connectionRefCount;
 
 #if DEBUG_AUDIONODE_REFERENCES
     fprintf(stderr, "%p: %d: AudioNode::decrementConnectionCountWithLock() %d %d\n", this, nodeType(), m_normalRefCount.load(), m_connectionRefCount.load());
 #endif
 
-    if (!m_connectionRefCount && m_normalRefCount)
-        disableOutputsIfNecessary();
+    if (!m_connectionRefCount) {
+        if (m_normalRefCount)
+            disableOutputsIfNecessary();
+        else if (!m_isDisabled && requiresTailProcessing() && context().isInitialized() && !context().isAudioThreadFinished())
+            protect(context())->addTailProcessingNode(*this);
+    }
 
     markNodeForDeletionIfNecessary();
 }
 
 void AudioNode::markNodeForDeletionIfNecessary()
 {
-    ASSERT(context().isGraphOwner());
+    RELEASE_ASSERT(protect(context())->isGraphOwner());
 
     if (m_connectionRefCount || m_normalRefCount || m_isMarkedForDeletion)
         return;
@@ -652,7 +656,7 @@ void AudioNode::markNodeForDeletionIfNecessary()
 
 void AudioNode::unmarkNodeForDeletionIfNecessary()
 {
-    ASSERT(context().isGraphOwner());
+    RELEASE_ASSERT(protect(context())->isGraphOwner());
     if (!m_isMarkedForDeletion)
         return;
     if (!m_connectionRefCount && !m_normalRefCount)
@@ -698,9 +702,9 @@ void AudioNode::deref() const
 
 void AudioNode::derefWithLock() const
 {
-    ASSERT(context().isGraphOwner());
+    RELEASE_ASSERT(protect(context())->isGraphOwner());
     
-    ASSERT(m_normalRefCount > 0);
+    RELEASE_ASSERT(m_normalRefCount > 0);
     --m_normalRefCount;
     
 #if DEBUG_AUDIONODE_REFERENCES

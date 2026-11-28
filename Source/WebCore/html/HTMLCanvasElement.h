@@ -96,7 +96,7 @@ public:
     ExceptionOr<void> clearElementGeometry(const CanvasElementImageSource&);
     ExceptionOr<Ref<DOMMatrix>> getElementTransform(const Element&);
 
-    CanvasRenderingContext* renderingContext() const final { return m_context.get(); }
+    NODELETE CanvasRenderingContext* renderingContext() const final { return m_context.get(); }
     ExceptionOr<std::optional<RenderingContext>> getContext(JSC::JSGlobalObject&, const String& contextId, FixedVector<JSC::Strong<JSC::Unknown>>&& arguments);
 
     RefPtr<CanvasRenderingContext> getContext(const String&);
@@ -183,7 +183,7 @@ private:
     void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason) final;
     bool hasPresentationalHintsForAttribute(const QualifiedName&) const final;
     void collectPresentationalHintsForAttribute(const QualifiedName&, const AtomString&, MutableStyleProperties&) final;
-    RenderPtr<RenderElement> createElementRenderer(Style::ComputedStyle&&, const RenderTreePosition&) final;
+    RenderPtr<RenderElement> createElementRenderer(UniqueRef<Style::ComputedStyle>&&, const RenderTreePosition&) final;
     bool isReplaced(const Style::ComputedStyle* = nullptr) const final;
 
     bool canContainRangeEndPoint() const final;

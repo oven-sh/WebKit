@@ -27,7 +27,7 @@ import WebKit
 #if ENABLE_GPU_PROCESS_MODEL && canImport(RealityCoreDeformation, _version: 23.0.2) && canImport(ShaderGraph, _version: 159.0.3) && arch(arm64)
 import RealityKit
 import USDKit
-import DirectResource
+import _USDKit_RealityKit
 #endif
 
 @objc
@@ -457,13 +457,16 @@ extension WKBridgeUpdateTexture {
 extension WKBridgeUpdateMaterial {
     let materialGraph: WKBridgeMaterialGraph?
     let identifier: WKBridgeTypedResourceId
+    let portalContentTextureIdentifier: WKBridgeTypedResourceId?
 
     init(
         materialGraph: WKBridgeMaterialGraph?,
         identifier: WKBridgeTypedResourceId,
+        portalContentTextureIdentifier: WKBridgeTypedResourceId?,
     ) {
         self.materialGraph = materialGraph
         self.identifier = identifier
+        self.portalContentTextureIdentifier = portalContentTextureIdentifier
     }
 }
 
@@ -706,7 +709,7 @@ extension WKBridgeSkinningData {
 }
 extension WKBridgeDeformationData {
     @nonobjc
-    convenience init?(_ request: DeformationData?, rootJointIndices: [UInt32] = []) {
+    convenience init?(_ request: USDPlayer.DeformationData?, rootJointIndices: [UInt32] = []) {
         guard let request else {
             return nil
         }

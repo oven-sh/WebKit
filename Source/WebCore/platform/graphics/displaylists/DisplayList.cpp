@@ -26,6 +26,7 @@
 #include "config.h"
 #include "DisplayList.h"
 
+#include "DisplayListResourceCache.h"
 #include "Filter.h"
 #include "Font.h"
 #include "ImageBuffer.h"
@@ -34,8 +35,7 @@
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/TextStream.h>
 
-namespace WebCore {
-namespace DisplayList {
+namespace WebCore::DisplayList {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(DisplayList);
 
@@ -47,32 +47,10 @@ DisplayList::DisplayList(Vector<Item>&& items)
     }));
 }
 
-RefPtr<const DisplayList> DisplayList::createResolvingResources(Vector<Item>&& items, std::span<const Ref<const FontBase>> fonts, std::span<const Ref<const DisplayList>> displayLists)
+RefPtr<const DisplayList> DisplayList::createResolved(Vector<Item>&& items, const ResourceCache& resourceCache)
 {
     for (auto& item : items) {
-        bool isValid = WTF::switchOn(item,
-            [&](DrawDisplayList& item) {
-                if (item.isResolved())
-                    return true;
-                if (item.displayListIndex() >= displayLists.size())
-                    return false;
-                item.setDisplayList(displayLists[item.displayListIndex()].copyRef());
-                return true;
-            },
-            [&](DrawGlyphs& item) {
-                if (item.glyphs().size() != item.advances().size())
-                    return false;
-                if (item.isResolved())
-                    return true;
-                if (item.fontIndex() >= fonts.size())
-                    return false;
-                item.setFont(fonts[item.fontIndex()].copyRef());
-                return true;
-            },
-            [](auto&) {
-                return true;
-            });
-        if (!isValid || !isResolved(item))
+        if (!resourceCache.resolveItem(item) || !isResolved(item))
             return nullptr;
     }
     return create(WTF::move(items));
@@ -117,5 +95,4 @@ TextStream& operator<<(TextStream& ts, const DisplayList& displayList)
     return ts;
 }
 
-} // namespace DisplayList
-} // namespace WebCore
+} // namespace WebCore::DisplayList

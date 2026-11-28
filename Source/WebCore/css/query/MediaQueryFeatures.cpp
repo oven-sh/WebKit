@@ -47,8 +47,7 @@
 #include "ViewportSegments.h"
 #include <wtf/Function.h>
 
-namespace WebCore::MQ {
-namespace Features {
+namespace WebCore::MQ::Features {
 
 struct BooleanSchema : public FeatureSchema {
     using ValueFunction = Function<bool(const FeatureEvaluationContext&)>;
@@ -796,11 +795,21 @@ static const IdentifierSchema& displayModeFeatureSchema()
 {
     static MainThreadNeverDestroyed<IdentifierSchema> schema {
         "display-mode"_s,
-        FixedVector { CSSValueID::Fullscreen, CSSValueID::Standalone, CSSValueID::MinimalUi, CSSValueID::Browser },
+        FixedVector { CSSValueID::Fullscreen, CSSValueID::Standalone, CSSValueID::MinimalUi, CSSValueID::Browser
+#if ENABLE(DOCUMENT_PIP)
+            , CSSValueID::PictureInPicture
+#endif
+        },
         OptionSet<MediaQueryDynamicDependency>(),
         [](auto& context) {
             auto identifier = [&] {
                 Ref frame = *context.document->frame();
+#if ENABLE(DOCUMENT_PIP)
+                // https://wicg.github.io/document-picture-in-picture/#css-display-mode
+                if (RefPtr page = frame->page(); page && page->isDocumentPictureInPicture())
+                    return CSSValueID::PictureInPicture;
+
+#endif
                 auto manifest = frame->page() ? frame->page()->applicationManifest() : std::nullopt;
                 if (!manifest)
                     return CSSValueID::Browser;
@@ -1156,5 +1165,4 @@ Vector<const FeatureSchema*> allSchemas()
     };
 }
 
-} // namespace Features
-} // namespace WebCore::MQ
+} // namespace WebCore::MQ::Features

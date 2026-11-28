@@ -140,7 +140,7 @@ public:
 
     virtual void initialize(Type) { }
 
-    virtual std::optional<PlatformLayerIdentifier> primaryLayerID() const { return std::nullopt; }
+    NODELETE virtual std::optional<PlatformLayerIdentifier> primaryLayerID() const { return std::nullopt; }
     virtual std::optional<PlatformLayerIdentifier> backdropLayerID() const { return std::nullopt; }
     virtual std::optional<PlatformLayerIdentifier> layerIDIgnoringStructuralLayer() const { return primaryLayerID(); }
 
@@ -468,7 +468,7 @@ public:
 
     virtual FloatSize pixelAlignmentOffset() const { return FloatSize(); }
     
-    virtual void setAppliesPageScale(bool appliesScale = true) { m_appliesPageScale = appliesScale; }
+    NODELETE virtual void setAppliesPageScale(bool appliesScale = true) { m_appliesPageScale = appliesScale; }
     virtual bool appliesPageScale() const { return m_appliesPageScale; }
 
     void setAppliesDeviceScale(bool appliesScale = true) { m_appliesDeviceScale = appliesScale; }
@@ -563,6 +563,14 @@ public:
     virtual void purgeBackBufferForTesting() { }
 
     virtual void setShadowPath(const Path&);
+
+    virtual void setHidesFromScreenCapture(bool hides) { m_hidesFromScreenCapture = hides; }
+    bool hidesFromScreenCapture() const { return m_hidesFromScreenCapture; }
+
+#if ENABLE(SPATIAL_PORTAL)
+    virtual void setIsHostedInSpatialPortalScene(bool hosted) { m_isHostedInSpatialPortalScene = hosted; }
+    bool isHostedInSpatialPortalScene() const { return m_isHostedInSpatialPortalScene; }
+#endif
 
 protected:
     WEBCORE_EXPORT explicit GraphicsLayer(Type, GraphicsLayerClient&);
@@ -673,11 +681,15 @@ protected:
     bool m_showFrameProcessBorders : 1;
     bool m_isMaskLayer : 1;
     bool m_isBackdropRoot : 1;
+    bool m_hidesFromScreenCapture : 1;
     bool m_isTrackingDisplayListReplay : 1;
     bool m_userInteractionEnabled : 1;
     bool m_canDetachBackingStore : 1;
     bool m_shouldPaintUsingCompositeCopy : 1;
     bool m_renderingIsSuppressedIncludingDescendants : 1 { false };
+#if ENABLE(SPATIAL_PORTAL)
+    bool m_isHostedInSpatialPortalScene : 1 { false };
+#endif
 #if HAVE(CORE_ANIMATION_SEPARATED_LAYERS)
     bool m_isSeparated : 1;
     bool m_isSeparatedImage : 1;

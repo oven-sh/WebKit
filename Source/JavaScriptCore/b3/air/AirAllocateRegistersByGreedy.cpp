@@ -4050,7 +4050,7 @@ private:
         });
 
         // Groups only grow, so two groups that interfere keep interfering.
-        UncheckedKeyHashSet<std::pair<GroupIndex, GroupIndex>> interferingGroups;
+        HashSet<std::pair<GroupIndex, GroupIndex>> interferingGroups;
 
         for (Move& move : moves) {
             dataLogLnIf(verbose(), "Processing move: ", move);

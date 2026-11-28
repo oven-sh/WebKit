@@ -290,8 +290,6 @@ private:
 
 #if PLATFORM(IOS_FAMILY)
     NSArray *timedMetadata() const final;
-    String accessLog() const final;
-    String errorLog() const final;
 #endif
 
     void setBufferingPolicy(WebCore::MediaPlayer::BufferingPolicy) final;
@@ -357,6 +355,7 @@ private:
     void setPreload(WebCore::MediaPlayer::Preload) final;
 
     bool hasAvailableVideoFrame() const final;
+    bool videoFrameHasAlpha() const final;
 
 #if ENABLE(WIRELESS_PLAYBACK_TARGET)
     String wirelessPlaybackTargetName() const final;
