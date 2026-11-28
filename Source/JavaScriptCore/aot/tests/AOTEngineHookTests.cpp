@@ -14,6 +14,7 @@
 #include "AOTGenerator.h"
 #include "AOTImage.h"
 #include "AOTLoadedProgramTestSupport.h"
+#include "AOTModules.h"
 #include "AOTProgramIdentifiers.h"
 #include "AOTPropertyCaches.h"
 #include "AOTRealmTestSupport.h"
@@ -25,7 +26,9 @@
 #include "GlobalObjectMethodTable.h"
 #include "InternalFunction.h"
 #include "IteratorOperations.h"
+#include "JSAsyncFunctionGenerator.h"
 #include "JSAsyncGenerator.h"
+#include "JSAsyncGeneratorInlines.h"
 #include "JSBoundFunction.h"
 #include "JSCInlines.h"
 #include "JSCallee.h"
@@ -34,12 +37,14 @@
 #include "JSPromiseConstructor.h"
 #include "JSWeakObjectRef.h"
 #include "MapConstructor.h"
+#include "MicrotaskQueueInlines.h"
 #include "NullSetterFunction.h"
 #include "ObjectConstructor.h"
 #include "PropertyRun.h"
 #include "TopExceptionScope.h"
 #include "VMInlines.h"
 #include <array>
+#include <wtf/SetForScope.h>
 #include <wtf/text/MakeString.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -503,6 +508,73 @@ static void testDeliverStepToDriver(LoadedProgram& program)
     }
 }
 
+static void testDriverWithoutSavedFrameIsNotResumed(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    JSGlobalObject* realm = program.realm();
+    SavedFrame* asyncFunction = SavedFrame::create(vm, program.instance(), CoroutineKind::AsyncFunction, 2, 0, 0);
+    SavedFrame* bodyOfGenerator = SavedFrame::create(vm, program.instance(), CoroutineKind::AsyncGenerator, 2, 0, 0);
+    JSAsyncGenerator* generator = JSAsyncGenerator::create(vm, realm->asyncGeneratorStructure());
+    setSavedFrameOfGenerator(vm, generator, bodyOfGenerator);
+    generator->setState(static_cast<int32_t>(JSAsyncGenerator::AsyncGeneratorState::Executing));
+    AOT_TEST_CHECK(isDriverWithUnsavedFrame(asyncFunction) && isDriverWithUnsavedFrame(generator));
+
+    std::pair<JSObject*, SavedFrame*> drivers[] = { { asyncFunction, asyncFunction }, { generator, bodyOfGenerator } };
+    for (auto [driver, saved] : drivers) {
+        realm->queueMicrotask(vm, InternalMicrotask::AsyncGeneratorDriverResume, static_cast<uint8_t>(JSPromise::Status::Fulfilled), jsBoolean(false), jsNumber(1), driver, jsUndefined());
+        realm->queueMicrotask(vm, InternalMicrotask::AsyncGeneratorDriverResume, static_cast<uint8_t>(JSPromise::Status::Fulfilled), jsUndefined(), createIteratorResultObject(realm, jsNumber(1), false), driver, jsUndefined());
+        realm->queueMicrotask(vm, InternalMicrotask::AsyncGeneratorDriverResume, static_cast<uint8_t>(JSPromise::Status::Rejected), jsUndefined(), jsNumber(1), driver, jsUndefined());
+        AOT_TEST_CHECK(!vm.defaultMicrotaskQueue().isEmpty());
+        vm.drainMicrotasks();
+        AOT_TEST_CHECK(vm.defaultMicrotaskQueue().isEmpty());
+        AOT_TEST_CHECK(saved->isOnStack() && saved->stepStatus() == AsyncGeneratorStepStatus::Result);
+    }
+    AOT_TEST_CHECK(generator->state() == static_cast<int32_t>(JSAsyncGenerator::AsyncGeneratorState::Executing));
+}
+
+static unsigned s_numberOfBodiesEntered;
+
+static JSC_DECLARE_HOST_FUNCTION(countEntryOfBody);
+
+JSC_DEFINE_HOST_FUNCTION(countEntryOfBody, (JSGlobalObject*, CallFrame*))
+{
+    ++s_numberOfBodiesEntered;
+    return encodedJSUndefined();
+}
+
+static void testInterpretedDriverIsResumedOnlyWhereItIsSuspended(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    JSGlobalObject* realm = program.realm();
+    JSFunction* body = JSFunction::create(vm, realm, 0, String(), countEntryOfBody, ImplementationVisibility::Private);
+    constexpr int32_t init = static_cast<int32_t>(JSGenerator::State::Init);
+    constexpr int32_t executing = static_cast<int32_t>(JSGenerator::State::Executing);
+    constexpr int32_t suspendedAtAwait = 1 << JSAsyncGenerator::reasonShift;
+
+    auto numberOfEntries = [&](JSObject* driver) {
+        s_numberOfBodiesEntered = 0;
+        realm->queueMicrotask(vm, InternalMicrotask::AsyncGeneratorDriverResume, static_cast<uint8_t>(JSPromise::Status::Fulfilled), jsUndefined(), jsNumber(1), driver, jsUndefined());
+        AOT_TEST_CHECK(!vm.defaultMicrotaskQueue().isEmpty());
+        vm.drainMicrotasks();
+        AOT_TEST_CHECK(vm.defaultMicrotaskQueue().isEmpty());
+        return s_numberOfBodiesEntered;
+    };
+    for (int32_t state : { init, executing, suspendedAtAwait }) {
+        unsigned expected = state == suspendedAtAwait;
+        JSAsyncFunctionGenerator* asyncFunction = JSAsyncFunctionGenerator::create(vm, realm->asyncFunctionGeneratorStructure());
+        asyncFunction->internalField(JSAsyncFunctionGenerator::Field::Next).set(vm, asyncFunction, body);
+        asyncFunction->internalField(JSAsyncFunctionGenerator::Field::Context).set(vm, asyncFunction, JSPromise::create(vm, realm->promiseStructure()));
+        asyncFunction->setState(state);
+        AOT_TEST_CHECK(numberOfEntries(asyncFunction) == expected);
+
+        JSAsyncGenerator* generator = JSAsyncGenerator::create(vm, realm->asyncGeneratorStructure());
+        generator->internalField(JSAsyncGenerator::Field::Next).set(vm, generator, body);
+        generator->enqueue(vm, jsUndefined(), static_cast<int32_t>(JSAsyncGenerator::AsyncGeneratorResumeMode::Normal), JSPromise::create(vm, realm->promiseStructure()));
+        generator->setState(state);
+        AOT_TEST_CHECK(numberOfEntries(generator) == expected);
+    }
+}
+
 static void testInstanceClassInfos(LoadedProgram& program)
 {
     const ClassInfo* const* classInfos = program.instance().realm.instanceClassInfos;
@@ -593,6 +665,57 @@ static void testStructuresWithPropertiesComeAndGo(LoadedProgram& program)
     }
 }
 
+static constexpr ASCIILiteral programThatImportsUncompiledCode =
+    "module m0 path=\"/main.js\" displayPath=\"main.js\" body=f0 requests=[{target=m1 completes=true}, {target=m2 completes=true}]\n"
+    "module m1 path=\"first\" displayPath=\"first\" kind=External externalKind=UncompiledCode referrer=m0\n"
+    "module m2 path=\"second\" displayPath=\"second\" kind=External externalKind=UncompiledCode referrer=m0\n"
+    "entry module=m0\n"
+    "function f0 name=\"main\" kind=Module results=[{type=anything}] {\n"
+    "  b0():\n"
+    "    Return\n"
+    "}\n"_s;
+
+static unsigned s_numberOfNamesResolved;
+
+static Identifier resolveNamesAnewWhileSecondNameIsResolved(JSGlobalObject* realm, JSModuleLoader*, JSValue name, JSValue, RefPtr<ScriptFetcher>, bool)
+{
+    VM& vm = realm->vm();
+    unsigned number = s_numberOfNamesResolved++;
+    if (number == 1) {
+        Modules& modules = *Instance::of(realm)->state->modules;
+        modules.forgetWhatNamesResolvedTo();
+        modules.importsUnloadedCode(ModuleID(0u));
+    }
+    return Identifier::fromString(vm, makeString(asString(name)->getString(realm), " resolved by call "_s, number));
+}
+
+static void testKeyOfRequestOutlivesItsResolution(LoadedProgram& program)
+{
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(program.vm());
+    // It is the table that the test support made for this realm, which is not const there.
+    auto& methodTable = const_cast<GlobalObjectMethodTable&>(*program.realm()->globalObjectMethodTable());
+    SetForScope resolve(methodTable.moduleLoaderResolve, resolveNamesAnewWhileSecondNameIsResolved);
+
+    Modules& modules = *program.state().modules;
+    for (bool (Modules::*collectsRequests)(ModuleID) : { &Modules::importsUnloadedCode, &Modules::comesToCodeThatDoesNotLoad }) {
+        s_numberOfNamesResolved = 0;
+        modules.forgetWhatNamesResolvedTo();
+        (modules.*collectsRequests)(ModuleID(0u));
+        AOT_TEST_CHECK(!scope.exception());
+        AOT_TEST_CHECK(s_numberOfNamesResolved == 4);
+    }
+    s_numberOfNamesResolved = 0;
+    modules.forgetWhatNamesResolvedTo();
+    ModuleRecord* record = modules.ensureRecord(ModuleID(0u));
+    modules.appendRequestsOfUncompiledCode(ModuleID(0u), record);
+    AOT_TEST_CHECK(!scope.exception());
+    AOT_TEST_CHECK(s_numberOfNamesResolved == 4);
+    AOT_TEST_CHECK(record->requestedModules().size() == 2);
+    // The atom itself is compared: one that was let go of is in the table of atoms no more.
+    AOT_TEST_CHECK(record->requestedModules()[0].m_specifier == Identifier::fromString(program.vm(), "first resolved by call 0"_s));
+    AOT_TEST_CHECK(record->requestedModules()[1].m_specifier == Identifier::fromString(program.vm(), "second resolved by call 1"_s));
+}
+
 template<LoadedProgramTest body>
 static constexpr void (*withProgram)() = runNativeTestWithLoadedProgram<engineHookTests, programText, body>;
 
@@ -609,6 +732,9 @@ std::span<const NativeTest> engineHookTests()
         { "engine-hooks/caches-made-at-first-use-lie-in-pages-of-instance"_s, withProgram<testCachesMadeAtFirstUseLieInPagesOfInstance> },
         { "engine-hooks/image-is-attached-to-vm"_s, withProgram<testImageIsAttachedToVM> },
         { "engine-hooks/deliver-step-to-driver"_s, withProgram<testDeliverStepToDriver> },
+        { "engine-hooks/a-driver-whose-frame-is-not-saved-is-not-resumed"_s, withProgram<testDriverWithoutSavedFrameIsNotResumed> },
+        { "engine-hooks/an-interpreted-driver-is-resumed-only-where-it-is-suspended"_s, withProgram<testInterpretedDriverIsResumedOnlyWhereItIsSuspended> },
+        { "engine-hooks/key-of-request-outlives-its-resolution"_s, runNativeTestWithLoadedProgram<engineHookTests, programThatImportsUncompiledCode, testKeyOfRequestOutlivesItsResolution> },
         { "engine-hooks/instance-class-infos"_s, withProgram<testInstanceClassInfos> },
         { "engine-hooks/create-with-properties"_s, withProgram<testCreateWithProperties> },
         { "engine-hooks/structures-with-properties-come-and-go-between-collections"_s, withProgram<testStructuresWithPropertiesComeAndGo> },

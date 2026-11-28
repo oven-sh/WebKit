@@ -2173,6 +2173,8 @@ static void runAsyncGeneratorDriverResume(JSGlobalObject* globalObject, VM& vm, 
 
 #if ENABLE(AOT)
     if (vm.hasCompiledCode() && context.isObject()) {
+        if (AOT::isDriverWithUnsavedFrame(asObject(context))) [[unlikely]]
+            return;
         if (bareStepIsDone.isBoolean())
             AOT::deliverBareStepToDriver(asObject(context), bareStepIsDone.asBoolean());
         else
@@ -2181,13 +2183,19 @@ static void runAsyncGeneratorDriverResume(JSGlobalObject* globalObject, VM& vm, 
 #else
     UNUSED_PARAM(bareStepIsDone);
 #endif
+    // A driver waits from where its request is queued, which is in front of where it suspends. Termination in
+    // between leaves a state that names no suspension, and the body would run again from its start.
     JSGenerator::ResumeMode resumeMode = resumeModeForStatus(status);
     if (auto* asyncFunctionGenerator = dynamicDowncast<JSAsyncFunctionGenerator>(context)) {
+        if (asyncFunctionGenerator->state() <= 0) [[unlikely]]
+            return;
         asyncFunctionGeneratorBodyCall(asyncFunctionGenerator->realm(), vm, asyncFunctionGenerator, resolution, resumeMode, microtaskCallCache);
         return;
     }
 
     if (auto* generator = dynamicDowncast<JSAsyncGenerator>(context)) {
+        if (generator->state() <= 0) [[unlikely]]
+            return;
         asyncGeneratorBodyCall(generator->realm(), generator, resolution, static_cast<int32_t>(resumeMode), microtaskCallCache);
         return;
     }

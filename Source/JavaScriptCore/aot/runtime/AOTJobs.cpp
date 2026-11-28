@@ -401,6 +401,13 @@ static SavedFrame* savedFrameOfDriver(JSValue driver)
     return savedFrameIn(driver);
 }
 
+bool isDriverWithUnsavedFrame(JSObject* driver)
+{
+    // A driver waits from where its request is queued, which is in front of where its frame is saved. The termination of its function in between leaves a frame that nothing can enter.
+    SavedFrame* saved = savedFrameOfDriver(driver);
+    return saved && saved->isOnStack();
+}
+
 JSValue driverResumeContext(JSValue settlementTarget)
 {
     SavedFrame* saved = savedFrameOfDriver(settlementTarget);
