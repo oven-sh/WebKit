@@ -16,6 +16,7 @@
 #include "Options.h"
 #include <algorithm>
 #include <cstring>
+#include <functional>
 #include <iterator>
 #include <limits>
 #include <wtf/Lock.h>
@@ -383,7 +384,10 @@ std::span<const StubAddressInImage> Image::stubAddressesSortedWith(StubFamily fa
 {
     std::span addresses = section<StubAddressInImage>(ImageSection::StubAddresses);
     size_t sizeOfFirstPart = header().numberOfStubsFoundByKey;
-    return isFoundByKey(family) ? addresses.first(sizeOfFirstPart) : addresses.subspan(sizeOfFirstPart);
+    if (isFoundByKey(family))
+        return addresses.first(sizeOfFirstPart);
+    addresses = addresses.subspan(sizeOfFirstPart);
+    return { addresses.begin(), std::ranges::partition_point(addresses, std::logical_not { }, &StubAddressInImage::mayJumpToFunction) };
 }
 
 const void* Image::stubAddress(StubKey key) const
@@ -405,11 +409,14 @@ std::span<const StubAddressInImage> Image::stubAddressesOf(StubFamily family) co
     return { addresses.begin(), addresses.end() };
 }
 
-bool Image::usesCallConvention(uint32_t offsetInSharedCode) const
+bool Image::isStubThatMayJumpToFunction(uint32_t offsetInSharedCode) const
 {
-    return std::ranges::any_of(section<StubAddressInImage>(ImageSection::StubAddresses), [&](const StubAddressInImage& address) {
-        return address.offset == offsetInSharedCode && address.usesCallConvention;
+    // These come last, in the order of their code.
+    std::span addresses = section<StubAddressInImage>(ImageSection::StubAddresses);
+    auto address = std::ranges::partition_point(addresses, [&](const StubAddressInImage& address) {
+        return !address.mayJumpToFunction || address.offset < offsetInSharedCode;
     });
+    return address != addresses.end() && address->offset == offsetInSharedCode;
 }
 
 SideTableReader Image::sideTable(uint32_t function) const

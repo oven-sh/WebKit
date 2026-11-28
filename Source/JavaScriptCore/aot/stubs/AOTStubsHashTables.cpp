@@ -160,13 +160,14 @@ void emitLoadValuesOfCompactTable(StubAssembler& jit, const HashTableRegisters& 
     });
 }
 
-static Vector<GPRReg, 8> registersToSaveForLeafCall(const StubAssembler& jit, const HashTableRegisters& registers)
+static Vector<GPRReg, 8> registersToSaveForLeafCall(const StubAssembler& jit, const HashTableRegisters& registers, const RegisterSet& alsoLive)
 {
     RegisterSet lost = registersClobberedByPreserveMostLeaves();
     lost.add(leafArgumentGPR(0));
     lost.add(leafArgumentGPR(1));
 
     RegisterSet live(registers.owner, registers.key, registers.entry);
+    live.merge(alsoLive);
     const StubSignature& signature = jit.signature();
     for (Reg operand : std::span(signature.operands).first(signature.numberOfOperands))
         live.add(operand, IgnoreVectors);
@@ -179,18 +180,18 @@ static Vector<GPRReg, 8> registersToSaveForLeafCall(const StubAssembler& jit, co
     return saved;
 }
 
-static void emitCallStringLeaf(StubAssembler& jit, const HashTableRegisters& registers, Entry leaf, GPRReg first, std::optional<GPRReg> second)
+static void emitCallStringLeaf(StubAssembler& jit, const HashTableRegisters& registers, Entry leaf, GPRReg first, std::optional<GPRReg> second, const RegisterSet& alsoLive = { })
 {
     constexpr GPRReg scratch = leafFunctionGPR;
     RELEASE_ASSERT(second != scratch);
-    const Vector<GPRReg, 8> saved = registersToSaveForLeafCall(jit, registers);
-    jit.preserving(saved.span(), [&] {
+    const Vector<GPRReg, 8> saved = registersToSaveForLeafCall(jit, registers, alsoLive);
+    jit.preservingInFrame(saved.span(), [&] {
         jit.recordClobbers(RegisterSet { leafArgumentGPR(0), leafArgumentGPR(1) });
         jit.move(first, scratch);
         if (second)
             jit.move(*second, leafArgumentGPR(1));
         jit.move(scratch, leafArgumentGPR(0));
-        jit.callLeaf(leaf, WTF::roundUpToMultipleOf<stackAlignmentBytes()>(saved.size() * sizeof(CPURegister)));
+        jit.callLeafInFrame(leaf);
         jit.move(GPRInfo::returnValueGPR, scratch);
     });
 }
@@ -463,9 +464,7 @@ static void emitCompareCharactersInImage(StubAssembler& jit, const HashTableRegi
 
     hasWideCharacters.link(&jit);
     RELEASE_ASSERT(noOverlap(leafFunctionGPR, registers.table, registers.keys));
-    jit.preserving({ registers.table, registers.keys }, [&] {
-        emitCallStringLeaf(jit, registers, Entry::operationAOTStringImplsAreEqual, candidate, impl);
-    });
+    emitCallStringLeaf(jit, registers, Entry::operationAOTStringImplsAreEqual, candidate, impl, RegisterSet(registers.table, registers.keys));
     exits.unknown.append(jit.branchTest32(CCallHelpers::Zero, leafFunctionGPR));
     found.append(jit.jump());
 }

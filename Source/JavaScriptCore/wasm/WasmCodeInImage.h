@@ -11,6 +11,7 @@
 #include "WasmCallee.h"
 #include <array>
 #include <atomic>
+#include <optional>
 #include <span>
 #include <wtf/FixedVector.h>
 #include <wtf/HashMap.h>
@@ -19,7 +20,11 @@
 #include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/Vector.h>
 
-namespace JSC { namespace Wasm {
+namespace JSC {
+
+class JSWebAssemblyInstance;
+
+namespace Wasm {
 
 class CodeInImage final : public ThreadSafeRefCounted<CodeInImage> {
     WTF_MAKE_TZONE_ALLOCATED(CodeInImage);
@@ -36,6 +41,9 @@ public:
     static bool isInFunction(const void* pc);
     // The stub that sets up a frame for a fault at pc. Null if the frame of the function is already set up.
     static const void* framelessFaultStub(const void* pc);
+    // The function that has no frame at this place, or not all of it.
+    JS_EXPORT_PRIVATE static std::optional<FunctionCodeIndex> framelessFunctionAt(std::span<const uint8_t> directory, size_t place);
+    static Callee* framelessCalleeAt(const void* pc, const JSWebAssemblyInstance* instanceThatRunsIt);
 
     // Where the unwinder sends a frame whose handler lies at this place in an image. Nothing for a place outside every image.
     static CodePtr<ExceptionHandlerPtrTag> catchRunwayFor(const void* pc);

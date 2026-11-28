@@ -461,13 +461,13 @@ static void emitCompareStringImplsAndReturn(StubAssembler& jit, GPRReg leftImpl,
     lost.forEach([&](Reg reg) {
         saved.append(reg.gpr());
     });
-    jit.preserving(saved.span(), [&] {
+    jit.preservingInFrame(saved.span(), [&] {
         const GPRReg firstArgument = jit.reuseScratch(StubRegister::A0);
         const GPRReg secondArgument = jit.reuseScratch(StubRegister::A1);
         RELEASE_ASSERT(noOverlap(leftImpl, rightImpl, firstArgument, secondArgument));
         jit.move(leftImpl, firstArgument);
         jit.move(rightImpl, secondArgument);
-        jit.callLeaf(Entry::operationAOTStringImplsAreEqual, WTF::roundUpToMultipleOf<stackAlignmentBytes()>(saved.size() * sizeof(CPURegister)));
+        jit.callLeafInFrame(Entry::operationAOTStringImplsAreEqual);
     });
     if (form == Equality::StrictInFlags)
         return jit.returnFlags32(CCallHelpers::Equal, result, TrustedImm32(1));

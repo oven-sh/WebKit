@@ -518,9 +518,16 @@ end
 
 # Operation Calls
 
+# Few of the callees are given the frame. While the thread is in C code, the sampling profiler has nothing else to go by.
+macro storeTopCallFrame(scratch)
+    loadp JSWebAssemblyInstance::m_vm[wasmInstance], scratch
+    storep cfr, VM::topCallFrame[scratch]
+end
+
 macro operationCall(fn)
     validateOpcodeConfig(a0)
 
+    storeTopCallFrame(a0)
     move wasmInstance, a0
     push PC, MC
     if ARM64 or ARM64E
@@ -540,6 +547,7 @@ macro operationCallMayThrowImpl(fn, exceptionLabel)
     saveCallSiteIndex()
     validateOpcodeConfig(a0)
 
+    storeTopCallFrame(a0)
     move wasmInstance, a0
     push PC, MC
     if ARM64 or ARM64E
@@ -1557,9 +1565,7 @@ macro wasmBuiltinCallTrampoline(setName, builtinName, wasmInstanceArgGPR)
     storep t5, Callee[cfr]
     storep wasmInstance, CodeBlock[cfr]
 
-    # Set VM topCallFrame to null to not build an unnecessary stack trace if the function throws an exception.
-    loadp JSWebAssemblyInstance::m_vm[wasmInstance], t5
-    storep 0, VM::topCallFrame[t5]
+    storeTopCallFrame(t5)
 
     # Add the extra wasmInstance arg
     move wasmInstance, wasmInstanceArgGPR

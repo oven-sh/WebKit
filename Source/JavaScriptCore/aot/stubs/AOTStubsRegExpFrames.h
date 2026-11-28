@@ -37,7 +37,6 @@ static_assert(sizeof(String) == sizeof(void*));
 inline constexpr unsigned maxSavedOperandsOfMatch = 3;
 inline constexpr unsigned offsetOfSavedOperandsOfMatch = roundUpToMultipleOf<sizeof(void*)>(sizeof(Yarr::MatchingContextHolder));
 inline constexpr unsigned sizeOfMatchFrame = roundUpToMultipleOf<stackAlignmentBytes()>(offsetOfSavedOperandsOfMatch + maxSavedOperandsOfMatch * sizeof(void*));
-inline constexpr unsigned bytesPushedInMatchFrame = sizeOfMatchFrame + (isX86_64() ? 1 : 2) * sizeof(CPURegister);
 
 inline constexpr int64_t noMatch = static_cast<int64_t>(notFound);
 

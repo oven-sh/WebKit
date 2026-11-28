@@ -504,7 +504,7 @@ static void printTextOfImageSection(PrintStream& out, const TokensOfRuntimeFunct
     if (section == ImageSection::StubAddresses) {
         printElementsOfImageSection<StubAddressInImage>(out, bytes, [](PrintStream& line, const StubAddressInImage& stub) {
             line.printf("key=%016llx", static_cast<unsigned long long>(stub.key));
-            line.print(" offset=", stub.offset, stub.usesCallConvention ? " usesCallConvention"_s : ""_s);
+            line.print(" offset=", stub.offset, stub.mayJumpToFunction ? " mayJumpToFunction"_s : ""_s);
         });
         return;
     }

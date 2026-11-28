@@ -17,15 +17,18 @@
 #include "AOTInstance.h"
 #include "AOTInstanceLayout.h"
 #include "AOTNativeTest.h"
+#include "AOTOperationScope.h"
 #include "AOTPropertyCachesStringKeys.h"
 #include "AOTStubBlob.h"
 #include "AOTStubCatalog.h"
+#include "AOTStubLeafConvention.h"
 #include "AOTStubTestSupport.h"
 #include "AOTStubsPropertyKeys.h"
 #include "AOTVector.h"
 #include "BaselineJITRegisters.h"
 #include "CCallHelpers.h"
 #include "CallFrame.h"
+#include "ExecutableAllocator.h"
 #include "JITOperationList.h"
 #include "JITOperationValidation.h"
 #include "JSBigInt.h"
@@ -276,6 +279,35 @@ struct StubRun {
     std::optional<uint32_t> leapsInStubs { };
 };
 
+// Of the code that takes part in a run, the JIT's memory holds what calls the stub, but not the stub.
+inline void checkStubHasFrameRecord(const CallerFrameAndPC* recordOfLeaf)
+{
+    AOT_TEST_CHECK(!(std::bit_cast<uintptr_t>(recordOfLeaf) % stackAlignmentBytes()));
+    AOT_TEST_CHECK(isJITPC(recordOfLeaf->callerFrame->returnPCForInspection()));
+}
+
+template<auto leaf, typename = decltype(leaf)> struct LeafBehindCheckOfFrame;
+
+template<auto leaf, typename Result, typename... Arguments>
+struct LeafBehindCheckOfFrame<leaf, Result (JIT_OPERATION_ATTRIBUTES *)(Arguments...)> {
+    static NEVER_INLINE Result JIT_OPERATION_ATTRIBUTES call(Arguments... arguments)
+    {
+        checkStubHasFrameRecord(AOT_FRAME_RECORD_OF_THIS_FUNCTION());
+        return leaf(arguments...);
+    }
+};
+
+#if AOT_LEAVES_PRESERVE_MOST
+template<auto leaf, typename Result, typename... Arguments>
+struct LeafBehindCheckOfFrame<leaf, Result (AOT_PRESERVE_MOST_LEAF_ATTRIBUTES *)(Arguments...)> {
+    static NEVER_INLINE Result AOT_PRESERVE_MOST_LEAF_ATTRIBUTES call(Arguments... arguments)
+    {
+        checkStubHasFrameRecord(AOT_FRAME_RECORD_OF_THIS_FUNCTION());
+        return leaf(arguments...);
+    }
+};
+#endif
+
 class StubRunner {
 public:
     static constexpr uint64_t unsetArgument = 0xbadbadbadbadULL;
@@ -299,6 +331,7 @@ public:
 
     template<typename Function>
     void install(Entry entry, Function* function) { m_environment->runtimeTable[indexOf(entry)] = operationPointer(function); }
+    template<auto leaf> void installLeaf(Entry entry) { install(entry, LeafBehindCheckOfFrame<leaf>::call); }
     void countCallsOf(Entry entry) { install(entry, countOperationCall); }
     void recordCallsOf(Entry entry) { install(entry, recordOperationCall); }
     void setResultOfRecordedOperation(uint64_t result) { m_environment->resultOfRecordedOperation = result; }

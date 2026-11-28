@@ -97,9 +97,17 @@ StubRecording StubAssembler::generateBody(StubKey body, const ScopedLambda<void(
     Label start = label();
     m_headOfBody = start;
     generator(*this);
-    for (size_t index = 0; index < m_outOfLineParts.size(); ++index)
-        std::exchange(m_outOfLineParts[index], nullptr)(*this);
+    for (size_t index = 0; index < m_outOfLineParts.size(); ++index) {
+        m_partIsUnderSavedRegisters = m_outOfLineParts[index].isUnderSavedRegisters;
+        std::exchange(m_outOfLineParts[index].generate, nullptr)(*this);
+    }
+    m_partIsUnderSavedRegisters = false;
     m_outOfLineParts.clear();
+    if (!m_recording.returnLabels.isEmpty() && m_recording.returnLabels.last() == StubFrameKind::HostCall) {
+        // It must not pass for the label in front of a call that the next stub makes.
+        bindReturnLabel(StubFrameKind::ReturnsAfterOperation);
+        breakpoint();
+    }
     if (!m_recording.entries.contains(body))
         bindEntryAt(body, start);
 
@@ -454,6 +462,8 @@ void StubAssembler::recordCallee(PtrTag tag)
         recordCallee(StubCallee::Operation);
         return;
     case HostFunctionPtrTag:
+        // The label in front of the call tells the sampling profiler which frame the function was given.
+        RELEASE_ASSERT(m_recording.returnLabels.isEmpty() || m_recording.returnLabels.last() == StubFrameKind::HostCall);
         recordCallee(StubCallee::HostFunction);
         return;
     case JITThunkPtrTag:
@@ -465,8 +475,10 @@ void StubAssembler::recordCallee(PtrTag tag)
     }
 }
 
-void StubAssembler::recordFarJump(PtrTag tag)
+void StubAssembler::recordFarJump(PtrTag tag, FarJumpTarget target)
 {
+    if (tag == JSEntryPtrTag && target != FarJumpTarget::ReturnAddress && !mayJumpToFunction(m_key))
+        crashWhileGenerating("it jumps to a function, but is not known to"_s);
     checkHasNoBorrowedFPRs();
     if (tag == NoPtrTag || tag == ExceptionHandlerPtrTag)
         return;
@@ -523,6 +535,12 @@ void StubAssembler::farJump(BaseIndex target, PtrTag tag)
     CCallHelpers::farJump(target, tag);
 }
 
+void StubAssembler::jumpToReturnAddress(GPRReg returnAddress)
+{
+    recordFarJump(JSEntryPtrTag, FarJumpTarget::ReturnAddress);
+    CCallHelpers::farJump(returnAddress, JSEntryPtrTag);
+}
+
 void StubAssembler::addReference(StubKey target, StubReference::Kind kind)
 {
     if (!exists(target))
@@ -532,6 +550,8 @@ void StubAssembler::addReference(StubKey target, StubReference::Kind kind)
     case StubReference::Kind::Jump:
         if (!m_savedRegisterStack.isEmpty() && !neverReturns(target))
             crashWhileGenerating("it jumps to another stub out of a region that saves registers"_s);
+        if (mayJumpToFunction(target) && !mayJumpToFunction(m_key))
+            crashWhileGenerating("it jumps to a stub that may jump to a function, but is not known to"_s);
         checkHasNoBorrowedFPRs();
         break;
     case StubReference::Kind::Call:

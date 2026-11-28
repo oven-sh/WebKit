@@ -362,7 +362,7 @@ static_assert(sizeof(ImageInnerEntry) == 8);
 struct StubAddressInImage {
     uint64_t key;
     uint32_t offset;
-    uint32_t usesCallConvention;
+    uint32_t mayJumpToFunction;
 };
 static_assert(sizeof(StubAddressInImage) == 16);
 

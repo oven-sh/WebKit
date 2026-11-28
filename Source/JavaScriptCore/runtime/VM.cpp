@@ -770,10 +770,10 @@ VM::~VM()
     heap.incrementDeferralDepth();
 
 #if ENABLE(SAMPLING_PROFILER)
-    if (m_samplingProfiler) {
+    if (m_samplingProfiler)
         m_samplingProfiler->reportDataToOptionFile();
-        m_samplingProfiler->shutdown();
-    }
+    while (!m_samplingProfilers.isEmpty())
+        protect(m_samplingProfilers.last())->shutdown();
 #endif // ENABLE(SAMPLING_PROFILER)
     
 #if ENABLE(JIT)
@@ -921,11 +921,33 @@ RefPtr<VM> VM::tryCreate(HeapType heapType, WTF::RunLoop* runLoop)
 NEVER_INLINE SamplingProfiler& VM::ensureSamplingProfiler(Ref<Stopwatch>&& stopwatch)
 {
     JSC_REMOVABLE_DEFINITION(Profilers, &VM::ensureSamplingProfiler);
-    if (!m_samplingProfiler) {
-        lazyInitialize(m_samplingProfiler, adoptRef(*new SamplingProfiler(*this, WTF::move(stopwatch))));
-        requestEntryScopeService(EntryScopeService::SamplingProfiler);
-    }
+    if (!m_samplingProfiler)
+        lazyInitialize(m_samplingProfiler, createSamplingProfiler(WTF::move(stopwatch)));
     return *m_samplingProfiler;
+}
+
+NEVER_INLINE Ref<SamplingProfiler> VM::createSamplingProfiler(Ref<Stopwatch>&& stopwatch)
+{
+    JSC_REMOVABLE_DEFINITION(Profilers, &VM::createSamplingProfiler);
+    ASSERT(currentThreadIsHoldingAPILock());
+    Ref samplingProfiler = adoptRef(*new SamplingProfiler(*this, WTF::move(stopwatch)));
+    if (m_samplingProfilers.isEmpty()) {
+        outermostCodeBlock = nullptr;
+        outermostCallee = nullptr;
+        previousEntryFrameOfOutermost = 0;
+    }
+    m_samplingProfilers.append(samplingProfiler);
+    return samplingProfiler;
+}
+
+void VM::didShutDownSamplingProfiler(SamplingProfiler& samplingProfiler)
+{
+    ASSERT(currentThreadIsHoldingAPILock());
+    m_samplingProfilers.removeFirstMatching([&](auto& other) {
+        return other.ptr() == &samplingProfiler;
+    });
+    if (m_samplingProfilers.isEmpty())
+        previousEntryFrameOfOutermost = matchesNoEntryFrame;
 }
 
 void VM::enableSamplingProfiler()
@@ -2332,12 +2354,6 @@ void VM::executeEntryScopeServicesOnEntry()
     RefPtr watchdog = this->watchdog();
     if (watchdog) [[unlikely]]
         watchdog->enteredVM();
-
-#if ENABLE(SAMPLING_PROFILER)
-    RefPtr samplingProfiler = this->samplingProfiler();
-    if (samplingProfiler) [[unlikely]]
-        samplingProfiler->noticeVMEntry();
-#endif
 
     if (Options::useTracePoints()) [[unlikely]]
         tracePoint(VMEntryScopeStart);

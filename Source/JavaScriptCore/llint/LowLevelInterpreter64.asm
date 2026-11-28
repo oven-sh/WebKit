@@ -190,6 +190,10 @@ macro doVMEntry(makeCall)
         storepairq vm, t3, VMEntryRecord::m_vm[sp]
         loadpairq VM::topCallFrame[vm], t4, t3
         storepairq t4, t3, VMEntryRecord::m_prevTopCallFrame[sp]
+        bpneq VM::previousEntryFrameOfOutermost[vm], t3, .isNotOutermost
+        loadpairq ProtoCallFrame::codeBlockValue[protoCallFrame], t4, t3
+        storepairq t4, t3, VM::outermostCodeBlock[vm]
+        emit "dmb ishst" # The sampling profiler reads topEntryFrame first.
     else
         loadp ProtoCallFrame::context[protoCallFrame], t4
         storep vm, VMEntryRecord::m_vm[sp]
@@ -198,8 +202,14 @@ macro doVMEntry(makeCall)
         storep t4, VMEntryRecord::m_prevTopCallFrame[sp]
         loadp VM::topEntryFrame[vm], t4
         storep t4, VMEntryRecord::m_prevTopEntryFrame[sp]
+        bpneq VM::previousEntryFrameOfOutermost[vm], t4, .isNotOutermost
+        loadp ProtoCallFrame::codeBlockValue[protoCallFrame], t4
+        storep t4, VM::outermostCodeBlock[vm]
+        loadp ProtoCallFrame::calleeValue[protoCallFrame], t4
+        storep t4, VM::outermostCallee[vm]
     end
 
+.isNotOutermost:
     loadi ProtoCallFrame::paddedArgCount[protoCallFrame], t4
     addp CallFrameHeaderSlots, t4, t4
     lshiftp 3, t4
@@ -275,12 +285,13 @@ macro doVMEntry(makeCall)
         if ADDRESS64
             storepairq t4, cfr, VM::topCallFrame[vm]
         else
-            storep t4, VM::topCallFrame[vm]
             storep cfr, VM::topEntryFrame[vm]
+            storep t4, VM::topCallFrame[vm]
         end
     else
-        storep sp, VM::topCallFrame[vm]
+        # In this order the sampling profiler can tell that the frame has not been called yet.
         storep cfr, VM::topEntryFrame[vm]
+        storep sp, VM::topCallFrame[vm]
     end
 
     checkStackPointerAlignment(t5, 0xbad0dc02)

@@ -468,9 +468,9 @@ static void emitStringOrder(StubAssembler& jit, const BinaryRegisters& registers
     oneIsRope.link(&jit);
     const GPRReg order = scratch;
     RELEASE_ASSERT(right == secondArgument && noOverlap(order, left, right));
-    jit.preserving({ left, right }, [&] {
+    jit.preservingInFrame({ left, right }, [&] {
         jit.move(left, firstArgument);
-        jit.callLeaf(Entry::operationAOTCompareStringsInPlace, 2 * sizeof(CPURegister));
+        jit.callLeafInFrame(Entry::operationAOTCompareStringsInPlace);
         jit.move(GPRInfo::returnValueGPR, order);
     });
     isLeftToOperation.append(jit.branch64(CCallHelpers::Equal, order, TrustedImm32(cannotCompareInline)));

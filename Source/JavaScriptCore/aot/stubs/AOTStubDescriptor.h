@@ -354,6 +354,13 @@ constexpr bool neverReturns(StubKey key)
     return descriptorOf(key.family()).axes.contains(StubAxis::NeverReturns);
 }
 
+// Then it is the function that returns to the caller of the stub.
+inline bool mayJumpToFunction(StubKey key)
+{
+    constexpr std::array othersThatMay { StubFamily::ConstructWithArray, StubFamily::TailCallWithList, StubFamily::StepGenerator, StubFamily::EnterGeneratorFrame, StubFamily::RestoreSavedFrameToStack };
+    return signatureOf(key).usesCallConvention || std::ranges::contains(othersThatMay, key.family());
+}
+
 constexpr bool isOperationCallHead(StubKey body)
 {
     return body.immediate() && descriptorOf(body.family()).binding == ImmediateBinding::OperationOffset;

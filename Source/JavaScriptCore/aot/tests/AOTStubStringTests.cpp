@@ -136,8 +136,8 @@ class ComparisonStubs {
 public:
     ComparisonStubs()
     {
-        m_runner.install(Entry::operationAOTStringImplsAreEqual, countedStringImplsAreEqual);
-        m_runner.install(Entry::operationAOTCompareStringImpls, countedCompareStringImpls);
+        m_runner.installLeaf<countedStringImplsAreEqual>(Entry::operationAOTStringImplsAreEqual);
+        m_runner.installLeaf<countedCompareStringImpls>(Entry::operationAOTCompareStringImpls);
     }
 
     StubRunner& runner() { return m_runner; }
@@ -570,6 +570,31 @@ static void testIntegerKeys()
     strings.checkIsFound(-1, IntegerStrings::cachedCell());
 }
 
+static size_t AOT_PRESERVE_MOST_LEAF_ATTRIBUTES appendWideStringOfLengthOne(void*, uint8_t* builder, uint8_t* cursor, JSCell*)
+{
+    return builder ? std::bit_cast<size_t>(cursor + 1) : 0;
+}
+
+static void testWideStringIsAppendedToBuilderByLeaf()
+{
+    StubRunner runner;
+    runner.installLeaf<appendWideStringOfLengthOne>(Entry::operationAOTStackStringBuilderAppendWide);
+    const char16_t units[] = { 0x4e2d };
+    Ref<StringImpl> text = StringImpl::create(std::span<const char16_t>(units));
+    FakeString string = FakeString::flat(text.get());
+
+    VM& vm = *runner.instance().vm;
+    vm.topCallFrame = nullptr;
+    StubRun run = runner.run(stackStringBuilderAppendString(), { 0x1000, 0x2000, string.address() });
+    AOT_TEST_CHECK(!run.calledOperation && run.result == 0x2001);
+#if OS(WINDOWS)
+    AOT_TEST_CHECK(!!vm.topCallFrame == isX86_64());
+#else
+    AOT_TEST_CHECK(!vm.topCallFrame);
+#endif
+    AOT_TEST_CHECK(runner.run(stackStringBuilderAppendString(), { 0, 0x2000, string.address() }).calledOperation);
+}
+
 std::span<const NativeTest> stubStringTests()
 {
     static constexpr NativeTest tests[] = {
@@ -577,6 +602,7 @@ std::span<const NativeTest> stubStringTests()
         { "stubs/integer-to-string-integers-outside-the-caches"_s, ImageTests::whenExecutable<testIntegersOutsideTheCaches> },
         { "stubs/integer-to-string-integers-beyond-int32"_s, ImageTests::whenExecutable<testIntegersBeyondInt32> },
         { "stubs/integer-to-string-integer-keys"_s, ImageTests::whenExecutable<testIntegerKeys> },
+        { "stubs/string-builder-leaves-a-wide-string-to-a-leaf"_s, ImageTests::whenExecutable<testWideStringIsAppendedToBuilderByLeaf> },
         { "stubs/string-comparison-difference-at-every-position"_s, ImageTests::whenExecutable<testDifferenceAtEveryPosition> },
         { "stubs/string-comparison-difference-in-last-unit-only"_s, ImageTests::whenExecutable<testDifferenceInLastUnitOnly> },
         { "stubs/string-comparison-difference-in-one-unit-only"_s, ImageTests::whenExecutable<testDifferenceInOneUnitOnly> },

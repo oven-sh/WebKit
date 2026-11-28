@@ -307,6 +307,14 @@ public:
 #if ENABLE(SAMPLING_PROFILER)
     SamplingProfiler* samplingProfiler() { return m_samplingProfiler.get(); }
     JS_EXPORT_PRIVATE SamplingProfiler& ensureSamplingProfiler(Ref<WTF::Stopwatch>&&);
+    // One with settings and samples of its own. It lives until SamplingProfiler::shutdown(), or else as long as the VM.
+    JS_EXPORT_PRIVATE Ref<SamplingProfiler> createSamplingProfiler(Ref<WTF::Stopwatch>&&);
+    void didShutDownSamplingProfiler(SamplingProfiler&);
+    const Vector<Ref<SamplingProfiler>>& samplingProfilers() const LIFETIME_BOUND { return m_samplingProfilers; }
+
+    // For the embedder to say that the thread waits for work.
+    void setIsIdle(bool isIdle) { m_isIdle.storeRelaxed(isIdle); }
+    CONCURRENT_SAFE bool isIdle() const { return m_isIdle.loadRelaxed(); }
 
     JS_EXPORT_PRIVATE void enableSamplingProfiler();
     JS_EXPORT_PRIVATE void disableSamplingProfiler();
@@ -377,7 +385,6 @@ public:
 
     enum class EntryScopeService : uint8_t {
         // Sticky services i.e. if set, these will never be cleared.
-        SamplingProfiler = 1 << 0,
         TracePoints = 1 << 1,
         Watchdog = 1 << 2,
 
@@ -437,6 +444,12 @@ public:
     JSPIContext* topJSPIContext { nullptr };
     WriteBarrier<JSSentinel> m_fastArraySentinel;
     WriteBarrier<JSSentinel> m_fastStringSentinel;
+    // What the outermost entry frame calls, for a sampling profiler to read while the thread runs. Stale without a topEntryFrame. Also a pair.
+    CodeBlock* outermostCodeBlock { nullptr };
+    JSCell* outermostCallee { nullptr };
+    // An entry stores those two if this is its previous topEntryFrame. It is zero as long as there is a profiler. Without one none does.
+    static constexpr uintptr_t matchesNoEntryFrame = 1;
+    uintptr_t previousEntryFrameOfOutermost { matchesNoEntryFrame };
 private:
 
     struct EntryScopeServicesBits {
@@ -880,6 +893,16 @@ public:
     static constexpr ptrdiff_t callFrameForCatchOffset()
     {
         return OBJECT_OFFSETOF(VM, callFrameForCatch);
+    }
+
+    static constexpr ptrdiff_t offsetOfOutermostCallee()
+    {
+        return OBJECT_OFFSETOF(VM, outermostCallee);
+    }
+
+    static constexpr ptrdiff_t offsetOfPreviousEntryFrameOfOutermost()
+    {
+        return OBJECT_OFFSETOF(VM, previousEntryFrameOfOutermost);
     }
 
     static constexpr ptrdiff_t topEntryFrameOffset()
@@ -1524,6 +1547,8 @@ private:
     LazyUniqueRef<VM, AdaptiveStringSearcherTables> m_stringSearcherTables;
 #if ENABLE(SAMPLING_PROFILER)
     const RefPtr<SamplingProfiler> m_samplingProfiler;
+    Vector<Ref<SamplingProfiler>> m_samplingProfilers;
+    Atomic<bool> m_isIdle { false };
 #endif
     std::unique_ptr<FuzzerAgent> m_fuzzerAgent;
     LazyUniqueRef<VM, ShadowChicken> m_shadowChicken;
@@ -1647,6 +1672,7 @@ private:
 };
 
 static_assert(OBJECT_OFFSETOF(VM, topEntryFrame) == OBJECT_OFFSETOF(VM, topCallFrame) + sizeof(void*), "We load/store these using a pair instruction");
+static_assert(OBJECT_OFFSETOF(VM, outermostCallee) == OBJECT_OFFSETOF(VM, outermostCodeBlock) + sizeof(void*), "We store these using a pair instruction");
 
 #if ENABLE(GC_VALIDATION)
 inline const ClassInfo* VM::initializingObjectClass() const

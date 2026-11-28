@@ -445,8 +445,10 @@ static inline bool jitCompileAndSetHeuristics(VM& vm, CodeBlock* codeBlock)
     return false;
 }
 
-static UGPRPair entryOSR(CodeBlock* codeBlock, const char *name, EntryKind kind)
+static UGPRPair entryOSR(CallFrame* callFrame, CodeBlock* codeBlock, const char *name, EntryKind kind)
 {
+    SlowPathFrameTracer tracer(codeBlock->vm(), callFrame);
+
     dataLogLnIf(Options::verboseOSR(),
         *codeBlock, ": Entered ", name, " with executeCounter = ",
         codeBlock->llintExecuteCounter());
@@ -467,7 +469,7 @@ static UGPRPair entryOSR(CodeBlock* codeBlock, const char *name, EntryKind kind)
     LLINT_RETURN_TWO(codeBlock->jitCode()->addressForCall(ArityCheckMode::MustCheckArity).taggedPtr(), nullptr);
 }
 #else // ENABLE(JIT)
-static UGPRPair entryOSR(CodeBlock* codeBlock, const char*, EntryKind)
+static UGPRPair entryOSR(CallFrame*, CodeBlock* codeBlock, const char*, EntryKind)
 {
     codeBlock->dontJITAnytimeSoon();
     LLINT_RETURN_TWO(nullptr, nullptr);
@@ -477,31 +479,31 @@ static UGPRPair entryOSR(CodeBlock* codeBlock, const char*, EntryKind)
 LLINT_SLOW_PATH_DECL(entry_osr)
 {
     UNUSED_PARAM(pc);
-    return entryOSR(callFrame->codeBlock(), "entry_osr", Prologue);
+    return entryOSR(callFrame, callFrame->codeBlock(), "entry_osr", Prologue);
 }
 
 LLINT_SLOW_PATH_DECL(entry_osr_function_for_call)
 {
     UNUSED_PARAM(pc);
-    return entryOSR(uncheckedDowncast<JSFunction>(callFrame->jsCallee())->jsExecutable()->codeBlockForCall(), "entry_osr_function_for_call", Prologue);
+    return entryOSR(callFrame, uncheckedDowncast<JSFunction>(callFrame->jsCallee())->jsExecutable()->codeBlockForCall(), "entry_osr_function_for_call", Prologue);
 }
 
 LLINT_SLOW_PATH_DECL(entry_osr_function_for_construct)
 {
     UNUSED_PARAM(pc);
-    return entryOSR(uncheckedDowncast<JSFunction>(callFrame->jsCallee())->jsExecutable()->codeBlockForConstruct(), "entry_osr_function_for_construct", Prologue);
+    return entryOSR(callFrame, uncheckedDowncast<JSFunction>(callFrame->jsCallee())->jsExecutable()->codeBlockForConstruct(), "entry_osr_function_for_construct", Prologue);
 }
 
 LLINT_SLOW_PATH_DECL(entry_osr_function_for_call_arityCheck)
 {
     UNUSED_PARAM(pc);
-    return entryOSR(uncheckedDowncast<JSFunction>(callFrame->jsCallee())->jsExecutable()->codeBlockForCall(), "entry_osr_function_for_call_arityCheck", ArityCheck);
+    return entryOSR(callFrame, uncheckedDowncast<JSFunction>(callFrame->jsCallee())->jsExecutable()->codeBlockForCall(), "entry_osr_function_for_call_arityCheck", ArityCheck);
 }
 
 LLINT_SLOW_PATH_DECL(entry_osr_function_for_construct_arityCheck)
 {
     UNUSED_PARAM(pc);
-    return entryOSR(uncheckedDowncast<JSFunction>(callFrame->jsCallee())->jsExecutable()->codeBlockForConstruct(), "entry_osr_function_for_construct_arityCheck", ArityCheck);
+    return entryOSR(callFrame, uncheckedDowncast<JSFunction>(callFrame->jsCallee())->jsExecutable()->codeBlockForConstruct(), "entry_osr_function_for_construct_arityCheck", ArityCheck);
 }
 
 LLINT_SLOW_PATH_DECL(loop_osr)
@@ -3153,6 +3155,7 @@ LLINT_SLOW_PATH_DECL(slow_path_profile_catch)
 
 LLINT_SLOW_PATH_DECL(slow_path_out_of_line_jump_target)
 {
+    SlowPathFrameTracer tracer(callFrame->codeBlock()->vm(), callFrame);
     pc = callFrame->codeBlock()->outOfLineJumpTarget(pc);
     LLINT_END_IMPL();
 }
@@ -3612,6 +3615,7 @@ extern "C" UGPRPair SYSV_ABI llint_stack_check_at_vm_entry(VM* vm, Register* new
 extern "C" void SYSV_ABI llint_write_barrier_slow(CallFrame* callFrame, JSCell* cell)
 {
     VM& vm = callFrame->codeBlock()->vm();
+    SlowPathFrameTracer tracer(vm, callFrame);
     vm.writeBarrier(cell);
 }
 

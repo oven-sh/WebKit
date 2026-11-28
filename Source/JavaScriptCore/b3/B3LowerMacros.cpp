@@ -2228,11 +2228,12 @@ private:
     {
         Value* slowFunctionAddress = slowPathBlock->appendNew<ConstPtrValue>(m_proc, m_origin, slowFunction);
         Value* typeIndexValue = slowPathBlock->appendNew<Const32Value>(m_proc, m_origin, typeIndex);
-        Value* slowResult;
+        CCallValue* slowResult;
         if (extraArg)
             slowResult = slowPathBlock->appendNew<CCallValue>(m_proc, Int64, m_origin, Effects::forCall(), slowFunctionAddress, instance, typeIndexValue, extraArg);
         else
             slowResult = slowPathBlock->appendNew<CCallValue>(m_proc, Int64, m_origin, Effects::forCall(), slowFunctionAddress, instance, typeIndexValue);
+        slowResult->needsTopCallFrameStore = false;
 
         Value* isNull = slowPathBlock->appendNew<Value>(m_proc, Equal, m_origin, slowResult, slowPathBlock->appendNew<Const64Value>(m_proc, m_origin, JSValue::encode(jsNull())));
         CheckValue* check = slowPathBlock->appendNew<CheckValue>(m_proc, Check, m_origin, isNull);

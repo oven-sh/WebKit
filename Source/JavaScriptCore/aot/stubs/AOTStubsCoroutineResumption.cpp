@@ -185,6 +185,15 @@ void generateEnterSavedFrame(StubAssembler& jit)
     const Address calleeSlot = CCallHelpers::addressFor(CallFrameSlot::callee);
     const Address endsJob(fp, AdapterFrame::offsetOfNewTarget);
     auto coroutineWord = [](ptrdiff_t offset) { return Address(instanceGPR, static_cast<int32_t>(offset)); };
+    auto noteEntered = [&](GPRReg callee, GPRReg context) {
+        jit.loadPtr(Address(fp), next);
+        jit.storePtr(context, Address(next, EntryFrame::vmEntryRecordOffset() + OBJECT_OFFSETOF(VMEntryRecord, m_context)));
+        jit.loadPtr(Address(next, EntryFrame::vmEntryRecordOffset() + OBJECT_OFFSETOF(VMEntryRecord, m_prevTopEntryFrame)), next);
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), vm);
+        Jump isNotOutermost = jit.branchPtr(CCallHelpers::NotEqual, Address(vm, VM::offsetOfPreviousEntryFrameOfOutermost()), next);
+        jit.storePtr(callee, Address(vm, VM::offsetOfOutermostCallee()));
+        isNotOutermost.link(&jit);
+    };
     static_assert(tracksNoAsyncContext.word.base == AwaitConditionBase::VM && tracksNoAsyncContext.word.sizeInBytes == 1 && tracksNoAsyncContext.test == AwaitConditionTest::IsZero);
     RELEASE_ASSERT(noOverlap(calleeGPR, saved, mode, value, scratch));
     RELEASE_ASSERT(noOverlap(GPRInfo::returnValueGPR, next, scratch) && noOverlap(saved, mode, value, next, scratch));
@@ -336,8 +345,7 @@ void generateEnterSavedFrame(StubAssembler& jit)
     hasFrame.link(&jit);
     jit.storePtr(saved, calleeSlot);
     jit.storePtr(saved, coroutineWord(AOT_INSTANCE_OFFSET(coroutines.enteredFrame)));
-    jit.loadPtr(Address(fp), next);
-    jit.storePtr(saved, Address(next, EntryFrame::vmEntryRecordOffset() + OBJECT_OFFSETOF(VMEntryRecord, m_context)));
+    noteEntered(saved, saved);
     jit.store8(TrustedImm32(SavedFrame::isEnteredByJobLoopFlag), Address(saved, SavedFrame::offsetOfFlags()));
     jit.jump().linkTo(enter, &jit);
 
@@ -386,8 +394,7 @@ void generateEnterSavedFrame(StubAssembler& jit)
         auto callHandler = [&](bool hasArgument, JumpList& doesNotGoOn) {
             jit.storePtr(CCallHelpers::TrustedImmPtr(nullptr), coroutineWord(AOT_INSTANCE_OFFSET(coroutines.enteredFrame)));
             jit.storePtr(handler, calleeSlot);
-            jit.loadPtr(Address(fp), next);
-            jit.storePtr(handler, Address(next, EntryFrame::vmEntryRecordOffset() + OBJECT_OFFSETOF(VMEntryRecord, m_context)));
+            noteEntered(handler, handler);
             if (hasArgument)
                 hasHandlerOfReactionChain.link(&jit);
             if (hasArgument)
@@ -419,8 +426,7 @@ void generateEnterSavedFrame(StubAssembler& jit)
             jit.storePtr(promise, coroutineWord(AOT_INSTANCE_OFFSET(coroutines.promiseOfEnteredHandler)));
             jit.storePtr(CCallHelpers::TrustedImmPtr(nullptr), coroutineWord(AOT_INSTANCE_OFFSET(coroutines.enteredFrame)));
             jit.storePtr(promiseOfChain, calleeSlot);
-            jit.loadPtr(Address(fp), next);
-            jit.storePtr(promiseOfChain, Address(next, EntryFrame::vmEntryRecordOffset() + OBJECT_OFFSETOF(VMEntryRecord, m_context)));
+            noteEntered(handler, promiseOfChain);
             hasHandlerOfReactionChain.append(jit.jump());
 
             isForOtherStatus.link(&jit);
@@ -489,8 +495,7 @@ void generateEnterSavedFrame(StubAssembler& jit)
     jit.storePtr(driver, coroutineWord(AOT_INSTANCE_OFFSET(coroutines.enteredAsyncGenerator)));
     jit.storePtr(saved, calleeSlot);
     jit.storePtr(saved, coroutineWord(AOT_INSTANCE_OFFSET(coroutines.enteredFrame)));
-    jit.loadPtr(Address(fp), next);
-    jit.storePtr(driver, Address(next, EntryFrame::vmEntryRecordOffset() + OBJECT_OFFSETOF(VMEntryRecord, m_context)));
+    noteEntered(saved, driver);
     jit.jump().linkTo(enter, &jit);
 
     leaveWithSentinel.link(&jit);

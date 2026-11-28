@@ -24,7 +24,7 @@ static constexpr int32_t emptyPairBits = static_cast<int32_t>(0xff80ff80);
 static_assert(JSRopeString::offsetOfFiber0() == sizeof(EncodedJSValue) && JSRopeString::offsetOfLength() == 2 * sizeof(EncodedJSValue));
 static_assert(maxSingleCharacterString == 0xff);
 
-AssemblyHelpers::FreeListRefill makeSubstringOfFlatString(StubAssembler& jit, const FlatSubstringRegisters& registers, JumpList& fails)
+AssemblyHelpers::FreeListRefill makeSubstringOfFlatStringInFrame(StubAssembler& jit, const FlatSubstringRegisters& registers, JumpList& fails)
 {
     const auto [string, start, length, result, firstScratch, secondScratch, alsoKept] = registers;
     RELEASE_ASSERT(noOverlap(string, start, length, result, firstScratch, secondScratch, instanceGPR) && result == GPRInfo::returnValueGPR);
@@ -76,7 +76,7 @@ AssemblyHelpers::FreeListRefill makeSubstringOfFlatString(StubAssembler& jit, co
             part.move(codeUnit, leafFunctionGPR);
             part.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), leafArgumentGPR(0));
             part.move(leafFunctionGPR, leafArgumentGPR(1));
-            part.callLeaf(Entry::operationAOTFindKeptStringOfTwoCharacters, WTF::roundUpToMultipleOf<stackAlignmentBytes()>(savedAroundLeaf.size() * sizeof(CPURegister)));
+            part.callLeafInFrame(Entry::operationAOTFindKeptStringOfTwoCharacters);
         });
         part.branchTestPtr(CCallHelpers::NonZero, result).linkTo(isMade, &part);
         part.move(TrustedImm32(0), characters);

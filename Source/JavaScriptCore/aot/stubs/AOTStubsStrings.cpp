@@ -298,9 +298,9 @@ void generateStackStringBuilderAppendString(StubAssembler& jit)
     RELEASE_ASSERT(instanceArgument == leafArgumentGPR(0) && builder == leafArgumentGPR(1) && cursor == leafArgumentGPR(2) && string == leafArgumentGPR(3));
     RegisterSet lostAnyway = jit.callerKeepsNoFPRs() ? RegisterSet::allFPRs() : RegisterSet();
     lostAnyway.add(leafFunctionGPR, IgnoreVectors);
-    jit.preservingRegistersClobberedBy(StubCallee::PreserveMostLeaf, true, lostAnyway, [&](unsigned bytes) {
+    jit.preservingRegistersClobberedByInFrame(StubCallee::PreserveMostLeaf, true, lostAnyway, [&](unsigned) {
         jit.move(instanceGPR, instanceArgument);
-        jit.callLeaf(Entry::operationAOTStackStringBuilderAppendWide, bytes);
+        jit.callLeafInFrame(Entry::operationAOTStackStringBuilderAppendWide);
     });
     slowPath.append(jit.branchTestPtr(CCallHelpers::Zero, end));
     jit.returnToCaller();

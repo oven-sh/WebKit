@@ -28,7 +28,6 @@
 
 #include "HelperThreadPool.h"
 #include "Options.h"
-#include "SamplingProfiler.h"
 #include "VM.h"
 #include "VMEntryScopeInlines.h"
 #include "WasmCapabilities.h"

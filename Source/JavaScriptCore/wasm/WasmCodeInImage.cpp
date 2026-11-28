@@ -10,6 +10,7 @@
 
 #include "B3Operations.h"
 #include "JSCConfig.h"
+#include "JSWebAssemblyInstance.h"
 #include "LLIntData.h"
 #include "LLIntEntrypoint.h"
 #include "NativeCalleeRegistry.h"
@@ -168,6 +169,13 @@ static std::span<const DeclinedModuleInImage> declinedModulesIn(const uint8_t* d
     return { reinterpret_cast<const DeclinedModuleInImage*>(std::to_address(modulesIn(directory).end())), header.numberOfDeclinedModules };
 }
 
+static bool isFrameless(const uint8_t* directory, const ModuleInImage& module, size_t place)
+{
+    std::span ranges { reinterpret_cast<const FramelessRangeInImage*>(directory + module.framelessRanges), module.numberOfFramelessRanges };
+    auto next = std::ranges::upper_bound(ranges, place, { }, &FramelessRangeInImage::begin);
+    return next != ranges.begin() && place < std::prev(next)->end;
+}
+
 const void* CodeInImage::framelessFaultStub(const void* pc)
 {
     for (auto* image = s_lastPublished.load(std::memory_order_acquire); image; image = image->publishedBefore) {
@@ -176,11 +184,43 @@ const void* CodeInImage::framelessFaultStub(const void* pc)
             continue;
         const uint8_t* directory = image->directory.data();
         for (auto& module : modulesIn(directory)) {
-            std::span ranges { reinterpret_cast<const FramelessRangeInImage*>(directory + module.framelessRanges), module.numberOfFramelessRanges };
-            auto next = std::ranges::upper_bound(ranges, place, { }, &FramelessRangeInImage::begin);
-            if (next != ranges.begin() && place < std::prev(next)->end)
+            if (isFrameless(directory, module, place))
                 return image->code.data() + reinterpret_cast<const DirectoryInImage*>(directory)->faultWithoutFrame;
         }
+    }
+    return nullptr;
+}
+
+std::optional<FunctionCodeIndex> CodeInImage::framelessFunctionAt(std::span<const uint8_t> directory, size_t place)
+{
+    for (auto& module : modulesIn(directory.data())) {
+        if (!isFrameless(directory.data(), module, place))
+            continue;
+        auto functionsOf = [&](ImageCodeFlavor flavor) {
+            return std::span { reinterpret_cast<const FunctionInImage*>(directory.data() + module.functions[static_cast<size_t>(flavor)]), module.numberOfFunctions };
+        };
+        // These are in order, and the second copies lie behind them.
+        std::span functions = functionsOf(ImageCodeFlavor::Trapping);
+        auto function = std::prev(std::ranges::upper_bound(functions, place, { }, &FunctionInImage::entry));
+        if (place - function->entry >= function->size) {
+            functions = functionsOf(ImageCodeFlavor::Checking);
+            function = std::ranges::find_if(functions, [&](const FunctionInImage& function) { return place - function.entry < function.size; });
+        }
+        return FunctionCodeIndex(function - functions.begin());
+    }
+    return std::nullopt;
+}
+
+Callee* CodeInImage::framelessCalleeAt(const void* pc, const JSWebAssemblyInstance* instanceThatRunsIt)
+{
+    for (auto* image = s_lastPublished.load(std::memory_order_acquire); image; image = image->publishedBefore) {
+        uintptr_t place = std::bit_cast<uintptr_t>(pc) - std::bit_cast<uintptr_t>(image->code.data());
+        if (place >= image->code.size())
+            continue;
+        auto function = framelessFunctionAt(image->directory, place);
+        if (!function || !instanceThatRunsIt->imageCodePointers() || function->rawIndex() >= instanceThatRunsIt->moduleInformation().internalFunctionCount())
+            return nullptr;
+        return uncheckedDowncast<Callee>(std::bit_cast<CalleeBits>(instanceThatRunsIt->imageCodePointers()[ImagePointerTable::callee(*function)]).asNativeCallee());
     }
     return nullptr;
 }

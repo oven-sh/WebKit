@@ -37,13 +37,13 @@
 #include "PCToCodeOriginMap.h"
 #include "WasmCompilationMode.h"
 #include "WasmIndexOrName.h"
+#include <wtf/Atomics.h>
 #include <wtf/Box.h>
 #include <wtf/HashSet.h>
 #include <wtf/Lock.h>
 #include <wtf/Stopwatch.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
-#include <wtf/WeakRandom.h>
 
 #if ENABLE(AOT)
 #include "AOTTraceFrame.h"
@@ -82,6 +82,7 @@ public:
         NativeCallee::Category nativeCalleeCategory { NativeCallee::Category::InlineCache };
 #if ENABLE(WEBASSEMBLY)
         std::optional<Wasm::IndexOrName> wasmIndexOrName;
+        JSCell* unverifiedWasmInstance { nullptr };
 #endif
         std::optional<Wasm::CompilationMode> wasmCompilationMode;
 #if ENABLE(CODE_GENERATION)
@@ -169,7 +170,7 @@ public:
 
         // These are function-level data.
         String nameFromCallee(VM&);
-        String displayName(VM&);
+        JS_EXPORT_PRIVATE String displayName(VM&);
         int functionStartLine();
         unsigned functionStartColumn();
         std::tuple<SourceProvider*, SourceID> sourceProviderAndID();
@@ -177,41 +178,82 @@ public:
     };
 
     struct UnprocessedStackTrace {
-        MonotonicTime timestamp;
-        Seconds stopwatchTimestamp;
         void* topPC;
         bool topFrameIsLLInt;
         void* llintPC;
         RegExp* regExp;
         Vector<UnprocessedStackFrame> frames;
+        bool wasWalked { true };
+    };
+
+    // The profilers that take a sample at the same time keep it once.
+    struct SharedStackTrace : public ThreadSafeRefCounted<SharedStackTrace> {
+        WTF_MAKE_STRUCT_TZONE_ALLOCATED_EXPORT(SharedStackTrace, JS_EXPORT_PRIVATE);
+
+        explicit SharedStackTrace(UnprocessedStackTrace&& unprocessed)
+            : unprocessed(WTF::move(unprocessed))
+        { }
+
+        std::optional<UnprocessedStackTrace> unprocessed;
+        Vector<StackFrame> frames;
     };
 
     struct StackTrace {
         MonotonicTime timestamp;
         Seconds stopwatchTimestamp;
-        Vector<StackFrame> frames;
-        StackTrace()
-        { }
-        StackTrace(StackTrace&&) = default;
+        std::span<StackFrame> frames;
+        Ref<SharedStackTrace> ownerOfFrames;
+    };
+
+    enum class ThreadState : uint8_t {
+        Idle, // No JavaScript is on the stack, and VM::isIdle(). A wait beneath a JavaScript frame still belongs to that frame.
+        Program, // No JavaScript is on the stack.
+        GarbageCollector,
+    };
+
+    // Consecutive samples that have no stack trace and found the thread in the same state.
+    struct SamplesWithoutFrames {
+        ThreadState state;
+        MonotonicTime first;
+        MonotonicTime last;
+        size_t count;
+    };
+
+    // Both are in the order of their timestamps. No stack trace was taken between the first and the last sample of a run.
+    struct Samples {
+        Vector<StackTrace> stackTraces;
+        Vector<SamplesWithoutFrames> withoutFrames;
     };
 
     SamplingProfiler(VM&, Ref<Stopwatch>&&);
     JS_EXPORT_PRIVATE ~SamplingProfiler();
-    void noticeJSLockAcquisition();
-    void noticeVMEntry();
-    void shutdown();
+    // For good. What has not been released is dropped.
+    JS_EXPORT_PRIVATE void shutdown();
     template<typename Visitor> void visit(Visitor&) WTF_REQUIRES_LOCK(m_lock);
+    // It is the same for all the profilers of a VM.
     Lock& getLock() LIFETIME_BOUND WTF_RETURNS_LOCK(m_lock) { return m_lock; }
-    void setTimingInterval(Seconds interval) { m_timingInterval = interval; }
+    JS_EXPORT_PRIVATE void setTimingInterval(Seconds) WTF_EXCLUDES_LOCK(m_lock);
+    // A deeper stack loses its outermost frames. A function that was inlined does not count.
+    static constexpr size_t unlimitedStackDepth = std::numeric_limits<size_t>::max();
+    JS_EXPORT_PRIVATE void setMaximumStackDepth(size_t) WTF_REQUIRES_LOCK(m_lock);
+    // With this, every tick of the timer leaves either a stack trace or a sample without frames, unless this profiler is writing a
+    // report. If JavaScript has returned by the time the thread is suspended, or its stack cannot be walked, the stack trace is cut
+    // down to its outermost frame. That frame is known unless it was called while the VM had no profiler.
+    void setRecordsSamplesWithoutFrames(bool records) WTF_REQUIRES_LOCK(m_lock)
+    {
+        if (std::exchange(m_recordsSamplesWithoutFrames, records) != records)
+            m_canExtendLastSamplesWithoutFrames = false;
+    }
     JS_EXPORT_PRIVATE void start();
     void startWithLock() WTF_REQUIRES_LOCK(m_lock);
     Vector<StackTrace> releaseStackTraces() WTF_REQUIRES_LOCK(m_lock);
+    JS_EXPORT_PRIVATE Samples releaseSamples() WTF_REQUIRES_LOCK(m_lock);
     JS_EXPORT_PRIVATE Ref<JSON::Value> stackTracesAsJSON();
     JS_EXPORT_PRIVATE void noticeCurrentThreadAsJSCExecutionThread();
     void noticeCurrentThreadAsJSCExecutionThreadWithLock() WTF_REQUIRES_LOCK(m_lock);
     void processUnverifiedStackTraces() WTF_REQUIRES_LOCK(m_lock);
     void setStopWatch(Ref<Stopwatch>&& stopwatch) WTF_REQUIRES_LOCK(m_lock) { m_stopwatch = WTF::move(stopwatch); }
-    void pause() WTF_REQUIRES_LOCK(m_lock);
+    JS_EXPORT_PRIVATE void pause() WTF_REQUIRES_LOCK(m_lock);
     void clearData() WTF_REQUIRES_LOCK(m_lock);
 
     // Used for debugging in the JSC shell/DRT.
@@ -221,28 +263,39 @@ public:
     JS_EXPORT_PRIVATE void reportTopFunctions(PrintStream&);
     JS_EXPORT_PRIVATE void reportTopBytecodes();
     JS_EXPORT_PRIVATE void reportTopBytecodes(PrintStream&);
+    // Of the same samples.
+    JS_EXPORT_PRIVATE void reportTopFunctionsAndBytecodes(PrintStream&);
 
     NODELETE JS_EXPORT_PRIVATE Thread* thread() const;
 
 private:
-    void createThreadIfNecessary() WTF_REQUIRES_LOCK(m_lock);
-    void timerLoop();
-    void takeSample(Seconds& stackTraceProcessingTime) WTF_REQUIRES_LOCK(m_lock);
+    class Report;
+    class Sampler;
 
-    Lock m_lock;
-    bool m_isPaused WTF_GUARDED_BY_LOCK(m_lock);
-    bool m_isShutDown WTF_GUARDED_BY_LOCK(m_lock);
+    void appendStackTrace(MonotonicTime, SharedStackTrace&) WTF_REQUIRES_LOCK(m_lock);
+    void appendSampleWithoutFrames(MonotonicTime, ThreadState) WTF_REQUIRES_LOCK(m_lock);
+    void reportTopFunctions(PrintStream&, Report&);
+    void reportTopBytecodes(PrintStream&, Report&);
+
+    const Ref<Sampler> m_sampler;
+    Lock& m_lock;
+    bool m_isRunning WTF_GUARDED_BY_LOCK(m_lock) { false };
+    bool m_hasJustStarted WTF_GUARDED_BY_LOCK(m_lock) { false };
+    bool m_isShutDown WTF_GUARDED_BY_LOCK(m_lock) { false };
+    bool m_isWritingReport WTF_GUARDED_BY_LOCK(m_lock) { false };
+    bool m_recordsSamplesWithoutFrames WTF_GUARDED_BY_LOCK(m_lock) { false };
+    bool m_canExtendLastSamplesWithoutFrames WTF_GUARDED_BY_LOCK(m_lock) { false };
     bool m_needsReportAtExit { false };
     VM& m_vm;
-    WeakRandom m_weakRandom;
     Ref<Stopwatch> m_stopwatch WTF_GUARDED_BY_LOCK(m_lock);
     Vector<StackTrace> m_stackTraces WTF_GUARDED_BY_LOCK(m_lock);
-    Vector<UnprocessedStackTrace> m_unprocessedStackTraces WTF_GUARDED_BY_LOCK(m_lock);
-    Seconds m_timingInterval;
-    const RefPtr<Thread> m_thread;
-    RefPtr<Thread> m_jscExecutionThread WTF_GUARDED_BY_LOCK(m_lock);
+    size_t m_numberOfVerifiedStackTraces WTF_GUARDED_BY_LOCK(m_lock) { 0 };
+    Vector<SamplesWithoutFrames> m_samplesWithoutFrames WTF_GUARDED_BY_LOCK(m_lock);
+    Seconds m_timingInterval WTF_GUARDED_BY_LOCK(m_lock);
+    MonotonicTime m_nextSampleTime WTF_GUARDED_BY_LOCK(m_lock);
+    Seconds m_stopwatchTimestamp WTF_GUARDED_BY_LOCK(m_lock); // Of the sample that is being taken.
+    size_t m_maximumStackDepth WTF_GUARDED_BY_LOCK(m_lock);
     HashSet<JSCell*> m_liveCellPointers WTF_GUARDED_BY_LOCK(m_lock);
-    Vector<UnprocessedStackFrame> m_currentFrames WTF_GUARDED_BY_LOCK(m_lock);
 };
 
 } // namespace JSC

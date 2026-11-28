@@ -430,6 +430,12 @@ public:
     void removeObserver(HeapObserver* observer) { m_observers.removeFirst(observer); }
 
     MutatorState mutatorState() const { return m_mutatorState; }
+    // Whether the mutator is marking, sweeping, refilling an allocator or waiting for the collector. For a thread that samples it.
+    bool isMutatorBusyWithCollectionConcurrently() const
+    {
+        return WTF::atomicLoad<MemoryOrder::Relaxed>(const_cast<MutatorState*>(&m_mutatorState)) != MutatorState::Running
+            || m_servingCollectorDepth.loadRelaxed();
+    }
     std::optional<CollectionScope> collectionScope() const { return m_collectionScope; }
     std::optional<CollectionScope> lastCollectionScope() const { return m_lastCollectionScope; }
     bool didSkipMarkingInLastCollection() const { return m_didSkipMarkingInLastCollection; }
@@ -1134,6 +1140,7 @@ private:
     Atomic<unsigned> m_accessHolderCount { 0 };
 #endif
     bool m_worldIsStopped { false };
+    Atomic<uint8_t> m_servingCollectorDepth { 0 }; // What the mutator does for a collection without leaving MutatorState::Running.
 
     bool m_mutatorHadAccessSinceLastStop { true };
     bool m_didDeferGCWork { false };

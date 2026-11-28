@@ -567,6 +567,15 @@ void StubAssembler::emitOperationTailCall(const CalledOperation& operation, Oper
         return;
     }
     constexpr GPRReg function = gprOf(StubRegister::Operation);
+    if (const Entry* entry = std::get_if<Entry>(&operation); isX86_64() && entry && mayJumpToCLibrary(*entry)) {
+        RELEASE_ASSERT(firstArgument == OperationCall::FirstArgument::None);
+        Jump hasSamplingProfiler = loadVMAndBranchIfItHasSamplingProfiler(function);
+        addOutOfLinePart([hasSamplingProfiler, entry = *entry](StubAssembler& jit) {
+            hasSamplingProfiler.link(&jit);
+            jit.callLeaf(entry);
+            jit.ret();
+        });
+    }
     loadFirstArgument(firstArgument);
     loadCalledOperation(operation, function);
     farJump(function, OperationPtrTag);

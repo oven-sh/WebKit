@@ -1592,12 +1592,14 @@ static void emitArrayShift(StubAssembler& jit, GPRReg scratch, JumpList& callsHo
     RELEASE_ASSERT(target == leafArgumentGPR(0) && butterfly == leafArgumentGPR(1) && last == leafArgumentGPR(2));
     jit.store32(last, Address(butterfly, Butterfly::offsetOfPublicLength()));
     jit.getEffectiveAddress(BaseIndex(butterfly, last, CCallHelpers::TimesEight), moved);
+    jit.emitFunctionPrologue();
     jit.pushPair(element, moved);
     jit.move(butterfly, target);
     jit.addPtr(TrustedImm32(sizeof(EncodedJSValue)), butterfly);
     jit.lshift64(TrustedImm32(CCallHelpers::TimesEight), last);
-    jit.callLeaf(Entry::operationAOTMoveBytes, 2 * sizeof(CPURegister));
+    jit.callLeafInFrame(Entry::operationAOTMoveBytes);
     jit.popPair(jit.result(), moved);
+    jit.emitFunctionEpilogueWithEmptyFrame();
     jit.store64(TrustedImm32(0), Address(moved));
     jit.returnToCaller();
 

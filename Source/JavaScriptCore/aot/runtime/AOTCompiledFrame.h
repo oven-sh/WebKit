@@ -146,6 +146,7 @@ struct SampledRegisters {
     void* pc;
     void* linkRegister;
     void* stackPointer;
+    void* macroScratchRegister { nullptr };
 };
 
 struct SampledTop {
@@ -155,7 +156,11 @@ struct SampledTop {
     CallFrame* framePointer { nullptr };
 };
 
-JS_EXPORT_PRIVATE std::optional<SampledTop> findSampledTop(const Image&, const SampledRegisters&, CallFrame* topCallFrame, const StackBounds&);
+JS_EXPORT_PRIVATE std::optional<SampledTop> findSampledTop(const Image&, const SampledRegisters&, CallFrame* topCallFrame, EntryFrame*, const StackBounds&);
+#if ENABLE(WEBASSEMBLY_OMGJIT)
+// See Wasm::CodeInImage::framelessCalleeAt().
+JS_EXPORT_PRIVATE CallFrame* findCallerOfFramelessWebAssembly(const SampledRegisters&, CalleeBits, const StackBounds&);
+#endif
 
 struct LogicalFrame {
     bool hasCallerInMachineFrame() const { return inlineFrame || isOfCalledBuiltin; }

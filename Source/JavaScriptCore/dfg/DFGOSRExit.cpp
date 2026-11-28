@@ -261,6 +261,7 @@ void OSRExit::emitRestoreArguments(CCallHelpers& jit, VM& vm, const Operands<Val
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationCompileOSRExit, void, (CallFrame* callFrame, void* bufferToPreserve))
 {
     VM& vm = callFrame->deprecatedVM();
+    NativeCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
     ActiveScratchBufferScope activeScratchBufferScope(ScratchBuffer::fromData(bufferToPreserve), GPRInfo::numberOfRegisters + FPRInfo::numberOfRegisters);
 
@@ -349,6 +350,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationMaterializeOSRExitSideState, void, (V
 {
     VM& vm = *vmPointer;
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    NativeCallFrameTracer tracer(vm, callFrame);
     CodeOrigin exitCodeOrigin(BytecodeIndex::fromBits(exitBytecodeIndexBits), exitInlineCallFrame);
 
     Vector<std::unique_ptr<CheckpointOSRExitSideState>, VM::expectedMaxActiveSideStateCount> sideStates(ReserveCapacityTag { }, exitCodeOrigin.inlineDepth());

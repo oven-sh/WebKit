@@ -250,7 +250,7 @@ struct FlatSubstringRegisters {
     GPRReg secondScratch;
     RegisterSet alsoKept { };
 };
-[[nodiscard]] AssemblyHelpers::FreeListRefill makeSubstringOfFlatString(StubAssembler&, const FlatSubstringRegisters&, MacroAssembler::JumpList& fails);
+[[nodiscard]] AssemblyHelpers::FreeListRefill makeSubstringOfFlatStringInFrame(StubAssembler&, const FlatSubstringRegisters&, MacroAssembler::JumpList& fails);
 
 void locateKeysOfPair(StubAssembler&, GPRReg first, GPRReg second, GPRReg set, GPRReg scratch);
 

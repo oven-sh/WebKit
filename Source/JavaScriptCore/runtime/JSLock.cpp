@@ -145,18 +145,14 @@ void JSLock::didAcquireLock()
             if (isKernTCSMAvailable())
                 enableKernTCSM();
         }
+#if ENABLE(SAMPLING_PROFILER)
+        for (auto& samplingProfiler : m_vm->samplingProfilers())
+            samplingProfiler->noticeCurrentThreadAsJSCExecutionThread();
+#endif
     }
 
     // Note: everything below must come after addCurrentThread().
     m_vm->traps().notifyGrabAllLocks();
-
-#if ENABLE(SAMPLING_PROFILER)
-    {
-        SamplingProfiler* samplingProfiler = m_vm->samplingProfiler();
-        if (samplingProfiler) [[unlikely]]
-            samplingProfiler->noticeJSLockAcquisition();
-    }
-#endif
 }
 
 void JSLock::unlock()

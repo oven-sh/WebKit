@@ -1075,6 +1075,7 @@ void BBQJIT::emitWriteBarrier(GPRReg cellGPR)
         toSlowPath.link(&jit);
         jit.prepareWasmCallOperation(GPRInfo::wasmContextInstancePointer);
         jit.setupArguments<decltype(operationWasmWriteBarrierSlowPath)>(GPRInfo::argumentGPR0, wasmScratchGPR);
+        jit.storeTopCallFrameFromWasm(wasmScratchGPR);
         callOperation(jit, operationWasmWriteBarrierSlowPath);
 
         belowBlackThreshold.link(&jit);
@@ -1871,6 +1872,7 @@ void BBQJIT::pushArrayNewFromSegment(ArraySegmentOperation operation, TypeSignat
         m_slowPaths.append({ origin(), WTF::move(slowPath), WTF::move(doneLabel), copyBindings(), [resultGPR](BBQJIT&, CCallHelpers& jit) {
             jit.prepareWasmCallOperation(GPRInfo::wasmContextInstancePointer);
             jit.setupArguments<decltype(operationWasmAnyConvertExtern)>(resultGPR);
+            jit.storeTopCallFrameFromWasm(wasmScratchGPR);
             callOperation(jit, operationWasmAnyConvertExtern);
             jit.move(GPRInfo::returnValueGPR, resultGPR);
         } });

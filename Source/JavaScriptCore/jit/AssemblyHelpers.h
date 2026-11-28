@@ -80,12 +80,19 @@ public:
     {
         UNUSED_PARAM(vm);
 #if ASSERT_ENABLED
-        storePtr(GPRInfo::callFrameRegister, &vm.topCallFrame);
+        storeTopCallFrame(vm);
 #endif
+    }
+
+    // For a callee that does not do it itself. While the thread is in C code, the sampling profiler has nothing else to go by.
+    void storeTopCallFrame(VM& vm)
+    {
+        storePtr(GPRInfo::callFrameRegister, &vm.topCallFrame);
     }
 
 #if ENABLE(WEBASSEMBLY)
     NODELETE void prepareWasmCallOperation(GPRReg instanceGPR);
+    void storeTopCallFrameFromWasm(GPRReg scratchGPR);
 #endif
 
     void checkStackPointerAlignment()

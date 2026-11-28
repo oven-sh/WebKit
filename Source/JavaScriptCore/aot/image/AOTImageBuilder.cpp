@@ -40,6 +40,7 @@
 #include <expected>
 #include <limits>
 #include <optional>
+#include <tuple>
 #include <type_traits>
 #include <wtf/Atomics.h>
 #include <wtf/CheckedArithmetic.h>
@@ -142,20 +143,22 @@ static bool hasAddressInImage(StubLinkage linkage)
     return false;
 }
 
+static bool isFoundByKey(const StubAddressInImage& address)
+{
+    return !address.mayJumpToFunction && isFoundByKey(StubKey::fromBits(address.key).family());
+}
+
 static Vector<uint8_t> encodeStubAddresses(const StubBlob& blob)
 {
     Vector<StubAddressInImage> addresses;
     for (auto& placement : blob.placements) {
-        StubLinkage linkage = descriptorOf(placement.key.family()).linkage;
-        bool usesCallConvention = isX86_64() && linkage == StubLinkage::CalledByCode && signatureOf(placement.key).usesCallConvention;
-        if (usesCallConvention || hasAddressInImage(linkage))
-            addresses.append({ placement.key.bits(), placement.offset, usesCallConvention });
+        if (hasAddressInImage(descriptorOf(placement.key.family()).linkage))
+            addresses.append({ placement.key.bits(), placement.offset, false });
+        if (isX86_64() && mayJumpToFunction(placement.key))
+            addresses.append({ placement.key.bits(), placement.offset, true });
     }
-    AOT::sortInLine(addresses, [](const StubAddressInImage& a, const StubAddressInImage& b) {
-        bool isFirstPart = isFoundByKey(StubKey::fromBits(a.key).family());
-        if (isFirstPart != isFoundByKey(StubKey::fromBits(b.key).family()))
-            return isFirstPart;
-        return a.key < b.key;
+    AOT::sortInLine(addresses, { }, [](const StubAddressInImage& address) {
+        return std::tuple { !isFoundByKey(address), address.mayJumpToFunction, address.mayJumpToFunction ? address.offset : 0, address.key };
     });
     return bytesOf(addresses);
 }
@@ -660,7 +663,7 @@ static void writeHeader(ImageHeader& header, const ImageWriterInputs& parts, con
         offset = site.offset;
     }
     header.numberOfStubsFoundByKey = static_cast<uint32_t>(std::ranges::count_if(spanReinterpretCast<const StubAddressInImage>(parts.sections[ImageSection::StubAddresses].span()), [](const StubAddressInImage& address) {
-        return isFoundByKey(StubKey::fromBits(address.key).family());
+        return isFoundByKey(address);
     }));
 }
 
