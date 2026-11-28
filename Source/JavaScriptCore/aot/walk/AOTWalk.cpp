@@ -5833,7 +5833,7 @@ bool Walker::isInHotFunction() const
     return function && (linked.functionsFinishedInNestedIterations.get(function.index()) || linked.functionsReachedByRecursion.get(function.index()));
 }
 
-bool Walker::joinArms(std::span<const JoinArm> arms, BlockID meeting, std::span<Reference> met, uint32_t firstRecordOfArms)
+bool Walker::joinArms(std::span<const JoinArm> arms, BlockID meeting, std::span<Reference> met, const StretchInArms* stretch)
 {
     Vector<size_t, 8> positionsOfParameters;
     Vector<Representation, 4> forms;
@@ -5884,7 +5884,7 @@ bool Walker::joinArms(std::span<const JoinArm> arms, BlockID meeting, std::span<
     pendingMeeting = nullptr;
     Vector<size_t, 1> freshListPositions;
     for (size_t position : positionsOfParameters) {
-        if (m_hasMadeReleasableArrays && armsBringFreshList(arms, position))
+        if (m_hasMadeReleasableArrays && stretch && armsBringFreshList(arms, position, *stretch))
             freshListPositions.append(position);
     }
     auto statesOfArms = [&] {
@@ -5903,7 +5903,7 @@ bool Walker::joinArms(std::span<const JoinArm> arms, BlockID meeting, std::span<
         Vector<Reference, 8> parametersOfSlots;
     };
     Vector<MergedObjectOfArms, 1> objectsMet;
-    if (firstRecordOfArms != mergesNoObjects && has(Mechanism::EscapeAnalysis) && !positionsOfParameters.isEmpty()) {
+    if (stretch && has(Mechanism::EscapeAnalysis) && !positionsOfParameters.isEmpty()) {
         Vector<const WalkState*, 4> states = statesOfArms();
         auto cellOf = [&](Reference value) {
             return value && value.isValue() ? underlyingCellOf(m_code, value.id()) : ValueID();
@@ -5915,7 +5915,7 @@ bool Walker::joinArms(std::span<const JoinArm> arms, BlockID meeting, std::span<
                 if (cell && std::ranges::count_if(arms[way].values, [&](Reference other) { return cellOf(other) == cell; }) == 1)
                     values.append(arms[way].values[position]);
             }
-            std::optional<ObjectsThatMeet> objects = !states.isEmpty() && values.size() == states.size() ? findObjectsThatMeetAsOne(*this, states.span(), values.span(), firstRecordOfArms) : std::nullopt;
+            std::optional<ObjectsThatMeet> objects = !states.isEmpty() && values.size() == states.size() ? findObjectsThatMeetAsOne(*this, states.span(), values.span(), stretch->firstRecord) : std::nullopt;
             if (!objects)
                 continue;
             MergedObjectOfArms merged { position, WTF::move(*objects), { } };
@@ -5979,7 +5979,29 @@ bool Walker::joinArms(std::span<const JoinArm> arms, BlockID meeting, std::span<
     return true;
 }
 
-bool Walker::armsBringFreshList(std::span<const JoinArm> arms, size_t position)
+bool Walker::isListNamedBehindArms(const WalkState& state, ValueID list, const StretchInArms& stretch)
+{
+    if (!wasBuiltInCurrentFrame(list) || !canTakeOverObject(list) || mayNameObjectsInGenerators())
+        return true;
+    const BodyIndex& index = currentBodyIndex();
+    if (!m_liveness.isComputedFor(index))
+        m_liveness.compute(index);
+    ValueID firstOfStretch(index.block(stretch.inputBlock).firstValue().index() + stretch.begin);
+    ValueID behindStretch(index.block(stretch.inputBlock).firstValue().index() + stretch.end);
+    bool isNamed = false;
+    auto look = [&](Reference name) {
+        isNamed |= name && (!name.isRecord() || (name.isValue() && underlyingCellOf(m_code, name.id()) == list));
+    };
+    m_liveness.forEachLiveBefore(behindStretch, stretch.inputBlock, [&](ValueID value) {
+        // What the stretch makes is what meets, or is made again behind it.
+        if (value < firstOfStretch)
+            look(referenceOf(value));
+    });
+    state.forEachValueHeldByAnother(look);
+    return isNamed;
+}
+
+bool Walker::armsBringFreshList(std::span<const JoinArm> arms, size_t position, const StretchInArms& stretch)
 {
     auto listOf = [&](Reference value) {
         ValueID cell = value && value.isValue() ? underlyingCellOf(m_code, value.id()) : ValueID();
@@ -5993,7 +6015,10 @@ bool Walker::armsBringFreshList(std::span<const JoinArm> arms, size_t position)
         if (arm.last != m_block && (!left || !left->hasState))
             return false;
         const WalkState& state = left ? left->state : m_state;
-        return state.isFresh(Reference::value(list)) && std::ranges::count_if(arm.values, [&](Reference other) { return listOf(other) == list; }) == 1;
+        if (!state.isFresh(Reference::value(list)) || std::ranges::count_if(arm.values, [&](Reference other) { return listOf(other) == list; }) != 1)
+            return false;
+        // A list that was there before the arms parted may keep another name behind them.
+        return list.index() >= stretch.firstRecord || !isListNamedBehindArms(state, list, stretch);
     });
 }
 
@@ -6082,7 +6107,7 @@ bool Walker::joinArms(const StretchInArms& stretch, const ArmsThatMeet& arms, Bl
     }
     Vector<Reference, 8> met(numberMentioned + steps.size() * LoopsOverGeneratorsOfUnit::numberOfParts);
     if (steps.isEmpty()) {
-        if (!joinArms(arms.span(), meeting, met.mutableSpan(), stretch.firstRecord))
+        if (!joinArms(arms.span(), meeting, met.mutableSpan(), &stretch))
             return false;
     } else {
         ArmsThatMeet armsWithSteps = arms;
@@ -6090,7 +6115,7 @@ bool Walker::joinArms(const StretchInArms& stretch, const ArmsThatMeet& arms, Bl
             for (size_t position : steps)
                 appendStepParts(*this, Reference(arm.values[position]), arm.values);
         }
-        if (!joinArms(armsWithSteps.span(), meeting, met.mutableSpan(), stretch.firstRecord))
+        if (!joinArms(armsWithSteps.span(), meeting, met.mutableSpan(), &stretch))
             return false;
         for (size_t place = 0; place < steps.size(); ++place) {
             Reference whole = met[steps[place]];
