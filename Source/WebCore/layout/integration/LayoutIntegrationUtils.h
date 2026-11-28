@@ -33,8 +33,7 @@
 #include <optional>
 #include <wtf/CheckedRef.h>
 
-namespace WebCore {
-namespace Layout {
+namespace WebCore::Layout {
 
 class ElementBox;
 class InlineLayoutState;
@@ -46,7 +45,7 @@ public:
 
     void layoutWithFormattingContextForBox(const ElementBox&, std::optional<LayoutUnit> overridingBorderBoxLogicalWidth = { }, std::optional<LayoutUnit> overridingBorderBoxLogicalHeight = { }) const;
     std::pair<LayoutUnit, LayoutUnit> borderAndPaddingForGridItem(const ElementBox&, std::optional<LayoutUnit> gridAreaInlineSize) const;
-    void layoutGridItem(const ElementBox&, std::optional<LayoutUnit> overridingBorderBoxLogicalWidth, std::optional<LayoutUnit> overridingBorderBoxLogicalHeight, LayoutUnit gridAreaInlineSize) const;
+    void layoutGridItem(const ElementBox&, std::optional<LayoutUnit> overridingBorderBoxLogicalWidth, std::optional<LayoutUnit> overridingBorderBoxLogicalHeight, LayoutUnit gridAreaInlineSize, std::optional<LayoutUnit> gridAreaBlockSize) const;
     LayoutUnit maxContentWidth(const ElementBox&) const;
     LayoutUnit maxContentWidthForGridItem(const ElementBox&, std::optional<LayoutUnit> gridAreaInlineSize) const;
     LayoutUnit minContentWidth(const ElementBox&) const;
@@ -72,5 +71,3 @@ private:
 };
 
 }
-}
-

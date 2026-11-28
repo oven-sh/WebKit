@@ -224,7 +224,23 @@ void WebPageProxy::dynamicViewportSizeUpdate(const DynamicViewportSizeUpdate& ta
     internals().minimumUnobscuredSize = target.minimumUnobscuredSize;
     internals().maximumUnobscuredSize = target.maximumUnobscuredSize;
     protect(m_legacyMainFrameProcess)->send(Messages::WebPage::DynamicViewportSizeUpdate(target), webPageIDInMainFrameProcess());
+    updateUnobscuredSafeAreaInsets(target.unobscuredSafeAreaInsets);
     setDeviceOrientation(target.deviceOrientation);
+}
+
+void WebPageProxy::updateUnobscuredSafeAreaInsets(const FloatBoxExtent& insets)
+{
+    if (internals().unobscuredSafeAreaInsets == insets)
+        return;
+
+    internals().unobscuredSafeAreaInsets = insets;
+
+    if (!hasRunningProcess())
+        return;
+
+    forEachWebContentProcess([&](auto& process, auto pageID) {
+        process.send(Messages::WebPage::SetUnobscuredSafeAreaInsets(insets), pageID);
+    });
 }
 
 void WebPageProxy::setViewportConfigurationViewLayoutSize(const WebCore::FloatSize& size, double layoutSizeScaleFactorFromClient, double minimumEffectiveDeviceWidth)
@@ -361,11 +377,11 @@ void WebPageProxy::selectPositionAtBoundaryWithDirection(std::optional<WebCore::
 
     Ref process = processContainingFrame(frameID);
     auto backgroundActivity = protect(process->throttler())->backgroundActivity("WebPageProxy::selectPositionAtBoundaryWithDirection"_s);
-    sendWithAsyncReplyToProcessContainingFrame(frameID, Messages::WebPage::SelectPositionAtBoundaryWithDirection(frameID, point, granularity, direction, isInteractingWithFocusedElement), Messages::WebPage::SelectPositionAtBoundaryWithDirection::Reply { [weakThis = WeakPtr { *this }, granularity, direction, isInteractingWithFocusedElement, callbackFunction = WTF::move(callbackFunction), backgroundActivity = WTF::move(backgroundActivity)](std::optional<WebCore::RemoteUserInputEventData> remoteUserInputEventData) mutable {
+    sendWithAsyncReplyToProcessContainingFrame(frameID, Messages::WebPage::SelectPositionAtBoundaryWithDirection(frameID, point, granularity, direction, isInteractingWithFocusedElement), ReplyWithConnection<Messages::WebPage::SelectPositionAtBoundaryWithDirection> { [weakThis = WeakPtr { *this }, frameID, granularity, direction, isInteractingWithFocusedElement, callbackFunction = WTF::move(callbackFunction), backgroundActivity = WTF::move(backgroundActivity)](IPC::Connection* connection, std::optional<WebCore::RemoteUserInputEventData> remoteUserInputEventData) mutable {
         RefPtr protectedThis = weakThis.get();
-        if (protectedThis && remoteUserInputEventData) {
+        if (RefPtr targetFrame = protectedThis && remoteUserInputEventData ? protectedThis->frameForRemoteUserInputEventRedispatch(connection, frameID, remoteUserInputEventData->targetFrameID) : nullptr) {
             // The gesture landed on a cross-origin frame; re-dispatch it into that frame's process.
-            protectedThis->selectPositionAtBoundaryWithDirection(remoteUserInputEventData->targetFrameID, roundedIntPoint(FloatPoint { remoteUserInputEventData->transformedPoint }), granularity, direction, isInteractingWithFocusedElement, WTF::move(callbackFunction));
+            protectedThis->selectPositionAtBoundaryWithDirection(targetFrame->frameID(), roundedIntPoint(FloatPoint { remoteUserInputEventData->transformedPoint }), granularity, direction, isInteractingWithFocusedElement, WTF::move(callbackFunction));
             return;
         }
         callbackFunction();
@@ -413,14 +429,15 @@ void WebPageProxy::prepareSelectionForContextMenuWithLocationInView(std::optiona
             return;
         }
 
-        protectedThis->sendWithAsyncReplyToProcessContainingFrame(frameID, Messages::WebPage::PrepareSelectionForContextMenuWithLocationInView(frameID, point), Messages::WebPage::PrepareSelectionForContextMenuWithLocationInView::Reply { [weakThis = WTF::move(weakThis), callbackFunction = WTF::move(callbackFunction)] (auto&& reply) mutable {
+        protectedThis->sendWithAsyncReplyToProcessContainingFrame(frameID, Messages::WebPage::PrepareSelectionForContextMenuWithLocationInView(frameID, point), ReplyWithConnection<Messages::WebPage::PrepareSelectionForContextMenuWithLocationInView> { [weakThis = WTF::move(weakThis), frameID, callbackFunction = WTF::move(callbackFunction)](IPC::Connection* connection, auto&& reply) mutable {
             WTF::switchOn(WTF::move(reply), [&](PrepareSelectionForContextMenuResult&& result) {
                 callbackFunction(result.shouldShowMenu, result.item);
             }, [&](WebCore::RemoteUserInputEventData&& remoteUserInputEventData) {
                 RefPtr protectedThis = weakThis.get();
-                if (!protectedThis)
+                RefPtr targetFrame = protectedThis ? protectedThis->frameForRemoteUserInputEventRedispatch(connection, frameID, remoteUserInputEventData.targetFrameID) : nullptr;
+                if (!targetFrame)
                     return callbackFunction(false, RevealItem());
-                protectedThis->prepareSelectionForContextMenuWithLocationInView(remoteUserInputEventData.targetFrameID, roundedIntPoint(FloatPoint { remoteUserInputEventData.transformedPoint }), WTF::move(callbackFunction));
+                protectedThis->prepareSelectionForContextMenuWithLocationInView(targetFrame->frameID(), roundedIntPoint(FloatPoint { remoteUserInputEventData.transformedPoint }), WTF::move(callbackFunction));
             });
         } });
     });
@@ -460,7 +477,7 @@ void WebPageProxy::handleAutocorrectionContext(const WebAutocorrectionContext& c
 void WebPageProxy::clearSelectionAfterTappingSelectionHighlightIfNeeded(WebCore::FloatPoint location)
 {
     if (hasRunningProcess())
-        protect(legacyMainFrameProcess())->send(Messages::WebPage::ClearSelectionAfterTappingSelectionHighlightIfNeeded(location), webPageIDInMainFrameProcess());
+        sendToFocusedOrMainFrameProcess(Messages::WebPage::ClearSelectionAfterTappingSelectionHighlightIfNeeded(location));
 }
 
 void WebPageProxy::getSelectionContext(CompletionHandler<void(const String&, const String&, const String&)>&& callbackFunction)
@@ -472,7 +489,25 @@ void WebPageProxy::getSelectionContext(CompletionHandler<void(const String&, con
 
 void WebPageProxy::handleTwoFingerTapAtPoint(const WebCore::IntPoint& point, OptionSet<WebEventModifier> modifiers, WebKit::TapIdentifier requestID)
 {
-    protect(legacyMainFrameProcess())->send(Messages::WebPage::HandleTwoFingerTapAtPoint(point, modifiers, requestID), webPageIDInMainFrameProcess());
+    handleTwoFingerTapAtPointInFrame(std::nullopt, point, modifiers, requestID);
+}
+
+void WebPageProxy::handleTwoFingerTapAtPointInFrame(std::optional<FrameIdentifier> frameID, const WebCore::IntPoint& point, OptionSet<WebEventModifier> modifiers, WebKit::TapIdentifier requestID)
+{
+    RefPtr frame = frameID ? WebFrameProxy::webFrame(*frameID) : m_mainFrame.get();
+    if (!frame || frame->page() != this)
+        return;
+
+    frame->notifyActivated(MonotonicTime::now());
+
+    sendWithAsyncReplyToProcessContainingFrame(frameID, Messages::WebPage::HandleTwoFingerTapAtPoint(frameID, point, modifiers, requestID), Messages::WebPage::HandleTwoFingerTapAtPoint::Reply { [weakThis = WeakPtr { *this }, modifiers, requestID](auto remoteUserInputEventData) {
+        if (!remoteUserInputEventData)
+            return;
+        RefPtr protectedThis = weakThis;
+        if (!protectedThis)
+            return;
+        protectedThis->handleTwoFingerTapAtPointInFrame(remoteUserInputEventData->targetFrameID, roundedIntPoint(FloatPoint { remoteUserInputEventData->transformedPoint }), modifiers, requestID);
+    } });
 }
 
 void WebPageProxy::selectWithTwoTouches(std::optional<WebCore::FrameIdentifier> frameID, const WebCore::IntPoint from, const WebCore::IntPoint to, GestureType gestureType, GestureRecognizerState gestureState, CompletionHandler<void(const WebCore::IntPoint&, GestureType, GestureRecognizerState, OptionSet<SelectionFlags>)>&& callback)
@@ -480,12 +515,12 @@ void WebPageProxy::selectWithTwoTouches(std::optional<WebCore::FrameIdentifier> 
     if (!hasRunningProcess())
         return callback({ }, GestureType::Loupe, GestureRecognizerState::Possible, { });
 
-    sendWithAsyncReplyToProcessContainingFrame(frameID, Messages::WebPage::SelectWithTwoTouches(frameID, from, to, gestureType, gestureState), Messages::WebPage::SelectWithTwoTouches::Reply { [weakThis = WeakPtr { *this }, from, to, gestureType, gestureState, callback = WTF::move(callback)](const WebCore::IntPoint& point, GestureType innerGestureType, GestureRecognizerState innerGestureState, OptionSet<SelectionFlags> flags, std::optional<WebCore::RemoteUserInputEventData> remoteUserInputEventData) mutable {
+    sendWithAsyncReplyToProcessContainingFrame(frameID, Messages::WebPage::SelectWithTwoTouches(frameID, from, to, gestureType, gestureState), ReplyWithConnection<Messages::WebPage::SelectWithTwoTouches> { [weakThis = WeakPtr { *this }, frameID, from, to, gestureType, gestureState, callback = WTF::move(callback)](IPC::Connection* connection, const WebCore::IntPoint& point, GestureType innerGestureType, GestureRecognizerState innerGestureState, OptionSet<SelectionFlags> flags, std::optional<WebCore::RemoteUserInputEventData> remoteUserInputEventData) mutable {
         RefPtr protectedThis = weakThis.get();
-        if (protectedThis && remoteUserInputEventData) {
+        if (RefPtr targetFrame = protectedThis && remoteUserInputEventData ? protectedThis->frameForRemoteUserInputEventRedispatch(connection, frameID, remoteUserInputEventData->targetFrameID) : nullptr) {
             // The gesture landed on a cross-origin frame; re-dispatch it into that frame's process.
             auto transformedFrom = roundedIntPoint(FloatPoint { remoteUserInputEventData->transformedPoint });
-            protectedThis->selectWithTwoTouches(remoteUserInputEventData->targetFrameID, transformedFrom, to + (transformedFrom - from), gestureType, gestureState,
+            protectedThis->selectWithTwoTouches(targetFrame->frameID(), transformedFrom, to + (transformedFrom - from), gestureType, gestureState,
                 [from, callback = WTF::move(callback)](const WebCore::IntPoint&, GestureType gestureType, GestureRecognizerState gestureState, OptionSet<SelectionFlags> flags) mutable {
                 callback(from, gestureType, gestureState, flags);
             });
@@ -564,14 +599,18 @@ void WebPageProxy::applicationDidEnterBackground()
             navigationState->releaseNetworkActivity(NavigationState::NetworkActivityReleaseReason::ScreenLocked);
     }
 #endif
-    protect(m_legacyMainFrameProcess)->send(Messages::WebPage::ApplicationDidEnterBackground(isSuspendedUnderLock), webPageIDInMainFrameProcess());
+    forEachWebContentProcess([&](auto& process, auto pageID) {
+        process.send(Messages::WebPage::ApplicationDidEnterBackground(isSuspendedUnderLock), pageID);
+    });
 }
 
 void WebPageProxy::applicationDidFinishSnapshottingAfterEnteringBackground()
 {
     if (m_drawingArea)
         protect(m_drawingArea)->hideContentUntilPendingUpdate();
-    protect(m_legacyMainFrameProcess)->send(Messages::WebPage::ApplicationDidFinishSnapshottingAfterEnteringBackground(), webPageIDInMainFrameProcess());
+    forEachWebContentProcess([&](auto& process, auto pageID) {
+        process.send(Messages::WebPage::ApplicationDidFinishSnapshottingAfterEnteringBackground(), pageID);
+    });
 }
 
 void WebPageProxy::applicationWillEnterForeground()
@@ -581,14 +620,18 @@ void WebPageProxy::applicationWillEnterForeground()
     bool isSuspendedUnderLock = UIApplication.sharedApplication.isSuspendedUnderLock;
     WEBPAGEPROXY_RELEASE_LOG(ViewState, "applicationWillEnterForeground: isSuspendedUnderLock? %d", isSuspendedUnderLock);
 
-    protect(m_legacyMainFrameProcess)->send(Messages::WebPage::ApplicationWillEnterForeground(isSuspendedUnderLock), webPageIDInMainFrameProcess());
+    forEachWebContentProcess([&](auto& process, auto pageID) {
+        process.send(Messages::WebPage::ApplicationWillEnterForeground(isSuspendedUnderLock), pageID);
+    });
 
     hardwareKeyboardAvailabilityChanged(protect(m_configuration->processPool())->cachedHardwareKeyboardState());
 }
 
 void WebPageProxy::applicationWillResignActive()
 {
-    protect(m_legacyMainFrameProcess)->send(Messages::WebPage::ApplicationWillResignActive(), webPageIDInMainFrameProcess());
+    forEachWebContentProcess([&](auto& process, auto pageID) {
+        process.send(Messages::WebPage::ApplicationWillResignActive(), pageID);
+    });
 }
 
 void WebPageProxy::applicationDidEnterBackgroundForMedia()
@@ -596,7 +639,9 @@ void WebPageProxy::applicationDidEnterBackgroundForMedia()
     bool isSuspendedUnderLock = UIApplication.sharedApplication.isSuspendedUnderLock;
     WEBPAGEPROXY_RELEASE_LOG(ViewState, "applicationWillEnterForegroundForMedia: isSuspendedUnderLock? %d", isSuspendedUnderLock);
 
-    protect(m_legacyMainFrameProcess)->send(Messages::WebPage::ApplicationDidEnterBackgroundForMedia(isSuspendedUnderLock), webPageIDInMainFrameProcess());
+    forEachWebContentProcess([&](auto& process, auto pageID) {
+        process.send(Messages::WebPage::ApplicationDidEnterBackgroundForMedia(isSuspendedUnderLock), pageID);
+    });
 }
 
 void WebPageProxy::applicationWillEnterForegroundForMedia()
@@ -604,7 +649,9 @@ void WebPageProxy::applicationWillEnterForegroundForMedia()
     bool isSuspendedUnderLock = UIApplication.sharedApplication.isSuspendedUnderLock;
     WEBPAGEPROXY_RELEASE_LOG(ViewState, "applicationWillEnterForegroundForMedia: isSuspendedUnderLock? %d", isSuspendedUnderLock);
 
-    protect(m_legacyMainFrameProcess)->send(Messages::WebPage::ApplicationWillEnterForegroundForMedia(isSuspendedUnderLock), webPageIDInMainFrameProcess());
+    forEachWebContentProcess([&](auto& process, auto pageID) {
+        process.send(Messages::WebPage::ApplicationWillEnterForegroundForMedia(isSuspendedUnderLock), pageID);
+    });
 }
 
 void WebPageProxy::applicationDidBecomeActive()
@@ -613,7 +660,9 @@ void WebPageProxy::applicationDidBecomeActive()
     if (m_videoPresentationManager)
         protect(m_videoPresentationManager)->applicationDidBecomeActive();
 #endif
-    protect(m_legacyMainFrameProcess)->send(Messages::WebPage::ApplicationDidBecomeActive(), webPageIDInMainFrameProcess());
+    forEachWebContentProcess([&](auto& process, auto pageID) {
+        process.send(Messages::WebPage::ApplicationDidBecomeActive(), pageID);
+    });
 }
 
 void WebPageProxy::extendSelection(WebCore::TextGranularity granularity, CompletionHandler<void()>&& completionHandler)
@@ -778,17 +827,53 @@ void WebPageProxy::didEndUserTriggeredZooming()
 
 void WebPageProxy::tapHighlightAtPosition(const WebCore::FloatPoint& position, WebKit::TapIdentifier requestID)
 {
-    protect(legacyMainFrameProcess())->send(Messages::WebPage::TapHighlightAtPosition(requestID, position), webPageIDInMainFrameProcess());
+    tapHighlightAtPositionInFrame(std::nullopt, position, requestID);
+}
+
+void WebPageProxy::tapHighlightAtPositionInFrame(std::optional<FrameIdentifier> frameID, const WebCore::FloatPoint& position, WebKit::TapIdentifier requestID)
+{
+    RefPtr frame = frameID ? WebFrameProxy::webFrame(*frameID) : m_mainFrame.get();
+    if (!frame || frame->page() != this)
+        return;
+
+    sendWithAsyncReplyToProcessContainingFrame(frameID, Messages::WebPage::TapHighlightAtPosition(frameID, requestID, position), Messages::WebPage::TapHighlightAtPosition::Reply { [weakThis = WeakPtr { *this }, requestID](auto remoteUserInputEventData) {
+        if (!remoteUserInputEventData)
+            return;
+        RefPtr protectedThis = weakThis;
+        if (!protectedThis)
+            return;
+        protectedThis->tapHighlightAtPositionInFrame(remoteUserInputEventData->targetFrameID, FloatPoint { remoteUserInputEventData->transformedPoint }, requestID);
+    } });
 }
 
 void WebPageProxy::attemptSyntheticClick(const FloatPoint& location, OptionSet<WebEventModifier> modifiers, TransactionID layerTreeTransactionIdAtLastTouchStart)
 {
-    protect(legacyMainFrameProcess())->send(Messages::WebPage::AttemptSyntheticClick(roundedIntPoint(location), modifiers, layerTreeTransactionIdAtLastTouchStart), webPageIDInMainFrameProcess());
+    attemptSyntheticClickInFrame(std::nullopt, roundedIntPoint(location), modifiers, layerTreeTransactionIdAtLastTouchStart);
+}
+
+void WebPageProxy::attemptSyntheticClickInFrame(std::optional<FrameIdentifier> frameID, const IntPoint& point, OptionSet<WebEventModifier> modifiers, TransactionID layerTreeTransactionIdAtLastTouchStart)
+{
+    RefPtr frame = frameID ? WebFrameProxy::webFrame(*frameID) : m_mainFrame.get();
+    if (!frame || frame->page() != this)
+        return;
+
+    frame->notifyActivated(MonotonicTime::now());
+
+    sendWithAsyncReplyToProcessContainingFrame(frameID, Messages::WebPage::AttemptSyntheticClick(frameID, point, modifiers, layerTreeTransactionIdAtLastTouchStart), Messages::WebPage::AttemptSyntheticClick::Reply { [weakThis = WeakPtr { *this }, modifiers, layerTreeTransactionIdAtLastTouchStart](auto remoteUserInputEventData) {
+        if (!remoteUserInputEventData)
+            return;
+        RefPtr protectedThis = weakThis;
+        if (!protectedThis)
+            return;
+        protectedThis->attemptSyntheticClickInFrame(remoteUserInputEventData->targetFrameID, roundedIntPoint(FloatPoint { remoteUserInputEventData->transformedPoint }), modifiers, layerTreeTransactionIdAtLastTouchStart);
+    } });
 }
 
 void WebPageProxy::didRecognizeLongPress()
 {
-    protect(legacyMainFrameProcess())->send(Messages::WebPage::DidRecognizeLongPress(), webPageIDInMainFrameProcess());
+    forEachWebContentProcess([&](auto& process, auto pageID) {
+        process.send(Messages::WebPage::DidRecognizeLongPress(), pageID);
+    });
 }
 
 void WebPageProxy::inspectorNodeSearchMovedToPosition(const WebCore::FloatPoint& position)
@@ -939,7 +1024,9 @@ void WebPageProxy::focusedElementDidChangeInputMode(WebCore::InputMode mode)
 
 void WebPageProxy::didReleaseAllTouchPoints()
 {
-    protect(legacyMainFrameProcess())->send(Messages::WebPage::DidReleaseAllTouchPoints(), webPageIDInMainFrameProcess());
+    forEachWebContentProcess([&](auto& process, auto pageID) {
+        process.send(Messages::WebPage::DidReleaseAllTouchPoints(), pageID);
+    });
 
     if (!m_pendingInputModeChange)
         return;
@@ -1208,7 +1295,38 @@ void WebPageProxy::requestEvasionRectsAboveSelection(CompletionHandler<void(cons
         return;
     }
 
-    protect(legacyMainFrameProcess())->sendWithAsyncReply(Messages::WebPage::RequestEvasionRectsAboveSelection(), WTF::move(callback), webPageIDInMainFrameProcess());
+    // Only the main frame's view knows the page's scale and unobscured area, so pass them to every process we ask.
+    double scaleFactor = pageScaleFactor();
+    double contextMenuAreaLimit = 0.5 * scaleFactor * unobscuredContentRect().area();
+
+    auto rects = Box<Vector<FloatRect>>::create();
+    Ref aggregator = CallbackAggregator::create([rects, callback = WTF::move(callback)] mutable {
+        callback(*rects);
+    });
+
+    RefPtr focusedFrame = focusedOrMainFrame();
+    std::optional<FrameIdentifier> focusedFrameID = focusedFrame ? std::optional(focusedFrame->frameID()) : std::nullopt;
+    sendWithAsyncReplyToProcessContainingFrame(focusedFrameID, Messages::WebPage::RequestEvasionRectsAboveSelection(std::nullopt, scaleFactor, contextMenuAreaLimit), Messages::WebPage::RequestEvasionRectsAboveSelection::Reply { [rects, aggregator](Vector<FloatRect>&& focusedFrameRects) {
+        rects->appendVector(WTF::move(focusedFrameRects));
+    } });
+
+    if (!focusedFrame)
+        return;
+
+    auto selectionBounds = selectionBoundingRectInRootViewCoordinates();
+    if (selectionBounds.isEmpty())
+        return;
+
+    // The controls to evade can be in any frame near the selection, including frames in other processes. Each of those
+    // processes looks under all of its local roots, given where the selection is.
+    Ref focusedFrameProcess = focusedFrame->process();
+    forEachWebContentProcess([&](auto& process, auto pageID) {
+        if (&process == focusedFrameProcess.ptr())
+            return;
+        process.sendWithAsyncReply(Messages::WebPage::RequestEvasionRectsAboveSelection(selectionBounds, scaleFactor, contextMenuAreaLimit), [rects, aggregator](Vector<FloatRect>&& otherProcessRects) {
+            rects->appendVector(WTF::move(otherProcessRects));
+        }, pageID);
+    });
 }
 
 void WebPageProxy::updateSelectionWithDelta(int64_t locationDelta, int64_t lengthDelta, CompletionHandler<void()>&& completionHandler)
@@ -1715,8 +1833,14 @@ void WebPageProxy::showDataDetectorsUIForPositionInformation(const InteractionIn
 
 void WebPageProxy::insertionPointColorDidChange()
 {
-    if (RefPtr pageClient = this->pageClient())
-        protect(legacyMainFrameProcess())->send(Messages::WebPage::SetInsertionPointColor(pageClient->insertionPointColor()), webPageIDInMainFrameProcess());
+    RefPtr pageClient = this->pageClient();
+    if (!pageClient)
+        return;
+
+    auto insertionPointColor = pageClient->insertionPointColor();
+    forEachWebContentProcess([&](auto& process, auto pageID) {
+        process.send(Messages::WebPage::SetInsertionPointColor(insertionPointColor), pageID);
+    });
 }
 
 void WebPageProxy::shouldDismissKeyboardAfterTapAtPoint(FloatPoint point, CompletionHandler<void(bool)>&& completion)
@@ -1724,7 +1848,29 @@ void WebPageProxy::shouldDismissKeyboardAfterTapAtPoint(FloatPoint point, Comple
     if (!hasRunningProcess())
         return completion(false);
 
-    protect(legacyMainFrameProcess())->sendWithAsyncReply(Messages::WebPage::ShouldDismissKeyboardAfterTapAtPoint(point), WTF::move(completion), webPageIDInMainFrameProcess());
+    shouldDismissKeyboardAfterTapAtPointInFrame(std::nullopt, point, WTF::move(completion));
+}
+
+void WebPageProxy::shouldDismissKeyboardAfterTapAtPointInFrame(std::optional<FrameIdentifier> frameID, FloatPoint point, CompletionHandler<void(bool)>&& completion)
+{
+    RefPtr frame = frameID ? WebFrameProxy::webFrame(*frameID) : m_mainFrame.get();
+    if (!frame || frame->page() != this)
+        return completion(false);
+
+    // Only the main frame's view has the unobscured content size, so pass it along to other frames' processes.
+    std::optional<float> unobscuredContentWidth;
+    if (frameID)
+        unobscuredContentWidth = unobscuredContentRect().width();
+
+    sendWithAsyncReplyToProcessContainingFrame(frameID, Messages::WebPage::ShouldDismissKeyboardAfterTapAtPoint(frameID, point, unobscuredContentWidth), Messages::WebPage::ShouldDismissKeyboardAfterTapAtPoint::Reply { [weakThis = WeakPtr { *this }, completion = WTF::move(completion)](Variant<bool, RemoteUserInputEventData>&& result) mutable {
+        auto* remoteUserInputEventData = std::get_if<RemoteUserInputEventData>(&result);
+        if (!remoteUserInputEventData)
+            return completion(std::get<bool>(result));
+        RefPtr protectedThis = weakThis;
+        if (!protectedThis)
+            return completion(false);
+        protectedThis->shouldDismissKeyboardAfterTapAtPointInFrame(remoteUserInputEventData->targetFrameID, FloatPoint { remoteUserInputEventData->transformedPoint }, WTF::move(completion));
+    } });
 }
 
 Color WebPageProxy::platformUnderPageBackgroundColor() const
@@ -1904,7 +2050,9 @@ void WebPageProxy::willBeginContextMenuInteraction()
     if (!hasRunningProcess())
         return;
 
-    protect(legacyMainFrameProcess())->send(Messages::WebPage::WillBeginContextMenuInteraction(), webPageIDInMainFrameProcess());
+    forEachWebContentProcess([](auto& process, auto pageID) {
+        process.send(Messages::WebPage::WillBeginContextMenuInteraction(), pageID);
+    });
 }
 
 void WebPageProxy::didEndContextMenuInteraction()
@@ -1912,7 +2060,9 @@ void WebPageProxy::didEndContextMenuInteraction()
     if (!hasRunningProcess())
         return;
 
-    protect(legacyMainFrameProcess())->send(Messages::WebPage::DidEndContextMenuInteraction(), webPageIDInMainFrameProcess());
+    forEachWebContentProcess([](auto& process, auto pageID) {
+        process.send(Messages::WebPage::DidEndContextMenuInteraction(), pageID);
+    });
 }
 
 #endif // USE(UICONTEXTMENU)

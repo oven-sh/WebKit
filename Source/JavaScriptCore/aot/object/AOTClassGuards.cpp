@@ -2436,7 +2436,7 @@ void ClassTable::defineClassOfCreatedObjects(VM& vm, const LayoutData& classLayo
         return;
     Structure* structure = m_state.objects->structures.objectStructure(vm, classLayout.shape);
     JSGlobalObject* realm = m_state.instance.globalObject;
-    UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> bitsThatDoNotBegin;
+    HashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> bitsThatDoNotBegin;
     uint32_t nameAsked = 0;
     bool passes = false;
     for (size_t index = 0; index < guards.size(); ++index) {

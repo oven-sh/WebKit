@@ -36,6 +36,7 @@
 #include "WebBackForwardListCounts.h"
 #include "WebBackForwardListFrameItem.h"
 #include "WebBackForwardListSwiftUtilities.h"
+#include "WebFrameMessages.h"
 #include "WebFrameProxy.h"
 #include "WebInspectorUtilities.h"
 #include "WebPageProxy.h"
@@ -206,17 +207,18 @@ void WebBackForwardList::addItem(Ref<WebBackForwardListItem>&& newItem)
     page->didChangeBackForwardList(newItemPtr, WTF::move(removedItems));
 }
 
-void WebBackForwardList::addChildItem(FrameIdentifier parentFrameID, Ref<FrameState>&& frameState)
+std::optional<BackForwardItemIdentifier> WebBackForwardList::addChildItem(FrameIdentifier parentFrameID, Ref<FrameState>&& frameState)
 {
     RefPtr currentItem = this->currentItem();
     if (!currentItem)
-        return;
+        return std::nullopt;
 
     RefPtr parentItem = currentItem->mainFrameItem().childItemForFrameID(parentFrameID);
     if (!parentItem)
-        return;
+        return std::nullopt;
 
     parentItem->setChild(WTF::move(frameState));
+    return currentItem->identifier();
 }
 
 void WebBackForwardList::goToItem(WebBackForwardListItem& item)
@@ -775,7 +777,7 @@ Ref<FrameState> WebBackForwardList::completeFrameStateForNavigation(Ref<FrameSta
 void WebBackForwardList::backForwardAddItem(IPC::Connection& connection, Ref<FrameState>&& navigatedFrameState)
 {
     if (RefPtr webPageProxy = m_page.get())
-        backForwardAddItemShared(connection, WTF::move(navigatedFrameState), webPageProxy->didLoadWebArchive() ? LoadedWebArchive::Yes : LoadedWebArchive::No, protect(webPageProxy->browsingContextGroup()));
+        backForwardAddItemShared(connection, WTF::move(navigatedFrameState), protect(webPageProxy->browsingContextGroup()));
 }
 
 static constexpr unsigned maxFrameStateDepthForMessageCheck = WebCore::Page::maxFrameDepth;
@@ -806,7 +808,7 @@ static bool messageCheckItemURLs(Ref<FrameState>& frameState, Ref<WebProcessProx
     return true;
 }
 
-void WebBackForwardList::backForwardAddItemShared(IPC::Connection& connection, Ref<FrameState>&& navigatedFrameState, LoadedWebArchive loadedWebArchive, BrowsingContextGroup& browsingContextGroup)
+void WebBackForwardList::backForwardAddItemShared(IPC::Connection& connection, Ref<FrameState>&& navigatedFrameState, BrowsingContextGroup& browsingContextGroup)
 {
     Ref process = WebProcessProxy::fromConnection(connection);
 
@@ -816,12 +818,18 @@ void WebBackForwardList::backForwardAddItemShared(IPC::Connection& connection, R
     if (!messageCheckItemURLs(navigatedFrameState, process))
         return;
 
-    if (RefPtr targetFrame = WebFrameProxy::webFrame(navigatedFrameState->frameID)) {
+    RefPtr targetFrame = WebFrameProxy::webFrame(navigatedFrameState->frameID);
+    if (targetFrame) {
         MESSAGE_CHECK(process, targetFrame->page() == m_page.get());
         if (targetFrame->isPendingInitialHistoryItem()) {
             targetFrame->setIsPendingInitialHistoryItem(false);
-            if (RefPtr parent = targetFrame->parentFrame())
-                addChildItem(parent->frameID(), WTF::move(navigatedFrameState));
+            if (RefPtr parent = targetFrame->parentFrame()) {
+                // The child now has the identifier of the item it was added to. Updates from the frame's process have to
+                // carry it to find the child.
+                auto frameItemID = navigatedFrameState->frameItemID;
+                if (auto itemID = addChildItem(parent->frameID(), WTF::move(navigatedFrameState)); itemID && frameItemID)
+                    process->send(Messages::WebFrame::DidAddHistoryItemToBackForwardItem(*frameItemID, *itemID), targetFrame->frameID());
+            }
             return;
         }
     } else
@@ -831,9 +839,12 @@ void WebBackForwardList::backForwardAddItemShared(IPC::Connection& connection, R
         auto navigatedFrameID = navigatedFrameState->frameID;
         Ref item = WebBackForwardListItem::create(completeFrameStateForNavigation(WTF::move(navigatedFrameState)), webPageProxy->identifier(), navigatedFrameID, &browsingContextGroup);
         item->setResourceDirectoryURL(webPageProxy->currentResourceDirectoryURL());
-        item->setEnhancedSecurity(process->enhancedSecurity());
-        if (loadedWebArchive == LoadedWebArchive::Yes)
-            item->setDataStoreForWebArchive(protect(process->websiteDataStore()));
+        auto enhancedSecurity = process->enhancedSecurity();
+        if (!targetFrame->isMainFrame() && webPageProxy->preferences().siteIsolationSharedProcessEnhancedSecurityEnabled()) {
+            if (RefPtr mainFrame = webPageProxy->mainFrame())
+                enhancedSecurity = mainFrame->process().enhancedSecurity();
+        }
+        item->setEnhancedSecurity(enhancedSecurity);
         addItem(WTF::move(item));
     }
 }
@@ -1205,6 +1216,12 @@ WebKit::FrameState* frameStateChildAtIndex(const WebKit::FrameState& frameState,
 unsigned maxFrameStateDepthForMessageCheck()
 {
     return WebCore::Page::maxFrameDepth;
+}
+
+void sendDidAddHistoryItemToBackForwardItem(WebKit::WebProcessProxy& process, WebCore::FrameIdentifier frameID, const WebKit::FrameState& frameState, const WebCore::BackForwardItemIdentifier& itemID)
+{
+    if (auto& frameItemID = frameState.frameItemID)
+        process.send(Messages::WebFrame::DidAddHistoryItemToBackForwardItem(*frameItemID, itemID), frameID);
 }
 
 #endif // ENABLE(BACK_FORWARD_LIST_SWIFT)

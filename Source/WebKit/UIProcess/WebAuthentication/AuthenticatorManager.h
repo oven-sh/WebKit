@@ -28,7 +28,9 @@
 #if ENABLE(WEB_AUTHN)
 
 #include "Authenticator.h"
+#if PLATFORM(COCOA)
 #include "AuthenticatorPresenterCoordinator.h"
+#endif
 #include "AuthenticatorTransportService.h"
 #include "WebAuthenticationRequestData.h"
 #include <WebCore/AuthenticatorResponse.h>
@@ -54,7 +56,7 @@ class AuthenticatorManager : public RefCounted<AuthenticatorManager>, public Aut
 public:
     using Respond = Variant<Ref<WebCore::AuthenticatorResponse>, WebCore::ExceptionData>;
     using Callback = CompletionHandler<void(Respond&&)>;
-    using TransportSet = HashSet<WebCore::AuthenticatorTransport, WTF::IntHash<WebCore::AuthenticatorTransport>, WTF::StrongEnumHashTraits<WebCore::AuthenticatorTransport>>;
+    using TransportSet = HashSet<WebCore::AuthenticatorTransport, WTF::IntHash<WebCore::AuthenticatorTransport>>;
 
     USING_CAN_MAKE_WEAKPTR(AuthenticatorTransportServiceObserver);
 
@@ -135,7 +137,9 @@ private:
     };
     std::optional<Request> m_pendingRequest;
     RunLoop::Timer m_requestTimeOutTimer;
+#if PLATFORM(COCOA)
     RefPtr<AuthenticatorPresenterCoordinator> m_presenter;
+#endif
 
     Vector<Ref<AuthenticatorTransportService>> m_services;
     HashSet<Ref<Authenticator>> m_authenticators;

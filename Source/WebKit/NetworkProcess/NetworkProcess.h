@@ -31,6 +31,7 @@
 #include "DataTaskIdentifier.h"
 #include "DownloadID.h"
 #include "DownloadManager.h"
+#include "LoadedWebArchive.h"
 #include "NetworkActivityTracker.h"
 #include "NetworkContentRuleListManager.h"
 #include "NetworkStorageSession.h"
@@ -44,6 +45,7 @@
 #include <JavaScriptCore/ConsoleTypes.h>
 #include <WebCore/ClientOrigin.h>
 #include <WebCore/CrossSiteNavigationDataTransfer.h>
+#include <WebCore/DeferredFetchIdentifier.h>
 #include <WebCore/FetchIdentifier.h>
 #include <WebCore/MessagePortChannelRegistry.h>
 #include <WebCore/NotificationEventType.h>
@@ -52,8 +54,10 @@
 #include <WebCore/PrivateClickMeasurement.h>
 #include <WebCore/PushPermissionState.h>
 #include <WebCore/RegistrableDomain.h>
+#include <WebCore/SecurityOriginData.h>
 #include <WebCore/ServiceWorkerIdentifier.h>
 #include <WebCore/ServiceWorkerTypes.h>
+#include <WebCore/Site.h>
 #include <memory>
 #include <wtf/CheckedRef.h>
 #include <wtf/CrossThreadTask.h>
@@ -129,7 +133,6 @@ class SandboxExtensionHandle;
 class WebPageNetworkParameters;
 enum class CallDownloadDidStart : bool;
 enum class DidFilterKnownLinkDecoration : bool;
-enum class LoadedWebArchive : bool;
 enum class RemoteWorkerType : uint8_t;
 enum class ShouldGrandfatherStatistics : bool;
 enum class StorageAccessStatus : uint8_t;
@@ -146,7 +149,7 @@ class Cache;
 enum class CacheOption : uint8_t;
 }
 
-class NetworkProcess final : public AuxiliaryProcess, private DownloadManager::Client, public ThreadSafeRefCounted<NetworkProcess>
+class NetworkProcess final : public AuxiliaryProcess, private DownloadManager::Client
 {
     WTF_MAKE_NONCOPYABLE(NetworkProcess);
     WTF_MAKE_TZONE_ALLOCATED(NetworkProcess);
@@ -385,8 +388,9 @@ public:
 
     const String& uiProcessBundleIdentifier() const LIFETIME_BOUND;
 
-    void ref() const final { ThreadSafeRefCounted<NetworkProcess>::ref(); }
-    void deref() const final { ThreadSafeRefCounted<NetworkProcess>::deref(); }
+    // ref() & deref() do nothing since NetworkProcess is a singleton object.
+    void ref() const final { }
+    void deref() const final { }
 
     void storePrivateClickMeasurement(PAL::SessionID, WebCore::PrivateClickMeasurement&&);
     void simulatePrivateClickMeasurementConversion(PAL::SessionID, int priority, int triggerData, const URL& sourceURL, const URL& destinationURL);
@@ -481,10 +485,15 @@ public:
     void deleteWebsiteDataForOrigin(PAL::SessionID, OptionSet<WebsiteDataType>, const WebCore::ClientOrigin&, CompletionHandler<void()>&&);
     void deleteWebsiteDataForOrigins(PAL::SessionID, OptionSet<WebsiteDataType>, const Vector<WebCore::SecurityOriginData>& origins, const Vector<String>& cookieHostNames, const Vector<String>& HSTSCacheHostnames, const Vector<RegistrableDomain>&, CompletionHandler<void()>&&);
 
-    enum class AllowCookieAccess : uint8_t { Disallow, Allow, Terminate };
-    AllowCookieAccess allowsFirstPartyForCookies(WebCore::ProcessIdentifier, const URL&);
-    AllowCookieAccess allowsFirstPartyForCookies(WebCore::ProcessIdentifier, const RegistrableDomain&);
-    void addAllowedFirstPartyForCookies(WebCore::ProcessIdentifier, WebCore::RegistrableDomain&&, LoadedWebArchive, CompletionHandler<void()>&&);
+    bool allowsFirstPartyForCookies(WebCore::ProcessIdentifier, const URL&);
+    bool allowsFirstPartyForCookies(WebCore::ProcessIdentifier, const RegistrableDomain&);
+
+    // Unlike allowsFirstPartyForCookies, this compares the scheme as well as the registrable domain.
+    bool allowsFirstPartySite(WebCore::ProcessIdentifier, const WebCore::Site&) const;
+    bool hostsDomain(WebCore::ProcessIdentifier, const RegistrableDomain&) const;
+
+    void addAllowedFirstPartyForCookies(WebCore::ProcessIdentifier, WebCore::Site&&, LoadedWebArchive, CompletionHandler<void()>&&);
+    void addAllowedFirstPartyDomainForCookies(WebCore::ProcessIdentifier, WebCore::RegistrableDomain&&, LoadedWebArchive, CompletionHandler<void()>&&);
     void setHostedDomains(WebCore::ProcessIdentifier, std::optional<HashSet<WebCore::RegistrableDomain>>&&);
 
     // Per launch, so a reconnecting web process keeps its Vary entries.
@@ -657,6 +666,11 @@ private:
     void performDeleteWebsiteDataTask(TaskIdentifier, TaskTrigger = TaskTrigger::Connection);
     void deleteWebsiteDataImpl(PAL::SessionID, OptionSet<WebsiteDataType>, WallTime, CompletionHandler<void()>&&);
 
+    friend class NetworkConnectionToWebProcess;
+    std::pair<std::optional<WebCore::DeferredFetchIdentifier>, uint64_t> reserveDeferredFetchQuota(WebPageProxyIdentifier, WebCore::FrameIdentifier controlFrameIdentifier, const WebCore::SecurityOriginData& reportingOrigin, uint64_t maximumQuota, bool isTopLevelControlFrame, uint64_t requestedBytes);
+    void releaseDeferredFetchControlFrameIfUnused(WebPageProxyIdentifier, WebCore::FrameIdentifier);
+    void releaseDeferredFetchQuota(WebCore::DeferredFetchIdentifier);
+
     // Connections to WebProcesses.
     HashMap<WebCore::ProcessIdentifier, Ref<NetworkConnectionToWebProcess>> m_webProcessConnections;
     HashMap<WebCore::ProcessIdentifier, Vector<CompletionHandler<void()>>> m_webProcessConnectionCloseHandlers;
@@ -674,7 +688,38 @@ private:
 
     HashMap<PAL::SessionID, std::unique_ptr<NetworkSession>> m_networkSessions;
     HashMap<PAL::SessionID, std::unique_ptr<NetworkStorageSession>> m_networkStorageSessions;
-    HashMap<WebCore::ProcessIdentifier, std::pair<LoadedWebArchive, HashSet<WebCore::RegistrableDomain>>> m_allowedFirstPartiesForCookies;
+    struct AllowedFirstParties {
+        LoadedWebArchive loadedWebArchive { LoadedWebArchive::No };
+        HashSet<WebCore::RegistrableDomain> domains;
+        HashSet<WebCore::Site> sites;
+    };
+    HashMap<WebCore::ProcessIdentifier, AllowedFirstParties> m_allowedFirstPartiesForCookies;
+
+    // https://fetch.spec.whatwg.org/#get-the-available-deferred-fetch-quota
+    // A top-level traversable has 640 KiB, of which 128 KiB is set aside for the
+    // deferred-fetch-minimal containers. The remaining 512 KiB is shared between the
+    // top-level control frame's own records and the 64 KiB a container reserves when it is
+    // allowed to use deferred-fetch, which is what keeps the page-wide total bounded.
+    struct DeferredFetchControlFrameQuota {
+        uint64_t reservedBytes { 0 };
+        bool isTopLevel { false };
+        bool isMinimal { false };
+        uint64_t totalBytesUsed { 0 };
+        HashMap<WebCore::SecurityOriginData, uint64_t> bytesUsedByOrigin;
+    };
+    struct DeferredFetchPageQuota {
+        uint64_t normalPoolBytesReserved { 0 };
+        uint64_t minimalPoolBytesReserved { 0 };
+        HashMap<WebCore::FrameIdentifier, DeferredFetchControlFrameQuota> controlFrames;
+    };
+    struct DeferredFetchQuotaReservation {
+        WebPageProxyIdentifier pageIdentifier;
+        WebCore::FrameIdentifier controlFrameIdentifier;
+        WebCore::SecurityOriginData reportingOrigin;
+        uint64_t bytes { 0 };
+    };
+    HashMap<WebPageProxyIdentifier, DeferredFetchPageQuota> m_deferredFetchQuotas;
+    HashMap<WebCore::DeferredFetchIdentifier, DeferredFetchQuotaReservation> m_deferredFetchQuotaReservations;
     HashMap<WebCore::ProcessIdentifier, HashSet<String>> m_pendingAllowedFilePathsByProcess;
     const uint64_t m_cookieHeaderDigestSalt { cryptographicallyRandomNumber<uint64_t>() };
     HashMap<WebCore::ProcessIdentifier, HashSet<WebPageProxyIdentifier>> m_allowedWebPageProxyIdentifiers;

@@ -167,13 +167,13 @@ void CachedImage::addClientWaitingForAsyncDecoding(CachedImageClient& client)
     
 void CachedImage::removeAllClientsWaitingForAsyncDecoding()
 {
-    if (m_clientsWaitingForAsyncDecoding.isEmptyIgnoringNullReferences() || !hasImage())
+    if (m_clientsWaitingForAsyncDecoding.computeIsEmpty() || !hasImage())
         return;
 
     RefPtr bitmapImage = dynamicDowncast<BitmapImage>(image());
     if (!bitmapImage)
         return;
-    bitmapImage->stopDecodingWorkQueue();
+    bitmapImage->cancelPendingDecodingRequests();
 
     for (Ref client : m_clientsWaitingForAsyncDecoding)
         client->imageChanged(this);
@@ -348,11 +348,6 @@ void CachedImage::CachedImageObserver::scheduleRenderingUpdate(const Image& imag
 
 bool CachedImage::CachedImageObserver::allowsAnimation(const Image& image) const
 {
-    // *::allowsAnimation can only return false when systemAllowsAnimationControls == true,
-    // so this prevents unnecessary work by exiting early.
-    if (!Image::systemAllowsAnimationControls())
-        return true;
-
     for (RefPtr cachedImage : m_cachedImages) {
         if (cachedImage->allowsAnimation(image))
             return true;
@@ -368,7 +363,7 @@ inline void CachedImage::clearImage()
     if (RefPtr imageObserver = std::exchange(m_imageObserver, nullptr)) {
         imageObserver->cachedImages().remove(*this);
 
-        if (imageObserver->cachedImages().isEmptyIgnoringNullReferences()) {
+        if (imageObserver->cachedImages().computeIsEmpty()) {
             ASSERT(imageObserver->hasOneRef());
             m_image->setImageObserver(nullptr);
         }
@@ -624,9 +619,6 @@ bool CachedImage::allowsAnimation(const Image& image) const
 {
     if (&image != m_image)
         return false;
-
-    if (!Image::systemAllowsAnimationControls())
-        return true;
 
     CachedResourceClientWalker<CachedImageClient> walker(*this);
     while (RefPtr client = walker.next()) {

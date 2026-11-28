@@ -34,6 +34,7 @@
 #import <WebKit/WKWebView.h>
 #import <WebKit/WKWebViewConfiguration.h>
 #import <WebKit/WKWebsiteDataStorePrivate.h>
+#import <WebKit/_WKFeature.h>
 #import <WebKit/_WKProcessPoolConfiguration.h>
 #import <WebKit/_WKWebsiteDataStoreConfiguration.h>
 
@@ -61,10 +62,33 @@ static const NSString * const kURLArgumentString = @"--url";
 }
 @end
 
+@interface URLTextField : UITextField
+@end
+
+@implementation URLTextField
+
+- (CGRect)clearButtonRectForBounds:(CGRect)bounds
+{
+    CGRect rect = [super clearButtonRectForBounds:bounds];
+    rect.origin.x = bounds.origin.x + bounds.size.width - rect.size.width - 16;
+    return rect;
+}
+
+- (CGRect)editingRectForBounds:(CGRect)bounds
+{
+    CGRect rect = [super editingRectForBounds:bounds];
+    CGRect clearButtonRect = [self clearButtonRectForBounds:bounds];
+    rect.size.width = MIN(rect.size.width, clearButtonRect.origin.x - 3 - rect.origin.x);
+    return rect;
+}
+
+@end
+
 @interface WebViewController () <WKNavigationDelegate> {
     WKWebsiteDataStore *_dataStore;
     WKWebView *_currentWebView;
     NSURL *_initialURL;
+    NSLayoutConstraint *_urlFieldContainerAboveKeyboardConstraint;
 }
 - (WKWebView *)createWebView;
 - (void)removeWebView:(WKWebView *)webView;
@@ -94,6 +118,24 @@ void* URLContext = &URLContext;
 #pragma clang diagnostic pop
     self.settingsViewController.parent = self;
     self.settingsViewController.modalPresentationStyle = UIModalPresentationPopover;
+
+    // Only active while editing the URL, so that focusing an input in web content doesn't resize the web view.
+    _urlFieldContainerAboveKeyboardConstraint = [self.urlFieldContainer.bottomAnchor constraintLessThanOrEqualToAnchor:self.view.keyboardLayoutGuide.topAnchor];
+
+    if ([self.urlField respondsToSelector:@selector(setCornerConfiguration:)])
+        [self.urlField setValue:[NSClassFromString(@"UICornerConfiguration") performSelector:@selector(capsuleConfiguration)] forKey:@"cornerConfiguration"];
+    self.urlField.backgroundColor = [UIColor colorWithDynamicProvider:^(UITraitCollection *traitCollection) {
+        if (traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark)
+            return [UIColor colorWithWhite:1 alpha:0.08];
+        return [UIColor colorWithWhite:0 alpha:0.05];
+    }];
+    self.urlField.leftView = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 16, 0)];
+    self.urlField.leftViewMode = UITextFieldViewModeAlways;
+
+    for (UIBarButtonItem *item in self.toolbar.items) {
+        if ([item respondsToSelector:@selector(setHidesSharedBackground:)])
+            [item setValue:@YES forKey:@"hidesSharedBackground"];
+    }
 
     WKWebView *webView = [self createWebView];
     [webView loadRequest:[NSURLRequest requestWithURL:[self targetURLorDefaultURL]]];
@@ -126,6 +168,12 @@ void* URLContext = &URLContext;
 - (IBAction)urlFieldEditingBegan:(id)sender
 {
     self.urlField.selectedTextRange = [self.urlField textRangeFromPosition:self.urlField.beginningOfDocument toPosition:self.urlField.endOfDocument];
+    _urlFieldContainerAboveKeyboardConstraint.active = YES;
+}
+
+- (IBAction)urlFieldEditingEnded:(id)sender
+{
+    _urlFieldContainerAboveKeyboardConstraint.active = NO;
 }
 
 - (IBAction)navigateTo:(id)sender
@@ -214,11 +262,31 @@ void* URLContext = &URLContext;
 
 #pragma mark Internal methods
 
+- (void)updateCapturePreviewPreference
+{
+    BOOL enabled = [self.settingsViewController showsCapturePreviewInPrompt];
+    for (WKWebView *webView in self.webViews)
+        [self setCapturePreviewEnabled:enabled forPreferences:webView.configuration.preferences];
+}
+
+- (void)setCapturePreviewEnabled:(BOOL)enabled forPreferences:(WKPreferences *)preferences
+{
+    for (_WKFeature *feature in [WKPreferences _features]) {
+        if ([feature.key isEqualToString:@"CaptureDevicePreviewInPromptEnabled"]) {
+            [preferences _setEnabled:enabled forFeature:feature];
+            return;
+        }
+    }
+}
+
 - (WKWebView *)createWebView
 {
     WKWebViewConfiguration *configuration = [[WKWebViewConfiguration alloc] init];
 
+#if TARGET_OS_SIMULATOR
     configuration.preferences._mockCaptureDevicesEnabled = YES;
+#endif
+    [self setCapturePreviewEnabled:[self.settingsViewController showsCapturePreviewInPrompt] forPreferences:configuration.preferences];
     configuration.preferences._notificationsEnabled = YES;
     configuration.preferences._pushAPIEnabled = YES;
     configuration.preferences._notificationEventEnabled = YES;

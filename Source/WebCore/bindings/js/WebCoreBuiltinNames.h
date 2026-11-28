@@ -177,6 +177,8 @@ namespace WebCore {
     macro(DeviceOrientationEvent) \
     macro(DevicePosture) \
     macro(DigitalCredential) \
+    macro(DocumentPictureInPicture) \
+    macro(DocumentPictureInPictureEvent) \
     macro(DocumentTimeline) \
     macro(DynamicsCompressorNode) \
     macro(ElementImage) \
@@ -354,6 +356,7 @@ namespace WebCore {
     macro(PaymentRequestUpdateEvent) \
     macro(PaymentResponse) \
     macro(PerformanceNavigationTiming) \
+    macro(PhoneNumberPossessionCredential) \
     macro(PictureInPictureEvent) \
     macro(PictureInPictureWindow) \
     macro(PaintWorkletGlobalScope) \
@@ -423,6 +426,7 @@ namespace WebCore {
     macro(SQLResultSet) \
     macro(SQLResultSetRowList) \
     macro(SQLTransaction) \
+    macro(Scheduler) \
     macro(ScreenLuminance) \
     macro(ScreenOrientation) \
     macro(ScrollTimeline) \
@@ -523,6 +527,8 @@ namespace WebCore {
     macro(WritableStreamDefaultController) \
     macro(WritableStreamDefaultWriter) \
     macro(XMLHttpRequest) \
+    macro(XRAnchor) \
+    macro(XRAnchorSet) \
     macro(XRBoundedReferenceSpace) \
     macro(XRCompositionLayer) \
     macro(XRCubeLayer) \
@@ -614,11 +620,14 @@ namespace WebCore {
     macro(didDetectExtraBytes) \
     macro(disturbed) \
     macro(document) \
+    macro(documentPictureInPicture) \
     macro(encode) \
     macro(encoding) \
     macro(errorSteps) \
     macro(fatal) \
     macro(fetch) \
+    macro(FetchLaterResult) \
+    macro(fetchLater) \
     macro(fetchRequest) \
     macro(FileReader) \
     macro(FileReaderSync) \
@@ -724,6 +733,7 @@ namespace WebCore {
     macro(response) \
     macro(responseCacheIsValid) \
     macro(retrieveResponse) \
+    macro(scheduler) \
     macro(self) \
     macro(sessionStorage) \
     macro(setBody) \

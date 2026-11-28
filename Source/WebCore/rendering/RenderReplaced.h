@@ -40,8 +40,9 @@ public:
     void computeReplacedOutOfFlowPositionedLogicalWidth(LogicalExtentComputedValues&) const;
 
     LayoutRect replacedContentRect(NaturalDimensions zoomedNaturalDimensions) const;
-    LayoutRect replacedContentRect() const;
+    WEBCORE_EXPORT LayoutRect replacedContentRect() const;
     LayoutRect replacedContentPaintRect() const;
+    LayoutRect replacedContentPaintRect(const LayoutRect& replacedContentRect, NaturalDimensions zoomedNaturalDimensions) const;
 
     std::optional<FloatRect> resolvedObjectViewBox(const FloatSize& physicalIntrinsicSize) const;
 
@@ -67,7 +68,7 @@ public:
 
     virtual bool paintsContent() const { return true; }
 
-    LayoutUnit computeReplacedLogicalHeightUsing(const Style::PreferredSize& logicalHeight) const;
+    LayoutUnit computeReplacedLogicalHeightUsing(const Style::PreferredSize& logicalHeight, IsComputingIntrinsicSize = IsComputingIntrinsicSize::No) const;
     LayoutUnit computeReplacedLogicalHeightUsing(const Style::MinimumSize& logicalHeight) const;
     LayoutUnit computeReplacedLogicalHeightUsing(const Style::MaximumSize& logicalHeight) const;
 
@@ -87,9 +88,9 @@ public:
     std::optional<LayoutUnit> stretchFitLogicalWidthWithoutNaturalSize() const;
 
 protected:
-    RenderReplaced(Type, Element&, Style::ComputedStyle&&, OptionSet<ReplacedFlag> = { });
-    RenderReplaced(Type, Element&, Style::ComputedStyle&&, const LayoutSize& intrinsicSize, OptionSet<ReplacedFlag> = { });
-    RenderReplaced(Type, Document&, Style::ComputedStyle&&, const LayoutSize& intrinsicSize, OptionSet<ReplacedFlag> = { });
+    RenderReplaced(Type, Element&, UniqueRef<Style::ComputedStyle>&&, OptionSet<ReplacedFlag> = { });
+    RenderReplaced(Type, Element&, UniqueRef<Style::ComputedStyle>&&, const LayoutSize& intrinsicSize, OptionSet<ReplacedFlag> = { });
+    RenderReplaced(Type, Document&, UniqueRef<Style::ComputedStyle>&&, const LayoutSize& intrinsicSize, OptionSet<ReplacedFlag> = { });
 
     void layout() override;
 
@@ -106,7 +107,6 @@ protected:
     void setIntrinsicSize(const LayoutSize& intrinsicSize) { m_intrinsicSize = intrinsicSize; }
     virtual void intrinsicSizeChanged();
     virtual bool hasRelativeIntrinsicLogicalWidth() const { return false; }
-    virtual bool hasDrawableContent() const { return false; }
 
     void paint(PaintInfo&, const LayoutPoint&) override;
     bool shouldPaint(PaintInfo&, const LayoutPoint&);
@@ -127,8 +127,8 @@ private:
 
     LayoutUnit computeConstrainedLogicalWidth() const;
 
-    template<typename SizeType> LayoutUnit computeReplacedLogicalWidthUsing(const SizeType& logicalWidth) const;
-    template<typename SizeType> LayoutUnit computeReplacedLogicalHeightUsingGeneric(const SizeType& logicalHeight) const;
+    template<typename SizeType> LayoutUnit computeReplacedLogicalWidthUsing(const SizeType& logicalWidth, IsComputingIntrinsicSize = IsComputingIntrinsicSize::No) const;
+    template<typename SizeType> LayoutUnit computeReplacedLogicalHeightUsingGeneric(const SizeType& logicalHeight, IsComputingIntrinsicSize = IsComputingIntrinsicSize::No) const;
     bool replacedMinMaxLogicalHeightComputesAsNone(const auto& logicalHeight, const auto& initialLogicalHeight) const;
 
 

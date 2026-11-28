@@ -513,7 +513,7 @@ struct LookupsPastProgramObjects {
     BitVector rowsApplied;
     BitVector builtinsWithCallsLeftToUnseen;
     BitVector builtinsWithCallsThatMayRunCode;
-    UncheckedKeyHashSet<uint64_t> conditionsThatOperandsMayMeet;
+    HashSet<uint64_t> conditionsThatOperandsMayMeet;
     Vector<LinkedCallOfBuiltin> callsOfBuiltinsAtSites;
     // MUST BE TRUE OF THE PROGRAM THAT RUNS: each is locked at the start (Facts::builtinMembersLockedAtStartUp()), with every mechanism withheld too: what is reached hangs on it.
     BitVector membersTakenForConstants;
@@ -555,7 +555,7 @@ struct LookupsPastProgramObjects {
     bool lostBuiltinsReachUnseen { false };
     bool readsUnderKeysNobodyKnows { false };
     bool readsUnderNamesThatLoopsGave { false };
-    UncheckedKeyHashSet<uint64_t> readsOfProgramUnderKeysNobodyKnows;
+    HashSet<uint64_t> readsOfProgramUnderKeysNobodyKnows;
     bool wereRuntimeNamesDeferred { false };
     BitVector staticallyUsedBuiltins;
     BitVector staticallyInstantiatedClasses;
@@ -588,7 +588,7 @@ public:
     }
 
 private:
-    UncheckedKeyHashSet<uint64_t> m_fields;
+    HashSet<uint64_t> m_fields;
 };
 
 class NamesOfModules {
@@ -604,7 +604,7 @@ public:
 private:
     static uint64_t wordOf(ModuleID module, PropertyKeyID key) { return (static_cast<uint64_t>(module.index()) + 1) << 32 | key.index(); }
 
-    UncheckedKeyHashSet<uint64_t> m_names;
+    HashSet<uint64_t> m_names;
 };
 
 struct LinkedFunctionUnderName {

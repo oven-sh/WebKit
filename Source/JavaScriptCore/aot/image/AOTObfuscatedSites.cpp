@@ -57,7 +57,7 @@ static TextRange appendNameOfObfuscatedFrame(Vector<uint8_t>& names, const Typed
     if (strings.isAllASCII(string))
         names.append(strings[string]);
     else
-        names.append(byteCast<uint8_t>(strings.toWTFString(string).utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD).span()));
+        names.append(byteCast<uint8_t>(makeUTF8CString(strings.toWTFString(string)).span()));
     return { offset, static_cast<uint32_t>(names.size()) - offset };
 }
 

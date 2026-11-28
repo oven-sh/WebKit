@@ -61,9 +61,9 @@ RemoteInspectorSocketEndpoint::RemoteInspectorSocketEndpoint()
         m_wakeupReceiveSocket = sockets->at(1);
     }
 
-    m_workerThread = Thread::create("SocketEndpoint"_s, [this] {
+    lazyInitialize(m_workerThread, Thread::create("SocketEndpoint"_s, [this] {
         workerThread();
-    });
+    }));
 }
 
 RemoteInspectorSocketEndpoint::~RemoteInspectorSocketEndpoint()
@@ -201,7 +201,7 @@ ConnectionID RemoteInspectorSocketEndpoint::generateConnectionID()
     ConnectionID id;
     do {
         id = cryptographicallyRandomNumber<ConnectionID>();
-    } while (!m_clients.isValidKey(id) || m_clients.contains(id) || m_listeners.contains(id));
+    } while (!id || m_clients.contains(id) || m_listeners.contains(id));
     return id;
 }
 

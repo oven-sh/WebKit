@@ -142,7 +142,7 @@ NODELETE static RefPtr<WorkQueue>& itpQueue()
 
 void determineTrackingPreventionState()
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
     if (currentTrackingPreventionState != TrackingPreventionState::Uninitialized)
         return;
 
@@ -161,7 +161,7 @@ void determineTrackingPreventionState()
 bool doesAppHaveTrackingPreventionEnabled()
 {
     ASSERT(!isInWebKitChildProcess());
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
     // If we're still computing the ITP state on the background thread, then synchronize with it.
     if (RefPtr queue = itpQueue())
         queue->dispatchSync([] { });
@@ -228,11 +228,10 @@ bool hasProhibitedUsageStrings()
         @"NSLocationAlwaysAndWhenInUseUsageDescription"
     ];
 
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL NSString *prohibitedString : prohibitedStrings) {
+    for (NSString *prohibitedString : prohibitedStrings) {
         if ([infoDictionary objectForKey:prohibitedString]) {
             String message = adoptNS([[NSString alloc] initWithFormat:@"[In-App Browser Privacy] %@ used prohibited usage string %@.", retainPtr([[NSBundle mainBundle] bundleIdentifier]).get(), prohibitedString]).get();
-            SAFE_WTFLOGALWAYS("%s", message.utf8());
+            SAFE_WTFLOGALWAYS("%s", makeUTF8CString(message));
             hasProhibitedUsageStrings = true;
             break;
         }

@@ -31,12 +31,11 @@
 #include "StyleComputedStyle.h"
 #include <wtf/TZoneMallocInlines.h>
 
-namespace WebCore {
-namespace Layout {
+namespace WebCore::Layout {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(InitialContainingBlock);
 
-InitialContainingBlock::InitialContainingBlock(RenderView& renderView, Style::ComputedStyle&& style)
+InitialContainingBlock::InitialContainingBlock(RenderView& renderView, UniqueRef<Style::ComputedStyle>&& style)
     : ElementBox(WTF::move(style), { NodeType::GenericElement, IsAnonymous::No }, Box::InitialContainingBlockFlag)
     , m_renderView(renderView)
 {
@@ -67,5 +66,3 @@ const InitialContainingBlock& initialContainingBlock(const Box& layoutBox)
 }
 
 }
-}
-

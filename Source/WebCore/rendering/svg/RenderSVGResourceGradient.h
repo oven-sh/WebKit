@@ -44,10 +44,10 @@ public:
     virtual SVGUnitTypes::SVGUnitType gradientUnits() const = 0;
 
 protected:
-    RenderSVGResourceGradient(Type, SVGElement&, Style::ComputedStyle&&);
+    RenderSVGResourceGradient(Type, SVGElement&, UniqueRef<Style::ComputedStyle>&&);
 
     virtual void collectGradientAttributesIfNeeded() = 0;
-    virtual RefPtr<Gradient> createGradient(const Style::ComputedStyle&) = 0;
+    virtual RefPtr<const Gradient> createGradient(const Style::ComputedStyle&) = 0;
 
     virtual AffineTransform gradientTransform() const = 0;
 
@@ -56,7 +56,7 @@ protected:
     NODELETE GradientSpreadMethod platformSpreadMethodFromSVGType(SVGSpreadMethodType) const;
     NODELETE ColorInterpolationMethod gradientColorInterpolationMethod() const;
 
-    RefPtr<Gradient> m_gradient;
+    RefPtr<const Gradient> m_gradient;
 
 private:
     Style::AppleColorFilter m_gradientColorFilter { CSS::Keyword::None { } };

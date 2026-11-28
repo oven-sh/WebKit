@@ -27,16 +27,18 @@
 
 #if HAVE(WEBTRANSPORT)
 
-#import "Helpers/cocoa/HTTPServer.h"
 #import "Helpers/PlatformUtilities.h"
-#import "Helpers/cocoa/SiteIsolationUtilities.h"
 #import "Helpers/Test.h"
+#import "Helpers/Utilities.h"
+#import "Helpers/cocoa/HTTPServer.h"
+#import "Helpers/cocoa/HTTPServer/TestCertificates.h"
+#import "Helpers/cocoa/SiteIsolationUtilities.h"
 #import "Helpers/cocoa/TestNavigationDelegate.h"
 #import "Helpers/cocoa/TestUIDelegate.h"
 #import "Helpers/cocoa/TestWKWebView.h"
-#import "Helpers/Utilities.h"
 #import "Helpers/cocoa/WebTransportServer.h"
 #import <CommonCrypto/CommonDigest.h>
+#import <Network/Network.h>
 #import <WebKit/WKPreferencesPrivate.h>
 #import <WebKit/WKWebViewConfigurationPrivate.h>
 #import <WebKit/WKWebsiteDataStorePrivate.h>
@@ -66,7 +68,7 @@ static void validateChallenge(NSURLAuthenticationChallenge *challenge, uint16_t 
     EXPECT_NOT_NULL(challenge.protectionSpace.serverTrust);
     EXPECT_EQ(challenge.protectionSpace.port, port);
     EXPECT_WK_STREQ(challenge.protectionSpace.host, "127.0.0.1");
-    verifyCertificateAndPublicKey(challenge.protectionSpace.serverTrust);
+    EXPECT_TRUE([TestCertificates verifyCertificateAndPublicKeyOfTrust:challenge.protectionSpace.serverTrust]);
 }
 
 TEST(WebTransport, ClientBidirectional)
@@ -882,7 +884,7 @@ TEST(WebTransport, ServerCertificateHashes)
             "    alert('successfully read ' + new TextDecoder().decode(value));"
             "  } catch (e) { alert('caught ' + e); }"
             "}; test();"
-            "</script>", certificateBytes.toString().utf8().legacyCStringPointer(), echoServer.port()];
+            "</script>", makeUTF8CString(certificateBytes.toString()).legacyCStringPointer(), echoServer.port()];
 
         RetainPtr configuration = adoptNS([WKWebViewConfiguration new]);
         enableWebTransport(configuration.get());
@@ -1201,6 +1203,72 @@ TEST(WebTransport, ExportKeyingMaterial)
     runTest(WebTransportServer::Protocol::H3);
 }
 
+static NSString *datagramEchoHTML(uint16_t port)
+{
+    return [NSString stringWithFormat:@""
+        "<script>async function test() {"
+        "  try {"
+        "    let t = new WebTransport('https://127.0.0.1:%d/');"
+        "    await t.ready;"
+        "    let w = t.datagrams.createWritable().getWriter();"
+        "    await w.write(new TextEncoder().encode('abc'));"
+        "    let r = t.datagrams.readable.getReader();"
+        "    const { value, done } = await r.read();"
+        "    alert('successfully read ' + new TextDecoder().decode(value));"
+        "  } catch (e) { alert('caught'); }"
+        "}; test();"
+        "</script>", port];
+}
+
+static RetainPtr<WKWebView> webTransportWebView(nw_proxy_config_t proxyConfig, RetainPtr<TestNavigationDelegate>& delegate)
+{
+    RetainPtr configuration = adoptNS([WKWebViewConfiguration new]);
+    enableWebTransport(configuration.get());
+    if (proxyConfig)
+        configuration.get().websiteDataStore.proxyConfigurations = @[ proxyConfig ];
+
+    RetainPtr webView = adoptNS([[WKWebView alloc] initWithFrame:CGRectZero configuration:configuration.get()]);
+    delegate = adoptNS([TestNavigationDelegate new]);
+    [delegate allowAnyTLSCertificate];
+    [webView setNavigationDelegate:delegate.get()];
+    return webView;
+}
+
+TEST(WebTransport, Proxies)
+{
+    WebTransportServer echoServer([](ConnectionGroup group) -> ConnectionTask {
+        auto datagramConnection = group.createWebTransportConnection(ConnectionGroup::ConnectionType::Datagram);
+        auto request = co_await datagramConnection.awaitableReceiveBytes();
+        co_await datagramConnection.awaitableSend(WTF::move(request));
+    });
+
+    {
+        RetainPtr<TestNavigationDelegate> delegate;
+        RetainPtr webView = webTransportWebView(nullptr, delegate);
+        [webView loadHTMLString:datagramEchoHTML(echoServer.port()) baseURL:[NSURL URLWithString:@"https://webkit.org/"]];
+        EXPECT_WK_STREQ([webView _test_waitForAlert], "successfully read abc");
+    }
+
+    {
+        RetainPtr endpoint = adoptNS(nw_endpoint_create_host("127.0.0.1", "9000"));
+        RetainPtr proxyConfig = adoptNS(nw_proxy_config_create_socksv5(endpoint.get()));
+
+        RetainPtr<TestNavigationDelegate> delegate;
+        RetainPtr webView = webTransportWebView(proxyConfig.get(), delegate);
+        [webView loadHTMLString:datagramEchoHTML(echoServer.port()) baseURL:[NSURL URLWithString:@"https://webkit.org/"]];
+        EXPECT_WK_STREQ([webView _test_waitForAlert], "caught");
+    }
+
+    {
+        RetainPtr endpoint = adoptNS(nw_endpoint_create_host("127.0.0.1", "9000"));
+        RetainPtr proxyConfig = adoptNS(nw_proxy_config_create_http_connect(endpoint.get(), nil));
+
+        RetainPtr<TestNavigationDelegate> delegate;
+        RetainPtr webView = webTransportWebView(proxyConfig.get(), delegate);
+        [webView loadHTMLString:datagramEchoHTML(echoServer.port()) baseURL:[NSURL URLWithString:@"https://webkit.org/"]];
+        EXPECT_WK_STREQ([webView _test_waitForAlert], "caught");
+    }
+}
 } // namespace TestWebKitAPI
 
 #endif // HAVE(WEBTRANSPORT)

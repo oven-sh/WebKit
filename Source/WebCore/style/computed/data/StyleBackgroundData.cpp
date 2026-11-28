@@ -29,8 +29,7 @@
 #include "StyleKeyword+Logging.h"
 #include "StylePrimitiveNumericTypes+Logging.h"
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(BackgroundData);
 
@@ -44,6 +43,7 @@ inline BackgroundData::BackgroundData(const BackgroundData& other)
     : RefCounted<BackgroundData>()
     , background(other.background)
     , backgroundColor(other.backgroundColor)
+    , overrideBackgroundColor(other.overrideBackgroundColor)
     , outline(other.outline)
 {
 }
@@ -57,13 +57,22 @@ bool BackgroundData::operator==(const BackgroundData& other) const
 {
     return background == other.background
         && backgroundColor == other.backgroundColor
+        && overrideBackgroundColor == other.overrideBackgroundColor
         && outline == other.outline;
+}
+
+Color BackgroundData::usedBackgroundColor() const
+{
+    if (overrideBackgroundColor) [[unlikely]]
+        return *overrideBackgroundColor;
+
+    return backgroundColor;
 }
 
 bool BackgroundData::containsCurrentColor() const
 {
     return backgroundContainsCurrentColor()
-        || backgroundColor.containsCurrentColor()
+        || usedBackgroundColor().containsCurrentColor()
         || outline.outlineColor.containsCurrentColor();
 }
 
@@ -81,6 +90,8 @@ void BackgroundData::dump(TextStream& ts, DumpStyleValues behavior) const
         ts.dumpProperty("background-image"_s, background);
     if (behavior == DumpStyleValues::All || backgroundColor != ComputedStyle::initialBackgroundColor())
         ts.dumpProperty("background-color"_s, backgroundColor);
+    if (behavior == DumpStyleValues::All || overrideBackgroundColor)
+        ts.dumpProperty("override-background-color"_s, backgroundColor);
     if (behavior == DumpStyleValues::All || outline != OutlineValue())
         ts.dumpProperty("outline"_s, outline);
 }
@@ -90,6 +101,7 @@ void BackgroundData::dumpDifferences(TextStream& ts, const BackgroundData& other
 {
     LOG_IF_DIFFERENT(background);
     LOG_IF_DIFFERENT(backgroundColor);
+    LOG_IF_DIFFERENT(overrideBackgroundColor);
     LOG_IF_DIFFERENT(outline);
 }
 #endif
@@ -100,5 +112,4 @@ TextStream& operator<<(TextStream& ts, const BackgroundData& backgroundData)
     return ts;
 }
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

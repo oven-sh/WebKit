@@ -286,6 +286,7 @@ public:
     virtual void handleClickEvent(MouseEvent&) { }
     virtual void handleMouseDownEvent(MouseEvent&) { }
     virtual void handleMouseMoveEvent(MouseEvent&) { }
+    virtual void handleMouseUpEvent(MouseEvent&) { }
     virtual void willDispatchClick(InputElementClickState&) { }
     virtual void didDispatchClick(Event&, const InputElementClickState&) { }
     virtual void handleDOMActivateEvent(Event&) { }
@@ -344,7 +345,7 @@ public:
     // Miscellaneous functions.
 
     NODELETE virtual bool rendererIsNeeded();
-    virtual RenderPtr<RenderElement> createInputRenderer(Style::ComputedStyle&&);
+    virtual RenderPtr<RenderElement> createInputRenderer(UniqueRef<Style::ComputedStyle>&&);
     virtual void addSearchResult();
     virtual void attach();
     virtual void detach();

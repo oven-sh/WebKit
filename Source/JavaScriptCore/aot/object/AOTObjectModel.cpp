@@ -495,7 +495,7 @@ struct StructureTable::VariantMaps {
 
     static CompiledStructure* decode(StructureID id) { return WTF::opaque(uncheckedDowncast<CompiledStructure>(id.decode())); }
     static unsigned recentIndex(const Variant& variant) { return ((variant.extraPropertiesStructure ? variant.extraPropertiesStructure->id().bits() : 0) * 0x9e3779b1u ^ variant.layout->shape * 0x85ebca6bu) >> (32 - recentIndexBits); }
-    static unsigned requestedIndex(const Structure& extraPropertiesStructure) { return extraPropertiesStructure.id().bits() * 0x9e3779b1u >> (32 - requestedIndexBits); }
+    static unsigned requestedIndex(const Structure& extraPropertiesStructure) { return (extraPropertiesStructure.id().bits() >> structureIDPlaceShift) * 0x9e3779b1u >> (32 - requestedIndexBits); }
 
     CompiledStructure* findRecent(const Variant& variant) const
     {

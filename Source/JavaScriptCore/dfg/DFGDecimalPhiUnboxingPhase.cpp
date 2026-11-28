@@ -200,7 +200,7 @@ private:
 
     void findUses()
     {
-        UncheckedKeyHashMap<Node*, BlockSet> escapedAtTail;
+        HashMap<Node*, BlockSet> escapedAtTail;
         Vector<std::pair<Node*, BasicBlock*>> worklist;
         auto escape = [&](Node* value, BasicBlock* block) {
             if (escapedAtTail.add(value, BlockSet()).iterator->value.add(block))
@@ -361,7 +361,7 @@ private:
 
     void convertUpsilons()
     {
-        UncheckedKeyHashMap<Node*, bool> upsilons;
+        HashMap<Node*, bool> upsilons;
         for (Node* phi : m_phis) {
             for (Input& input : candidateFor(phi)->inputs)
                 upsilons.add(input.upsilon, input.isHandedOver);
@@ -403,8 +403,8 @@ private:
     CombinedLiveness m_liveness;
     Vector<Node*> m_checks;
     Vector<Node*> m_phis;
-    UncheckedKeyHashMap<Node*, Candidate> m_candidates;
-    UncheckedKeyHashMap<Node*, BasicBlock*> m_owners;
+    HashMap<Node*, Candidate> m_candidates;
+    HashMap<Node*, BasicBlock*> m_owners;
 };
 
 bool performDecimalPhiUnboxing(Graph& graph)

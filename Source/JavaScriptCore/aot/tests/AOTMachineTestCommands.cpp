@@ -1151,7 +1151,7 @@ static void runMachineBytesByFormCommand(TestCommandContext& context)
         setFormSaidFalsely(std::nullopt);
     });
     StagedBuild stage = context.stage();
-    UncheckedKeyHashMap<uint64_t, TotalOfRow, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> totals;
+    HashMap<uint64_t, TotalOfRow, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> totals;
     TotalOfCodeForm totalOfAllForms;
     uint64_t codeFormSchemaMismatches = 0;
     uint64_t coldCodeFormsChosen = 0;
@@ -1284,7 +1284,7 @@ static void runMachineBytesOutsideOperationsCommand(TestCommandContext& context)
     }
 
     StagedBuild stage = context.stage();
-    UncheckedKeyHashMap<uint64_t, TotalOfCodeForm, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> totals;
+    HashMap<uint64_t, TotalOfCodeForm, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> totals;
     TotalOfCodeForm totalOfAllRows;
     uint64_t bytesOfCode = 0;
     for (CodeUnit unit : stage.unitsToCompile()) {

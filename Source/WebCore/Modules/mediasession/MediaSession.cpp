@@ -50,6 +50,7 @@
 #include "PlatformMediaSessionManager.h"
 #include "Settings.h"
 #include "UserMediaController.h"
+#include <wtf/Borrow.h>
 #include <wtf/CryptographicallyRandomNumber.h>
 #include <wtf/JSONValues.h>
 #include <wtf/SortedArrayMap.h>
@@ -260,7 +261,7 @@ ExceptionOr<void> MediaSession::setPlaylist(ScriptExecutionContext& context, Vec
 
     Vector<Ref<MediaMetadata>> resolvedPlaylist(ReserveCapacityTag { }, playlist.size());
 
-    for (auto& entry : playlist) {
+    for (auto& entry : borrow(playlist)) {
         auto resolvedEntry = MediaMetadata::create(context, { entry->metadata() });
         if (resolvedEntry.hasException())
             return resolvedEntry.releaseException();
@@ -505,25 +506,25 @@ void MediaSession::metadataUpdated(const MediaMetadata& metadata)
 
 bool MediaSession::hasObserver(MediaSessionObserver& observer) const
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     return m_observers.contains(observer);
 }
 
 void MediaSession::addObserver(MediaSessionObserver& observer)
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     m_observers.add(observer);
 }
 
 void MediaSession::removeObserver(MediaSessionObserver& observer)
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     m_observers.remove(observer);
 }
 
 void MediaSession::forEachObserver(NOESCAPE const Function<void(MediaSessionObserver&)>& apply)
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     Ref protectedThis { *this };
     m_observers.forEach(apply);
 }

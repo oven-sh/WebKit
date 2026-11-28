@@ -73,7 +73,7 @@ SourceBufferPrivateGStreamer::SourceBufferPrivateGStreamer(MediaSourcePrivateGSt
     : SourceBufferPrivate(mediaSource)
     , m_type(contentType)
     , m_textTracksEnabled(textTracksEnabled)
-    , m_appendPipeline(makeUnique<AppendPipeline>(*this, *player()))
+    , m_appendPipeline(makeUnique<AppendPipeline>(*this))
 #if !RELEASE_LOG_DISABLED
     , m_logger(mediaSource.logger())
     , m_logIdentifier(mediaSource.nextSourceBufferLogIdentifier())
@@ -153,7 +153,7 @@ bool SourceBufferPrivateGStreamer::canSwitchToType(const ContentType& type)
 
     if (isContentTypeSupported(type)) {
         if (player)
-            GST_INFO_OBJECT(player->pipeline(), "type change %s -> %s", m_type.raw().utf8(), type.raw().utf8());
+            GST_INFO_OBJECT(player->pipeline(), "type change %s -> %s", makeUTF8CString(m_type.raw()), makeUTF8CString(type.raw()));
         m_type = type;
 
         return true;
@@ -231,7 +231,7 @@ void SourceBufferPrivateGStreamer::enqueueSample(Ref<MediaSample>&& sample, Trac
 
         if (mappedBuffer) [[likely]] {
             auto message = makeString("Text sample (trackId="_s, trackId, ')');
-            GST_MEMDUMP_OBJECT(player->pipeline(), message.utf8().legacyCStringPointer(), mappedBuffer.data(), mappedBuffer.size());
+            GST_MEMDUMP_OBJECT(player->pipeline(), makeUTF8CString(message).legacyCStringPointer(), mappedBuffer.data(), mappedBuffer.size());
         }
     }
 #endif
@@ -254,12 +254,13 @@ void SourceBufferPrivateGStreamer::notifyClientWhenReadyForMoreSamples(TrackID t
     ASSERT(isMainThread());
     ASSERT(m_tracks.contains(trackId));
     auto track = m_tracks[trackId];
-    track->notifyWhenReadyForMoreSamples([weakPtr = WeakPtr { *this }, this, trackId]() mutable {
-        RunLoop::mainSingleton().dispatch([weakPtr = WTF::move(weakPtr), this, trackId]() {
-            if (!weakPtr)
+    track->notifyWhenReadyForMoreSamples([weakThis = ThreadSafeWeakPtr { *this }, trackId] mutable {
+        RunLoop::mainSingleton().dispatch([weakThis = WTF::move(weakThis), trackId] {
+            RefPtr strongThis = weakThis;
+            if (!strongThis)
                 return;
-            if (!m_hasBeenRemovedFromMediaSource)
-                provideMediaData(trackId);
+            if (!strongThis->m_hasBeenRemovedFromMediaSource)
+                strongThis->provideMediaData(trackId);
         });
     });
 }

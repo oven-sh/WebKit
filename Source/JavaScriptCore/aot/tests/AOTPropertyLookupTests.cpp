@@ -248,6 +248,31 @@ static void testDictionary(LoadedProgram& program)
     AOT_TEST_CHECK(object->structure()->isUncacheableDictionary());
 }
 
+// An ordinary object can become a prototype, and then its dictionary may be flattened once more (WebKit/WebKit@28df7fa3c5): no address is given out into one.
+static void testNoAddressIntoDictionaryThatCanBeFlattenedAgain(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    Identifier label = Identifier::fromString(vm, "label"_s);
+    JSValue key = jsString(vm, label.string());
+    JSObject* object = constructEmptyObject(program.realm());
+    object->putDirect(vm, label, jsNumber(7));
+    auto address = [&] {
+        return operationAOTOwnPropertyAddress(JSValue::encode(object), JSValue::encode(key), false, false, static_cast<uint32_t>(AddressHolders::Objects));
+    };
+    auto addressOfValue = [&] {
+        return std::bit_cast<uint64_t>(object->locationForOffset(object->getDirectOffset(vm, label)));
+    };
+    AOT_TEST_CHECK(address() == addressOfValue());
+
+    object->convertToUncacheableDictionary(vm);
+    AOT_TEST_CHECK(!address());
+    AOT_TEST_CHECK(flattenOnce(vm, object) && !object->structure()->isDictionary() && object->structure()->hasBeenFlattenedBefore());
+    AOT_TEST_CHECK(address() == addressOfValue());
+
+    object->convertToUncacheableDictionary(vm);
+    AOT_TEST_CHECK(object->structure()->isUncacheableDictionary() && object->structure()->hasBeenFlattenedBefore() && !address());
+}
+
 static void testOtherPrototype(LoadedProgram& program)
 {
     VM& vm = program.vm();
@@ -906,6 +931,7 @@ std::span<const NativeTest> propertyLookupTests()
         { "property-lookup/own-accessor"_s, withProgram<testOwnAccessor> },
         { "property-lookup/underscore-proto-and-index"_s, withProgram<testUnderscoreProtoAndIndex> },
         { "property-lookup/dictionary"_s, withProgram<testDictionary> },
+        { "property-lookup/no-address-into-a-dictionary-that-can-be-flattened-again"_s, withProgram<testNoAddressIntoDictionaryThatCanBeFlattenedAgain> },
         { "property-lookup/other-prototype"_s, withProgram<testOtherPrototype> },
         { "property-lookup/dictionary-on-chain"_s, withProgram<testDictionaryOnChain> },
         { "property-lookup/other-base"_s, withProgram<testOtherBase> },

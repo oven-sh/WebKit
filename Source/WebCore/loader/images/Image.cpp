@@ -42,6 +42,7 @@
 #include "ShareableBitmap.h"
 #include "SharedBuffer.h"
 #include <math.h>
+#include <wtf/Borrow.h>
 #include <wtf/CompletionHandler.h>
 #include <wtf/MainThread.h>
 #include <wtf/StdLibExtras.h>
@@ -103,7 +104,7 @@ RefPtr<Image> Image::create(ImageObserver& observer)
 {
     // SVGImage and PDFDocumentImage are not safe to use off the main thread.
     // Workers can use BitmapImage directly.
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
 
     auto mimeType = observer.mimeType();
     if (mimeType == "image/svg+xml"_s)
@@ -235,7 +236,7 @@ void Image::decodeToShareableBitmaps(std::span<const uint8_t> data, std::span<co
             completionHandler({ });
             return;
         }
-        completionHandler(createBitmapsFromSVGImage(*svgImage, lengthsVector.span()));
+        completionHandler(createBitmapsFromSVGImage(*svgImage, borrow(lengthsVector)->span()));
     });
 }
 
@@ -381,9 +382,9 @@ void Image::startAnimationAsynchronously()
     m_animationStartTimer->startOneShot(0_s);
 }
 
-ColorSpace Image::colorSpace()
+ColorSpace Image::colorSpace(const ColorSpace& defaultColorSpace)
 {
-    return ColorSpace::SRGB();
+    return defaultColorSpace;
 }
 
 RefPtr<ShareableBitmap> Image::toShareableBitmap(ConcreteObjectSize concreteObjectSize) const
@@ -434,13 +435,6 @@ TextStream& operator<<(TextStream& ts, const Image& image)
 bool Image::animationPending() const
 {
     return m_animationStartTimer && m_animationStartTimer->isActive();
-}
-
-bool Image::gSystemAllowsAnimationControls = false;
-
-void Image::setSystemAllowsAnimationControls(bool allowsControls)
-{
-    gSystemAllowsAnimationControls = allowsControls;
 }
 
 std::optional<Color> Image::singlePixelSolidColor() const

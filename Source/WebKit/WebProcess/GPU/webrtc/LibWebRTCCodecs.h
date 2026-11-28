@@ -39,8 +39,11 @@
 #include "WorkQueueMessageReceiver.h"
 #include <WebCore/H264Utilities.h>
 #include <WebCore/HEVCUtilities.h>
+#include <WebCore/IntSize.h>
 #include <WebCore/PlatformVideoColorSpace.h>
+#include <WebCore/TrackInfo.h>
 #include <WebCore/VideoCodecType.h>
+#include <WebCore/VideoDecoder.h>
 #include <WebCore/VideoEncoder.h>
 #include <WebCore/VideoEncoderScalabilityMode.h>
 #include <map>
@@ -49,6 +52,7 @@
 #include <wtf/HashSet.h>
 #include <wtf/Lock.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/Variant.h>
 
 using CVPixelBufferPoolRef = struct __CVPixelBufferPool*;
 
@@ -97,6 +101,9 @@ public:
             uint16_t height { 0 };
             FramePromise::AutoRejectProducer producer;
         };
+        struct PendingFlush {
+            GenericPromise::AutoRejectProducer producer;
+        };
 
         Decoder(VideoDecoderIdentifier identifier, WebCore::VideoCodecType type, const String& codec, bool isAnnexB, std::optional<WebCore::PlatformVideoColorSpace>&& colorSpaceOverride, WebCore::VideoFrameRotation rotation, bool isMirrored)
             : identifier(identifier)
@@ -119,8 +126,12 @@ public:
         DecoderCallback decoderCallback WTF_GUARDED_BY_LOCK(decodedImageCallbackLock);
         Lock decodedImageCallbackLock;
         bool hasError { false };
+        enum class WaitingFor : uint8_t { Nothing, VideoInfoReply, SoftwareDecoderCreation, SoftwareDecoderFlush };
+        WaitingFor waitingFor { WaitingFor::Nothing };
         RefPtr<IPC::Connection> connection;
-        Vector<EncodedFrame> pendingFrames;
+        RefPtr<WebCore::VideoInfo> videoInfo;
+        RefPtr<WebCore::VideoDecoder> softwareDecoder;
+        Deque<Variant<EncodedFrame, PendingFlush>> pendingTasks;
     };
 
     Decoder* createDecoder(WebCore::VideoCodecType, bool isAnnexB = false);
@@ -149,13 +160,14 @@ public:
     struct Encoder {
         WTF_MAKE_TZONE_ALLOCATED(Encoder);
     public:
-        explicit Encoder(VideoEncoderIdentifier identifier, WebCore::VideoCodecType type, const String& codec, bool useAnnexB, bool isRealtime, WebCore::VideoEncoderScalabilityMode scalabilityMode)
+        explicit Encoder(VideoEncoderIdentifier identifier, WebCore::VideoCodecType type, const String& codec, bool useAnnexB, bool isRealtime, WebCore::VideoEncoderScalabilityMode scalabilityMode, WebCore::IntSize size)
             : identifier(identifier)
             , type(type)
             , codec(codec.isolatedCopy())
             , useAnnexB(useAnnexB)
             , isRealtime(isRealtime)
             , scalabilityMode(scalabilityMode)
+            , size(size)
         {
         }
 
@@ -175,6 +187,7 @@ public:
         const bool useAnnexB { true };
         const bool isRealtime { true };
         const WebCore::VideoEncoderScalabilityMode scalabilityMode { WebCore::VideoEncoderScalabilityMode::L1T1 };
+        const WebCore::IntSize size;
 
         Vector<std::pair<String, String>> parameters;
         std::optional<EncoderInitializationData> initializationData;
@@ -261,12 +274,23 @@ private:
     template<typename Buffer> bool copySharedVideoFrame(LibWebRTCCodecs::Encoder&, IPC::Connection&, Buffer&&);
 
     Decoder* createDecoderInternal(WebCore::VideoCodecType, const String& codec, bool isAnnexB, std::optional<WebCore::PlatformVideoColorSpace>&& colorSpaceOverride, WebCore::VideoFrameRotation, bool isMirrored, Function<void(Decoder(*))>&&);
-    Encoder* createEncoderInternal(WebCore::VideoCodecType, const String& codec, const std::map<std::string, std::string>&, bool isRealtime, bool useAnnexB, WebCore::VideoEncoderScalabilityMode, Function<void(Encoder*)>&&);
+    Encoder* createEncoderInternal(WebCore::VideoCodecType, const String& codec, const std::map<std::string, std::string>&, bool isRealtime, bool useAnnexB, WebCore::VideoEncoderScalabilityMode, WebCore::IntSize, Function<void(Encoder*)>&&);
     template<typename Frame> RefPtr<FramePromise> encodeFrameInternal(Encoder&, const Frame&, bool shouldEncodeAsKeyFrame, WebCore::VideoFrameRotation, bool isMirrored, MediaTime, int64_t timestamp, std::optional<uint64_t> duration);
     template<typename Frame> RefPtr<FramePromise> encodeFrameInternalWithLock(Encoder&, const Frame&, bool shouldEncodeAsKeyFrame, WebCore::VideoFrameRotation, bool isMirrored, MediaTime, int64_t timestamp, std::optional<uint64_t> duration) WTF_REQUIRES_LOCK(m_encodersConnectionLock);
 
     template<typename Data> RefPtr<FramePromise> decodeFrameInternal(Decoder&, int64_t timeStamp, Data&&, uint16_t width, uint16_t height);
-    Ref<FramePromise> sendFrameToDecode(Decoder&, int64_t timeStamp, std::span<const uint8_t>, uint16_t width, uint16_t height);
+    template<typename Data> RefPtr<FramePromise> sendFrameToDecoderIfPossible(Decoder&, int64_t timeStamp, const Data&, uint16_t width, uint16_t height) WTF_REQUIRES_LOCK(m_connectionLock);
+    Ref<FramePromise> sendFrameToGPUProcess(Decoder&, int64_t timeStamp, std::span<const uint8_t>) WTF_REQUIRES_LOCK(m_connectionLock);
+    Ref<FramePromise> sendFrameToSoftwareDecoder(Decoder&, int64_t timeStamp, Ref<WebCore::SharedBuffer>&&, bool isKeyFrame) WTF_REQUIRES_LOCK(m_connectionLock);
+    Ref<GenericPromise> sendFlushDecoder(Decoder&) WTF_REQUIRES_LOCK(m_connectionLock);
+    void updateDecoderVideoInfo(Decoder&, Ref<WebCore::VideoInfo>&&) WTF_REQUIRES_LOCK(m_connectionLock);
+    void sendDecoderVideoInfo(Decoder&) WTF_REQUIRES_LOCK(m_connectionLock);
+    void processPendingDecoderTasks(Decoder&) WTF_REQUIRES_LOCK(m_connectionLock);
+    void settlePendingDecoderTasks(Decoder&, std::optional<ASCIILiteral> errorMessage) WTF_REQUIRES_LOCK(m_connectionLock);
+    void createSoftwareDecoder(VideoDecoderIdentifier, const String& codec, const WebCore::VideoDecoder::Config&);
+    void softwareDecoderCreated(VideoDecoderIdentifier, WebCore::VideoDecoder::CreateResult&&);
+    void softwareDecoderFlushed(VideoDecoderIdentifier, IPC::Connection& acceptingConnection);
+    void softwareDecoderOutput(VideoDecoderIdentifier, std::expected<WebCore::VideoDecoder::DecodedFrame, String>&&);
 
     HashMap<VideoDecoderIdentifier, std::unique_ptr<Decoder>> m_decoders WTF_GUARDED_BY_CAPABILITY(workQueue());
     Lock m_encodersConnectionLock;

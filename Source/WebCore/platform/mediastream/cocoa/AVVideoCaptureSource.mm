@@ -214,8 +214,7 @@ static IntSize maxPhotoSizeForFormat(AVCaptureDeviceFormat *format, IntSize requ
         return { };
 
     auto bestMaxPhotoSize = maxPhotoDimensions.firstObject.CMVideoDimensionsValue;
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL NSValue *value in maxPhotoDimensions) {
+    for (NSValue *value in maxPhotoDimensions) {
         CMVideoDimensions dimensions = value.CMVideoDimensionsValue;
         if (dimensions.width >= requestedSize.width() && dimensions.height >= requestedSize.height()) {
             if (dimensions.width * dimensions.height < bestMaxPhotoSize.width * bestMaxPhotoSize.height)
@@ -253,19 +252,6 @@ static WorkQueue& photoQueueSingleton()
 {
     static NeverDestroyed<Ref<WorkQueue>> queue = WorkQueue::create("WebKit::AVPhotoCapture Queue"_s);
     return queue.get();
-}
-
-#if PLATFORM(IOS_FAMILY)
-static bool s_useAVCaptureDeviceRotationCoordinatorAPI = false;
-#endif
-
-void AVVideoCaptureSource::setUseAVCaptureDeviceRotationCoordinatorAPI(bool value)
-{
-#if PLATFORM(IOS_FAMILY)
-    s_useAVCaptureDeviceRotationCoordinatorAPI = value;
-#else
-    UNUSED_PARAM(value);
-#endif
 }
 
 CaptureSourceOrError AVVideoCaptureSource::create(const CaptureDevice& device, MediaDeviceHashSalts&& hashSalts, const MediaConstraints* constraints, std::optional<PageIdentifier> pageIdentifier)
@@ -749,10 +735,10 @@ RetainPtr<AVCapturePhotoSettings> AVVideoCaptureSource::photoConfiguration(const
     RetainPtr<AVCapturePhotoSettings> avPhotoSettings;
 
     @try {
-        avPhotoSettings = [PAL::getAVCapturePhotoSettingsClassSingleton() photoSettingsWithFormat:@{
+        avPhotoSettings = checked_objc_cast<AVCapturePhotoSettings>([PAL::getAVCapturePhotoSettingsClassSingleton() photoSettingsWithFormat:@{
             AVVideoCodecKey : AVVideoCodecTypeJPEG,
             AVVideoCompressionPropertiesKey : @{ AVVideoQualityKey : @(1) }
-        }];
+        }]);
 
 #if PLATFORM(IOS_FAMILY)
         if (photoSettings.fillLightMode) {
@@ -925,7 +911,7 @@ auto AVVideoCaptureSource::getPhotoSettings() -> Ref<PhotoSettingsNativePromise>
 
 RetainPtr<NSArray> AVVideoCaptureSource::cameraCaptureDeviceTypes()
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     static NeverDestroyed<RetainPtr<NSMutableArray>> devicePriorities;
     if (!devicePriorities.get()) {
         devicePriorities.get() = adoptNS([[NSMutableArray alloc] initWithCapacity:8]);
@@ -1290,8 +1276,7 @@ RetainPtr<AVFrameRateRange> AVVideoCaptureSource::frameDurationForFrameRate(doub
     using namespace PAL; // For CMTIME_COMPARE_INLINE
 
     RetainPtr<AVFrameRateRange> bestFrameRateRange;
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL AVFrameRateRange *frameRateRange in [[device() activeFormat] videoSupportedFrameRateRanges]) {
+    for (AVFrameRateRange *frameRateRange in [[device() activeFormat] videoSupportedFrameRateRanges]) {
         if (frameRateRangeIncludesRate({ [frameRateRange minFrameRate], [frameRateRange maxFrameRate] }, rate)) {
             if (!bestFrameRateRange || CMTIME_COMPARE_INLINE([frameRateRange minFrameDuration], >, [bestFrameRateRange.get() minFrameDuration]))
                 bestFrameRateRange = frameRateRange;
@@ -1341,13 +1326,14 @@ bool AVVideoCaptureSource::setupCaptureSession()
     [session() addOutput:m_videoOutput.get()];
 
 #if PLATFORM(IOS_FAMILY)
-    if (s_useAVCaptureDeviceRotationCoordinatorAPI) {
-        AVCaptureConnection* connection = [m_videoOutput connectionWithMediaType:AVMediaTypeVideo];
-        if ([connection isVideoRotationAngleSupported:0]) {
-            RELEASE_LOG(WebRTC, "Setting AVVideoCaptureSource connection angle to 0");
-            [connection setVideoRotationAngle:0];
-        }
-    }
+    AVCaptureConnection* connection = [m_videoOutput connectionWithMediaType:AVMediaTypeVideo];
+    // For backward compatibility reasons, we keep AVFoundation's default rotation angle, which is 180 for the front camera of devices whose camera sensor is on the side.
+    // FIXME: Set videoRotationAngle back to 0 once enough websites migrate to using VideoFrame.rotation.
+    m_connectionVideoFrameRotation = parseVideoFrameRotation([connection videoRotationAngle]);
+    if (m_connectionVideoFrameRotation != VideoFrameRotation::None && m_connectionVideoFrameRotation != VideoFrameRotation::UpsideDown)
+        ERROR_LOG_IF_POSSIBLE(LOGIDENTIFIER, "Connection rotation is unexpected: ", m_connectionVideoFrameRotation);
+    if (!m_useSensorAndDeviceOrientation)
+        updateVideoFrameRotationFromRotationCoordinator();
 #endif
 
     setSessionSizeFrameRateAndZoom();
@@ -1390,11 +1376,18 @@ void AVVideoCaptureSource::rotationAngleForHorizonLevelDisplayChanged(const Stri
         return;
 
     m_useSensorAndDeviceOrientation = false;
+    m_rotationCoordinatorVideoFrameRotation = videoFrameRotation;
+    updateVideoFrameRotationFromRotationCoordinator();
+}
 
+void AVVideoCaptureSource::updateVideoFrameRotationFromRotationCoordinator()
+{
+    ASSERT(!m_useSensorAndDeviceOrientation);
+    auto videoFrameRotation = subtractVideoFrameRotations(m_rotationCoordinatorVideoFrameRotation, m_connectionVideoFrameRotation);
     if (videoFrameRotation == m_videoFrameRotation)
         return;
 
-    ALWAYS_LOG_IF_POSSIBLE(LOGIDENTIFIER, "rotation = ", m_videoFrameRotation);
+    ALWAYS_LOG_IF_POSSIBLE(LOGIDENTIFIER, "rotation = ", videoFrameRotation, ", connection rotation = ", m_connectionVideoFrameRotation);
     m_videoFrameRotation = videoFrameRotation;
     notifySettingsDidChangeObservers({ RealtimeMediaSourceSettings::Flag::Width, RealtimeMediaSourceSettings::Flag::Height });
 }
@@ -1429,7 +1422,7 @@ void AVVideoCaptureSource::computeVideoFrameRotation()
     if (videoFrameRotation == m_videoFrameRotation)
         return;
 
-    ALWAYS_LOG_IF_POSSIBLE(LOGIDENTIFIER, "rotation was ", videoFrameRotation, ", is now ", m_videoFrameRotation);
+    ALWAYS_LOG_IF_POSSIBLE(LOGIDENTIFIER, "rotation was ", m_videoFrameRotation, ", is now ", videoFrameRotation);
     m_videoFrameRotation = videoFrameRotation;
     notifySettingsDidChangeObservers({ RealtimeMediaSourceSettings::Flag::Width, RealtimeMediaSourceSettings::Flag::Height });
 }
@@ -1538,8 +1531,7 @@ static bool isFormatPowerEfficient(AVCaptureDeviceFormat* format)
 void AVVideoCaptureSource::generatePresets()
 {
     Vector<VideoPreset> presets;
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL AVCaptureDeviceFormat* format in [device() formats]) {
+    for (AVCaptureDeviceFormat* format in [device() formats]) {
 
         // Skip packed-Bayer ProRes RAW sensor formats as they are not currently supported.
         RetainPtr<CMFormatDescriptionRef> formatDescription = format.formatDescription;
@@ -1556,8 +1548,7 @@ void AVVideoCaptureSource::generatePresets()
             continue;
 
         Vector<FrameRateRange> frameRates;
-        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-        for (SUPPRESS_UNRETAINED_LOCAL AVFrameRateRange* range in [format videoSupportedFrameRateRanges])
+        for (AVFrameRateRange* range in [format videoSupportedFrameRateRanges])
             frameRates.append({ range.minFrameRate, range.maxFrameRate });
 
         VideoPreset preset { size, WTF::move(frameRates), computeMinZoom(), computeMaxZoom(format), isFormatPowerEfficient(format) };

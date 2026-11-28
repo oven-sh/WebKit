@@ -57,6 +57,7 @@
 #include "WebCodecsBufferTransfer.h"
 #include "WebCodecsVideoFrameAlgorithms.h"
 #include <JavaScriptCore/ConsoleTypes.h>
+#include <wtf/Borrow.h>
 #include <wtf/Seconds.h>
 #include <wtf/text/MakeString.h>
 
@@ -97,7 +98,7 @@ WebCodecsVideoFrame::~WebCodecsVideoFrame()
         return;
     if (RefPtr context = scriptExecutionContext()) {
         context->postTask([](auto& context) {
-            context.addConsoleMessage(MessageSource::JS, MessageLevel::Warning, "A VideoFrame was destroyed without having been closed explicitly"_s);
+            context.addConsoleMessage(MessageSource::Media, MessageLevel::Warning, "A VideoFrame was destroyed without having been closed explicitly"_s);
         });
     }
 }
@@ -271,7 +272,15 @@ ExceptionOr<Ref<WebCodecsVideoFrame>> WebCodecsVideoFrame::create(ScriptExecutio
     if (!pixelBuffer)
         return Exception { ExceptionCode::InvalidStateError,  "Buffer has no frame"_s };
 
-    auto videoFrame = VideoFrame::createFromPixelBuffer(pixelBuffer.releaseNonNull(), { .primaries = PlatformVideoColorPrimaries::Bt709, .transfer = PlatformVideoTransferCharacteristics::Iec6196621, .matrix = PlatformVideoMatrixCoefficients::Rgb, .fullRange = true });
+    auto videoFrame = VideoFrame::createFromPixelBuffer(pixelBuffer.releaseNonNull(), {
+        .presentationTime = init.timestamp ? timestampToMediaTime(*init.timestamp) : MediaTime { },
+        .colorSpace = {
+            .primaries = PlatformVideoColorPrimaries::Bt709,
+            .transfer = PlatformVideoTransferCharacteristics::Iec6196621,
+            .matrix = PlatformVideoMatrixCoefficients::Rgb,
+            .fullRange = true
+        }
+    });
 
     if (!videoFrame)
         return Exception { ExceptionCode::InvalidStateError,  "Unable to create frame from buffer"_s };
@@ -311,28 +320,54 @@ ExceptionOr<Ref<WebCodecsVideoFrame>> WebCodecsVideoFrame::create(ScriptExecutio
 
     auto colorSpace = videoFramePickColorSpace(init.colorSpace, pixelFormat);
     auto rotation = parseVideoFrameRotation(init.rotation);
+    VideoFrame::Init videoFrameInit {
+        .presentationTime = timestampToMediaTime(init.timestamp),
+        .rotation = rotation,
+        .isMirrored = init.flip,
+        .colorSpace = WTF::move(colorSpace)
+    };
     RefPtr<VideoFrame> videoFrame;
     switch (pixelFormat) {
     case VideoPixelFormat::NV12:
-        videoFrame = VideoFrame::createNV12(data.span(), parsedRect.width, parsedRect.height, layout.computedLayouts[0], layout.computedLayouts[1], rotation, WTF::move(colorSpace));
+        videoFrame = VideoFrame::createNV12(data.span(), parsedRect.width, parsedRect.height, borrow(layout.computedLayouts)[0], borrow(layout.computedLayouts)[1], WTF::move(videoFrameInit));
         break;
     case VideoPixelFormat::RGBA:
-        videoFrame = VideoFrame::createRGBA(data.span(), parsedRect.width, parsedRect.height, layout.computedLayouts[0], rotation, WTF::move(colorSpace));
+        videoFrame = VideoFrame::createRGBA(data.span(), parsedRect.width, parsedRect.height, borrow(layout.computedLayouts)[0], WTF::move(videoFrameInit));
         break;
     case VideoPixelFormat::RGBX:
-        videoFrame = VideoFrame::createRGBX(data.span(), parsedRect.width, parsedRect.height, layout.computedLayouts[0], rotation, WTF::move(colorSpace));
+        videoFrame = VideoFrame::createRGBX(data.span(), parsedRect.width, parsedRect.height, borrow(layout.computedLayouts)[0], WTF::move(videoFrameInit));
         break;
     case VideoPixelFormat::BGRA:
-        videoFrame = VideoFrame::createBGRA(data.span(), parsedRect.width, parsedRect.height, layout.computedLayouts[0], rotation, WTF::move(colorSpace));
+        videoFrame = VideoFrame::createBGRA(data.span(), parsedRect.width, parsedRect.height, borrow(layout.computedLayouts)[0], WTF::move(videoFrameInit));
         break;
     case VideoPixelFormat::BGRX:
-        videoFrame = VideoFrame::createBGRX(data.span(), parsedRect.width, parsedRect.height, layout.computedLayouts[0], rotation, WTF::move(colorSpace));
+        videoFrame = VideoFrame::createBGRX(data.span(), parsedRect.width, parsedRect.height, borrow(layout.computedLayouts)[0], WTF::move(videoFrameInit));
         break;
     case VideoPixelFormat::I420:
-        videoFrame = VideoFrame::createI420(data.span(), parsedRect.width, parsedRect.height, layout.computedLayouts[0], layout.computedLayouts[1], layout.computedLayouts[2], rotation, WTF::move(colorSpace));
+        videoFrame = VideoFrame::createI420(data.span(), parsedRect.width, parsedRect.height, borrow(layout.computedLayouts)[0], borrow(layout.computedLayouts)[1], borrow(layout.computedLayouts)[2], WTF::move(videoFrameInit));
         break;
     case VideoPixelFormat::I420A:
-        videoFrame = VideoFrame::createI420A(data.span(), parsedRect.width, parsedRect.height, layout.computedLayouts[0], layout.computedLayouts[1], layout.computedLayouts[2], layout.computedLayouts[3], rotation, WTF::move(colorSpace));
+        videoFrame = VideoFrame::createI420A(data.span(), parsedRect.width, parsedRect.height, borrow(layout.computedLayouts)[0], borrow(layout.computedLayouts)[1], borrow(layout.computedLayouts)[2], borrow(layout.computedLayouts)[3], WTF::move(videoFrameInit));
+        break;
+    case VideoPixelFormat::I420P10:
+    case VideoPixelFormat::I420P12:
+    case VideoPixelFormat::I422:
+    case VideoPixelFormat::I422P10:
+    case VideoPixelFormat::I422P12:
+    case VideoPixelFormat::I444:
+    case VideoPixelFormat::I444P10:
+    case VideoPixelFormat::I444P12:
+        videoFrame = VideoFrame::createPlanarYUV(pixelFormat, data.span(), parsedRect.width, parsedRect.height, borrow(layout.computedLayouts)->span().first<3>(), WTF::move(videoFrameInit));
+        break;
+    case VideoPixelFormat::I420AP10:
+    case VideoPixelFormat::I420AP12:
+    case VideoPixelFormat::I422A:
+    case VideoPixelFormat::I422AP10:
+    case VideoPixelFormat::I422AP12:
+    case VideoPixelFormat::I444A:
+    case VideoPixelFormat::I444AP10:
+    case VideoPixelFormat::I444AP12:
+        videoFrame = VideoFrame::createPlanarYUV(pixelFormat, data.span(), parsedRect.width, parsedRect.height, borrow(layout.computedLayouts)->span().first<4>(), WTF::move(videoFrameInit));
         break;
     default:
         return Exception { ExceptionCode::NotSupportedError, "VideoPixelFormat is not supported"_s };
@@ -340,9 +375,6 @@ ExceptionOr<Ref<WebCodecsVideoFrame>> WebCodecsVideoFrame::create(ScriptExecutio
 
     if (!videoFrame)
         return Exception { ExceptionCode::TypeError, "Unable to create internal resource from data"_s };
-
-    if (init.flip)
-        videoFrame = videoFrame->updateOrientation(rotation, true, VideoFrame::ShouldClone::No);
 
     transferList.detachAll(context.vm());
 
@@ -394,32 +426,17 @@ Ref<WebCodecsVideoFrame> WebCodecsVideoFrame::create(ScriptExecutionContext& con
     return result;
 }
 
+std::optional<VideoPixelFormat> WebCodecsVideoFrame::videoPixelFormatForContext(const ScriptExecutionContext& context, const VideoFrame& frame)
+{
+    auto format = convertVideoFramePixelFormat(frame.pixelFormat());
+    if (format && isHighBitDepthVideoPixelFormat(*format) && !context.settingsValues().webCodecsHighBitDepthEnabled)
+        return { };
+    return format;
+}
+
 NODELETE static VideoPixelFormat computeVideoPixelFormat(VideoPixelFormat baseFormat, bool shouldDiscardAlpha)
 {
-    if (!shouldDiscardAlpha)
-        return baseFormat;
-    switch (baseFormat) {
-    case VideoPixelFormat::I420:
-    case VideoPixelFormat::I420P10:
-    case VideoPixelFormat::I420P12:
-    case VideoPixelFormat::I422:
-    case VideoPixelFormat::I422P10:
-    case VideoPixelFormat::I422P12:
-    case VideoPixelFormat::NV12:
-    case VideoPixelFormat::I444:
-    case VideoPixelFormat::I444P10:
-    case VideoPixelFormat::I444P12:
-    case VideoPixelFormat::RGBX:
-    case VideoPixelFormat::BGRX:
-        return baseFormat;
-    case VideoPixelFormat::I420A:
-        return VideoPixelFormat::I420;
-    case VideoPixelFormat::RGBA:
-        return VideoPixelFormat::RGBX;
-    case VideoPixelFormat::BGRA:
-        return VideoPixelFormat::BGRX;
-    }
-    return baseFormat;
+    return shouldDiscardAlpha ? pixelFormatWithoutAlpha(baseFormat) : baseFormat;
 }
 
 // https://w3c.github.io/webcodecs/#videoframe-initialize-frame-from-other-frame
@@ -461,7 +478,7 @@ ExceptionOr<Ref<WebCodecsVideoFrame>> WebCodecsVideoFrame::initializeFrameFromOt
 {
     auto codedWidth = internalVideoFrame->presentationSize().width();
     auto codedHeight = internalVideoFrame->presentationSize().height();
-    auto initialFormat = convertVideoFramePixelFormat(internalVideoFrame->pixelFormat());
+    auto initialFormat = videoPixelFormatForContext(context, internalVideoFrame);
     auto format = initialFormat ? std::make_optional(computeVideoPixelFormat(*initialFormat, init.alpha == WebCodecsAlphaOption::Discard)) : std::nullopt;
     if (!validateVideoFrameInit(init, codedWidth, codedHeight, format.value_or(VideoPixelFormat::I420)))
         return Exception { ExceptionCode::TypeError,  "VideoFrameInit is not valid"_s };
@@ -499,7 +516,7 @@ ExceptionOr<Ref<WebCodecsVideoFrame>> WebCodecsVideoFrame::initializeFrameWithRe
 
     auto codedWidth = image->size().width();
     auto codedHeight = image->size().height();
-    auto initialFormat = convertVideoFramePixelFormat(internalVideoFrame->pixelFormat());
+    auto initialFormat = videoPixelFormatForContext(context, *internalVideoFrame);
     auto format = initialFormat ? std::make_optional(computeVideoPixelFormat(*initialFormat, init.alpha == WebCodecsAlphaOption::Discard)) : std::nullopt;
     if (!validateVideoFrameInit(init, codedWidth, codedHeight, format.value_or(VideoPixelFormat::I420)))
         return Exception { ExceptionCode::TypeError,  "VideoFrameInit is not valid"_s };

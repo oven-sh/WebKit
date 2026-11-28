@@ -67,6 +67,7 @@
 #include "SecurityOrigin.h"
 #include "Settings.h"
 #include "UserGestureIndicator.h"
+#include <wtf/Borrow.h>
 #include <wtf/RunLoop.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
@@ -134,7 +135,7 @@ static ExceptionOr<Vector<ApplePayShippingMethod>> convertAndValidate(Vector<App
 {
     Vector<ApplePayShippingMethod> result(ReserveCapacityTag { }, shippingMethods.size());
 
-    for (auto& shippingMethod : shippingMethods) {
+    for (auto& shippingMethod : borrow(shippingMethods)) {
         auto convertedShippingMethod = convertAndValidate(WTF::move(shippingMethod));
         if (convertedShippingMethod.hasException())
             return convertedShippingMethod.releaseException();
@@ -215,7 +216,7 @@ static ExceptionOr<Vector<ApplePayPaymentTokenContext>> convertAndValidate(Vecto
 {
     Vector<ApplePayPaymentTokenContext> result(ReserveCapacityTag { }, tokenContexts.size());
 
-    for (auto& tokenContext : tokenContexts) {
+    for (auto& tokenContext : borrow(tokenContexts)) {
         auto convertedTokenContext = convertAndValidate(WTF::move(tokenContext));
         if (convertedTokenContext.hasException())
             return convertedTokenContext.releaseException();
@@ -355,18 +356,6 @@ static ExceptionOr<ApplePaySessionPaymentRequest> convertAndValidate(Document& d
     return WTF::move(result);
 }
 
-#if HAVE(APPLE_PAY_PAYMENT_ORDER_DETAILS)
-
-static ExceptionOr<ApplePayPaymentOrderDetails> convertAndValidate(ApplePayPaymentOrderDetails&& orderDetails)
-{
-    if (auto& webServiceURL = orderDetails.webServiceURL; !URL { webServiceURL }.isValid())
-        return Exception(ExceptionCode::TypeError, makeString('"', webServiceURL, "\" is not a valid URL."_s));
-
-    return WTF::move(orderDetails);
-}
-
-#endif // HAVE(APPLE_PAY_PAYMENT_ORDER_DETAILS)
-
 static ExceptionOr<ApplePayPaymentAuthorizationResult> convertAndValidate(ApplePayPaymentAuthorizationResult&& result)
 {
     switch (result.status) {
@@ -396,7 +385,7 @@ static ExceptionOr<ApplePayPaymentAuthorizationResult> convertAndValidate(AppleP
         return Exception { ExceptionCode::InvalidAccessError };
     }
 
-#if HAVE(APPLE_PAY_PAYMENT_ORDER_DETAILS)
+#if ENABLE(APPLE_PAY_PAYMENT_ORDER_DETAILS)
     if (auto orderDetails = WTF::move(result.orderDetails)) {
         auto convertedOrderDetails = convertAndValidate(WTF::move(*orderDetails));
         if (convertedOrderDetails.hasException())
@@ -642,7 +631,7 @@ ExceptionOr<void> ApplePaySession::completeMerchantValidation(JSC::JSGlobalObjec
     String errorMessage;
     auto merchantSession = PaymentMerchantSession::fromJS(state, asObject(merchantSessionValue), errorMessage);
     if (!merchantSession) {
-        window->printErrorMessage(errorMessage);
+        window->printErrorMessage(errorMessage, MessageSource::PaymentRequest);
         return Exception { ExceptionCode::InvalidAccessError };
     }
 

@@ -48,11 +48,11 @@ class NetworkSessionSoup final : public NetworkSession {
     WTF_MAKE_TZONE_ALLOCATED(NetworkSessionSoup);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(NetworkSessionSoup);
 public:
-    static std::unique_ptr<NetworkSession> create(NetworkProcess& networkProcess, const NetworkSessionCreationParameters& parameters)
+    static std::unique_ptr<NetworkSession> create(const NetworkSessionCreationParameters& parameters)
     {
-        return makeUnique<NetworkSessionSoup>(networkProcess, parameters);
+        return makeUnique<NetworkSessionSoup>(parameters);
     }
-    NetworkSessionSoup(NetworkProcess&, const NetworkSessionCreationParameters&);
+    NetworkSessionSoup(const NetworkSessionCreationParameters&);
     ~NetworkSessionSoup();
 
     WebCore::SoupNetworkSession& soupNetworkSession() const { return *m_networkSession; }
@@ -70,6 +70,7 @@ public:
 private:
     RefPtr<WebSocketTask> createWebSocketTask(WebPageProxyIdentifier, std::optional<WebCore::FrameIdentifier>, std::optional<WebCore::PageIdentifier>, NetworkSocketChannel&, const WebCore::ResourceRequest&, const String& protocol, const WebCore::ClientOrigin&, bool, bool, OptionSet<WebCore::AdvancedPrivacyProtections>, WebCore::StoredCredentialsPolicy, WebCore::IsInitiatedByWorker) final;
     void clearCredentials(WallTime) final;
+    bool hasCompressionDictionarySupport() const final;
 
     const std::unique_ptr<WebCore::SoupNetworkSession> m_networkSession;
     bool m_persistentCredentialStorageEnabled { true };

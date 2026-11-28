@@ -82,6 +82,8 @@ public:
     struct ScrollState {
         // Edges the container can currently be scrolled further toward.
         RectEdges<bool> scrollableEdges { false, false, false, false };
+        // Edges the container has been scrolled toward by its most recent delta scroll.
+        RectEdges<bool> scrolledDirections { false, false, false, false };
 
         bool operator==(const ScrollState&) const = default;
     };
@@ -92,6 +94,11 @@ public:
     AnchorPositionedToAnchorMap& anchorPositionedToAnchorMap() LIFETIME_BOUND { return m_anchorPositionedToAnchorMap; }
     const AnchorPositionedToAnchorMap& anchorPositionedToAnchorMap() const LIFETIME_BOUND { return m_anchorPositionedToAnchorMap; }
     void updateAnchorPositioningStateAfterStyleResolution();
+
+    // Query containers whose descendants the current style resolution pass left unresolved.
+    // Style-interleaved layout sizes them without laying out their content.
+    void setQueryContainersWithUnresolvedDescendants(WeakHashSet<const Element, WeakPtrImplWithEventTargetData>&& containers) { m_queryContainersWithUnresolvedDescendants = WTF::move(containers); }
+    bool isQueryContainerWithUnresolvedDescendants(const Element* element) const { return element && m_queryContainersWithUnresolvedDescendants.contains(*element); }
 
     std::optional<size_t> lastSuccessfulPositionOptionIndexFor(const Styleable&);
     void setLastSuccessfulPositionOptionIndexMap(HashMap<WeakStyleable, size_t>&&);
@@ -137,6 +144,8 @@ private:
     HashMap<ResolverSharingKey, Ref<Resolver>> m_sharedShadowTreeResolvers;
 
     AnchorPositionedToAnchorMap m_anchorPositionedToAnchorMap;
+
+    WeakHashSet<const Element, WeakPtrImplWithEventTargetData> m_queryContainersWithUnresolvedDescendants;
 };
 
 }

@@ -26,10 +26,13 @@
 #include "config.h"
 #include "GPUBuffer.h"
 
+#include "EventLoop.h"
 #include "GPUDevice.h"
 #include "JSDOMConvertNull.h"
 #include "JSDOMPromiseDeferred.h"
 #include "JSGPUBufferMapState.h"
+#include "ScriptExecutionContext.h"
+#include <wtf/Borrow.h>
 
 namespace WebCore {
 
@@ -74,10 +77,11 @@ void GPUBuffer::setLabel(String&& label)
     m_backing->setLabel(WTF::move(label));
 }
 
-void GPUBuffer::mapAsync(GPUMapModeFlags mode, GPUSize64 offset, std::optional<GPUSize64> size, MapAsyncPromise&& promise)
+void GPUBuffer::mapAsync(ScriptExecutionContext& scriptExecutionContext, GPUMapModeFlags mode, GPUSize64 offset, std::optional<GPUSize64> size, MapAsyncPromise&& promise)
 {
     if (m_mapState != GPUBufferMapState::Unmapped) {
-        m_backing->generateAValidationError();
+        if (RefPtr device = m_device)
+            protect(device->backing())->generateAValidationError("Buffer state was not unmapped"_s);
         promise.reject(Exception { ExceptionCode::OperationError, "pendingMapPromise"_s });
         return;
     }
@@ -85,29 +89,42 @@ void GPUBuffer::mapAsync(GPUMapModeFlags mode, GPUSize64 offset, std::optional<G
     if (m_mapState == GPUBufferMapState::Unmapped)
         m_mapState = GPUBufferMapState::Pending;
 
+    if (RefPtr device = m_device)
+        device->addBufferToUnmap(*this);
+
     m_pendingMapPromise = makeUnique<MapAsyncPromise>(promise);
     // FIXME: Should this capture a weak pointer to |this| instead?
-    m_backing->mapAsync(convertMapModeFlagsToBacking(mode), offset, size, [promise = WTF::move(promise), protectedThis = protect(*this), offset, size](bool success) mutable {
-        if (!protectedThis->m_pendingMapPromise) {
-            if (protectedThis->m_destroyed)
-                promise.reject(Exception { ExceptionCode::OperationError, "buffer destroyed during mapAsync"_s });
-            else
-                promise.resolve();
+    // The buffer stays pending until the task that settles the promise, where the specification runs
+    // the map success and map failure steps.
+    m_backing->mapAsync(convertMapModeFlagsToBacking(mode), offset, size, [weakContext = WeakPtr { scriptExecutionContext }, promise = WTF::move(promise), protectedThis = protect(*this), offset, size](bool success) mutable {
+        RefPtr context = weakContext;
+        if (!context)
             return;
-        }
+        protect(context->eventLoop())->queueTask(TaskSource::WebGPU, [promise = WTF::move(promise), protectedThis = WTF::move(protectedThis), offset, size, success] mutable {
+            if (!protectedThis->m_pendingMapPromise) {
+                if (protectedThis->m_destroyed)
+                    promise.reject(Exception { ExceptionCode::OperationError, "buffer destroyed during mapAsync"_s });
+                else
+                    promise.resolve();
+                return;
+            }
 
-        protectedThis->m_pendingMapPromise = nullptr;
-        if (success) {
-            protectedThis->m_mapState = GPUBufferMapState::Mapped;
-            protectedThis->m_mappedRangeOffset = offset;
-            protectedThis->m_mappedRangeSize = size.value_or(protectedThis->m_bufferSize - protectedThis->m_mappedRangeOffset);
-            promise.resolve();
-        } else {
-            if (protectedThis->m_mapState == GPUBufferMapState::Pending)
-                protectedThis->m_mapState = GPUBufferMapState::Unmapped;
+            protectedThis->m_pendingMapPromise = nullptr;
+            if (success) {
+                protectedThis->m_mapState = GPUBufferMapState::Mapped;
+                protectedThis->m_mappedRangeOffset = offset;
+                protectedThis->m_mappedRangeSize = size.value_or(protectedThis->m_bufferSize - protectedThis->m_mappedRangeOffset);
+                promise.resolve();
+            } else {
+                if (protectedThis->m_mapState == GPUBufferMapState::Pending) {
+                    protectedThis->m_mapState = GPUBufferMapState::Unmapped;
+                    if (RefPtr device = protectedThis->m_device)
+                        device->removeBufferToUnmap(protectedThis.get());
+                }
 
-            promise.reject(Exception { ExceptionCode::OperationError, "map async was not successful"_s });
-        }
+                promise.reject(Exception { ExceptionCode::OperationError, "map async was not successful"_s });
+            }
+        });
     });
 }
 
@@ -230,7 +247,7 @@ void GPUBuffer::internalUnmap(ScriptExecutionContext& scriptExecutionContext)
 
     m_mapState = GPUBufferMapState::Unmapped;
 
-    for (auto& arrayBufferAndOffset : m_arrayBuffers) {
+    for (auto& arrayBufferAndOffset : borrow(m_arrayBuffers)) {
         auto& arrayBuffer = arrayBufferAndOffset.buffer;
         if (arrayBuffer && arrayBuffer->data() && arrayBuffer->byteLength()) {
             m_backing->copyFrom(arrayBuffer->span(), arrayBufferAndOffset.offset);
@@ -254,8 +271,10 @@ void GPUBuffer::destroy(ScriptExecutionContext& scriptExecutionContext)
     m_bufferSize = 0;
     m_memoryCost.store(0, std::memory_order_relaxed);
     m_backing->destroy();
-    if (RefPtr device = m_device)
+    if (RefPtr device = m_device) {
+        device->removeBufferToUnmap(*this);
         device->didChangeBufferMemoryCost(*this);
+    }
 }
 
 }

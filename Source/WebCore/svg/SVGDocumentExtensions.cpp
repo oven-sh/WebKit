@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2006 Apple Inc. All rights reserved.
+ * Copyright (C) 2006-2026 Apple Inc. All rights reserved.
  * Copyright (C) 2006 Nikolas Zimmermann <zimmermann@kde.org>
  * Copyright (C) 2007 Rob Buis <buis@kde.org>
  *
@@ -147,12 +147,12 @@ void SVGDocumentExtensions::reportError(const String& message)
 
 void SVGDocumentExtensions::addElementToRebuild(SVGElement& element)
 {
-    m_rebuildElements.append(element);
+    m_rebuildElements.add(element);
 }
 
 void SVGDocumentExtensions::removeElementToRebuild(SVGElement& element)
 {
-    m_rebuildElements.removeFirstMatching([&](auto& item) { return item.ptr() == &element; });
+    m_rebuildElements.remove(Ref { element });
 }
 
 void SVGDocumentExtensions::rebuildElements()
@@ -160,14 +160,6 @@ void SVGDocumentExtensions::rebuildElements()
     auto shadowRebuildElements = std::exchange(m_rebuildElements, { });
     for (auto& element : shadowRebuildElements)
         element->svgAttributeChanged(SVGNames::hrefAttr);
-}
-
-void SVGDocumentExtensions::clearTargetDependencies(SVGElement& referencedElement)
-{
-    for (Ref element : referencedElement.referencingElements()) {
-        m_rebuildElements.append(element.get());
-        element->callClearTarget();
-    }
 }
 
 void SVGDocumentExtensions::rebuildAllElementReferencesForTarget(SVGElement& referencedElement)
@@ -187,35 +179,40 @@ void SVGDocumentExtensions::unregisterSVGFontFaceElement(SVGFontFaceElement& ele
     m_svgFontFaceElements.remove(element);
 }
 
-bool SVGDocumentExtensions::hasExternalSVGResource(const URL& url) const
+static SVGExternalResourceKey externalResourceKey(const Style::URL& location)
 {
-    return m_externalSVGDocuments.contains(url);
+    auto url = location.resolved;
+    url.removeFragmentIdentifier();
+    return { .url = WTF::move(url), .modifiers = location.modifiers, .provenance = location.provenance };
 }
 
-void SVGDocumentExtensions::addExternalSVGResource(const URL& url, CachedImage& cachedImage, Document& document)
+bool SVGDocumentExtensions::hasExternalSVGResource(const Style::URL& location) const
 {
-    m_externalSVGDocuments.set(url, IsolatedSVGDocumentContext::create(cachedImage, document));
+    return m_externalSVGDocuments.contains(externalResourceKey(location));
 }
 
-IsolatedSVGDocumentContext* SVGDocumentExtensions::isolatedSVGDocumentContext(const URL& url) const
+void SVGDocumentExtensions::addExternalSVGResource(const Style::URL& location, CachedImage& cachedImage, Document& document)
 {
-    auto it = m_externalSVGDocuments.find(url);
+    m_externalSVGDocuments.set(externalResourceKey(location), IsolatedSVGDocumentContext::create(cachedImage, document));
+}
+
+IsolatedSVGDocumentContext* SVGDocumentExtensions::isolatedSVGDocumentContext(const Style::URL& location) const
+{
+    auto it = m_externalSVGDocuments.find(externalResourceKey(location));
     return it != m_externalSVGDocuments.end() ? it->value.ptr() : nullptr;
 }
 
-std::optional<RefPtr<SVGDocument>> SVGDocumentExtensions::externalResourceDocument(const URL& url) const
+std::optional<RefPtr<SVGDocument>> SVGDocumentExtensions::externalResourceDocument(const Style::URL& location) const
 {
     Ref document = m_document.get();
     if (!document->settings().svgExternalResourcesEnabled())
         return std::nullopt;
 
+    auto& url = location.resolved;
     if (!url.protocolIsData() && !SVGURIReference::isExternalURIReference(url.string(), document))
         return std::nullopt;
 
-    auto documentURL = url;
-    documentURL.removeFragmentIdentifier();
-
-    RefPtr isolatedContext = isolatedSVGDocumentContext(documentURL);
+    RefPtr isolatedContext = isolatedSVGDocumentContext(location);
     return RefPtr { isolatedContext ? isolatedContext->document() : nullptr };
 }
 

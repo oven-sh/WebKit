@@ -80,7 +80,7 @@ void RemoteInspector::sendWebInspectorEvent(const String& event)
     if (!m_clientConnection)
         return;
 
-    send(m_clientConnection.value(), byteCast<uint8_t>(event.utf8().span()));
+    send(m_clientConnection.value(), byteCast<uint8_t>(makeUTF8CString(event).span()));
 }
 
 void RemoteInspector::start()
@@ -363,6 +363,9 @@ void RemoteInspector::startAutomationSession(const Event& event)
         return;
 
     auto parsedMessageObject = parsedMessageValue->asObject();
+    if (!parsedMessageObject)
+        return;
+
     auto sessionID = parsedMessageObject->getString("sessionID"_s);
     if (!sessionID)
         return;

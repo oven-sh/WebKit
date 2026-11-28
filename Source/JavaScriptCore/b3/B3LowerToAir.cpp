@@ -1117,13 +1117,19 @@ private:
         case WasmAddress: {
             WasmAddressValue* wasmAddress = address->as<WasmAddressValue>();
             Value* pointer = wasmAddress->child(0);
+            Tmp base = Tmp(wasmAddress->pinnedGPR());
+            if (pointer->hasInt64() && !sumOverflows<int64_t>(pointer->asInt64(), offset)) {
+                int64_t constantOffset = pointer->asInt64() + offset;
+                if (isRepresentableAs<Int>(constantOffset) && Arg::isValidAddrForm(Air::Move, static_cast<Int>(constantOffset), width))
+                    return Arg::addr(base, static_cast<Int>(constantOffset));
+            }
+
             // Why don't we need to check m_locked for the WasmAddressValue itself? It is purely used for address computation,
             // which is different from the other operations. And we already know that numUses(address) is below the threshold.
             // If we ensure that all use of WasmAddress gets indexArg form, we do not need to have WasmAddressValue's instruction actually.
             if (!Arg::isValidIndexForm(1, offset, width))
                 return fallback();
 
-            Tmp base = Tmp(wasmAddress->pinnedGPR());
             std::optional<unsigned> scale = scaleForShl(pointer, offset, width);
             if (scale && !m_locked.contains(pointer->child(0)))
                 return indexArg(base, pointer->child(0), *scale, offset);
@@ -6066,7 +6072,11 @@ private:
         }
 
         case MemoryMove:
-        case MemoryFill: {
+        case MemoryFill8:
+        case MemoryFill16:
+        case MemoryFill32:
+        case MemoryFill64:
+        case MemoryFill128: {
             // They should be lowered already.
             RELEASE_ASSERT_NOT_REACHED();
             return;
@@ -6667,6 +6677,8 @@ private:
                 case SIMDLane::f32x4:
                     if (value->signMode() == SIMDSignMode::Signed)
                         append(Air::VectorTruncSat, Arg::simdInfo(value->simdInfo()), v, result, m_code.newTmp(B3::GP), m_code.newTmp(B3::FP), m_code.newTmp(B3::FP));
+                    else if (value->opcode() == B3::VectorRelaxedTruncSat)
+                        append(VectorRelaxedTruncUnsignedFloat32, v, result, m_code.newTmp(B3::GP), m_code.newTmp(B3::FP), m_code.newTmp(B3::FP));
                     else
                         append(VectorTruncSatUnsignedFloat32, v, result, m_code.newTmp(B3::GP), m_code.newTmp(B3::FP), m_code.newTmp(B3::FP));
                     return;
@@ -7881,8 +7893,8 @@ private:
     IndexMap<Value*, Tmp> m_valueToTmp; // These are values that must have a Tmp in Air. We say that a Value* with a non-null Tmp is "pinned".
     IndexMap<Value*, Tmp> m_phiToTmp; // Each Phi gets its own Tmp.
     IndexSet<Value*> m_phisKeptZeroExtended;
-    UncheckedKeyHashMap<Value*, Vector<Tmp>> m_tupleValueToTmps; // This is the same as m_valueToTmp for Values that are Tuples.
-    UncheckedKeyHashMap<Value*, Vector<Tmp>> m_tuplePhiToTmps; // This is the same as m_phiToTmp for Phis that are Tuples.
+    HashMap<Value*, Vector<Tmp>> m_tupleValueToTmps; // This is the same as m_valueToTmp for Values that are Tuples.
+    HashMap<Value*, Vector<Tmp>> m_tuplePhiToTmps; // This is the same as m_phiToTmp for Phis that are Tuples.
     IndexMap<B3::BasicBlock*, Air::BasicBlock*> m_blockToBlock;
 
     UseCounts m_useCounts;
@@ -7911,7 +7923,7 @@ private:
     IndexMap<Value*, unsigned> m_nextInterference;
 
     PatchpointSpecial* m_patchpointSpecial { nullptr };
-    UncheckedKeyHashMap<CheckSpecial::Key, CheckSpecial*> m_checkSpecials;
+    HashMap<CheckSpecial::Key, CheckSpecial*> m_checkSpecials;
 
     Procedure& m_procedure;
     Code& m_code;

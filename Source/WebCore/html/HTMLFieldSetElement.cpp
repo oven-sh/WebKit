@@ -105,12 +105,34 @@ void HTMLFieldSetElement::attributeChanged(const QualifiedName& name, const Atom
 
     HTMLFormControlElement::attributeChanged(name, oldValue, newValue, attributeModificationReason);
 
-    if (hasDisabledAttribute() != oldHasDisabledAttribute) {
-        if (hasDisabledAttribute())
-            document().addDisabledFieldsetElement();
-        else
-            document().removeDisabledFieldsetElement();
+    if (hasDisabledAttribute() == oldHasDisabledAttribute)
+        return;
+
+    if (hasDisabledAttribute()) {
+        document().addDisabledFieldsetElement();
+        if (isConnected())
+            document().addConnectedDisabledFieldsetElement();
+        return;
     }
+
+    document().removeDisabledFieldsetElement();
+    if (isConnected())
+        document().removeConnectedDisabledFieldsetElement();
+}
+
+Node::NeedsPostConnectionSteps HTMLFieldSetElement::insertionSteps(InsertionType insertionType, ContainerNode& parentOfInsertedTree)
+{
+    auto result = HTMLFormControlElement::insertionSteps(insertionType, parentOfInsertedTree);
+    if (insertionType.connectedToDocument && hasDisabledAttribute())
+        document().addConnectedDisabledFieldsetElement();
+    return result;
+}
+
+void HTMLFieldSetElement::removingSteps(RemovalType removalType, ContainerNode& oldParentOfRemovedTree)
+{
+    HTMLFormControlElement::removingSteps(removalType, oldParentOfRemovedTree);
+    if (removalType.disconnectedFromDocument && hasDisabledAttribute())
+        document().removeConnectedDisabledFieldsetElement();
 }
 
 void HTMLFieldSetElement::disabledStateChanged()
@@ -161,12 +183,12 @@ void HTMLFieldSetElement::didMoveToNewDocument(Document& oldDocument, Document& 
 
 bool HTMLFieldSetElement::matchesValidPseudoClass() const
 {
-    return m_invalidDescendants.isEmptyIgnoringNullReferences();
+    return m_invalidDescendants.computeIsEmpty();
 }
 
 bool HTMLFieldSetElement::matchesInvalidPseudoClass() const
 {
-    return !m_invalidDescendants.isEmptyIgnoringNullReferences();
+    return !m_invalidDescendants.computeIsEmpty();
 }
 
 bool HTMLFieldSetElement::supportsFocus() const
@@ -180,7 +202,7 @@ const AtomString& HTMLFieldSetElement::formControlType() const
     return fieldset;
 }
 
-RenderPtr<RenderElement> HTMLFieldSetElement::createElementRenderer(Style::ComputedStyle&& style, const RenderTreePosition&)
+RenderPtr<RenderElement> HTMLFieldSetElement::createElementRenderer(UniqueRef<Style::ComputedStyle>&& style, const RenderTreePosition&)
 {
     // Fieldsets should make a block flow if display: inline, table types, or deprecated flex types are set.
     return RenderElement::createFor(*this, WTF::move(style), { RenderElement::ConstructBlockLevelRendererFor::Inline, RenderElement::ConstructBlockLevelRendererFor::TableOrTablePart, RenderElement::ConstructBlockLevelRendererFor::DeprecatedFlexBox });
@@ -203,7 +225,7 @@ void HTMLFieldSetElement::addInvalidDescendant(const HTMLElement& invalidFormCon
     ASSERT_WITH_MESSAGE(!m_invalidDescendants.contains(invalidFormControlElement), "Updating the fieldset on validity change is not an efficient operation, it should only be done when necessary.");
 
     std::optional<Style::PseudoClassChangeInvalidation> styleInvalidation;
-    if (m_invalidDescendants.isEmptyIgnoringNullReferences())
+    if (m_invalidDescendants.computeIsEmpty())
         emplace(styleInvalidation, *this, { { CSSSelector::PseudoClass::Valid, false }, { CSSSelector::PseudoClass::Invalid, true } });
 
     m_invalidDescendants.add(invalidFormControlElement);

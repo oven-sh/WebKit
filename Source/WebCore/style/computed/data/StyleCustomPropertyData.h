@@ -30,8 +30,7 @@
 #include <wtf/RefPtr.h>
 #include <wtf/text/AtomStringHash.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(CustomPropertyData);
 class CustomPropertyData : public RefCounted<CustomPropertyData> {
@@ -49,7 +48,7 @@ public:
     void dumpDifferences(TextStream&, const CustomPropertyData&) const;
 #endif
 
-    const CustomProperty* get(const AtomString&) const;
+    NODELETE const CustomProperty* get(const AtomString&) const;
     void set(const AtomString&, Ref<const CustomProperty>&&);
 
     unsigned size() const { return m_size; }
@@ -74,5 +73,4 @@ private:
 #endif
 };
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

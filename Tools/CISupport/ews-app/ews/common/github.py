@@ -213,20 +213,21 @@ class GitHubEWS(GitHub):
     ICON_BUILD_ONGOING_WITH_FAILURES = u'![loading-orange](https://github-production-user-asset-6210df.s3.amazonaws.com/3098702/291015173-08c448be-ac0a-4fd6-92a3-8165057445b7.png)'
     # FIXME: Make ICON_BUILD_ONGOING_WITH_FAILURES more accessible
     ICON_BUILD_ERROR = u'\U0001F4A5'
+    ICON_BUILD_SKIPPED = u'![skipped](https://github.com/user-attachments/assets/eb6c9096-af2d-4342-8202-46e26508e68b)'
     ICON_EMPTY_SPACE = u'\U00002003'
     STATUS_BUBBLE_START = u'<!--EWS-Status-Bubble-Start-->'
     STATUS_BUBBLE_END = u'<!--EWS-Status-Bubble-End-->'
     STATUS_BUBBLE_ROWS = [['style', 'ios', 'mac', 'wpe', 'win'],  # FIXME: generate this list dynamically to have merge queue show up on top
-                          ['bindings', 'ios-sim', 'mac-cmake-debug', 'wpe-wk2', 'win-tests'],
-                          ['webkitperl', 'ios-wk2', 'api-mac', 'api-wpe', ''],
-                          ['webkitpy', 'ios-wk2-wpt', 'api-mac-cmake-debug', 'jsc-wpe', ''],
-                          ['jsc-x86-64', 'api-ios', 'mac-wk2', 'gtk3-gcc', ''],
+                          ['bindings', 'ios-sim-cmake', 'mac-cmake-debug', 'wpe-wk2', 'win-tests'],
+                          ['webkitperl', 'ios-cmake-wk2', 'api-mac', 'api-wpe', ''],
+                          ['webkitpy', 'ios-cmake-wk2-wpt', 'api-mac-cmake-debug', 'jsc-wpe', ''],
+                          ['jsc-x86-64', 'api-ios-cmake', 'mac-wk2', 'gtk3-gcc', ''],
                           ['jsc-debug-arm64', 'ios-safer-cpp', 'mac-cmake-debug-wk2', 'gtk', ''],
                           ['services', 'vision', 'mac-wk2-stress', 'gtk-wk2', ''],
                           ['merge', 'vision-sim', 'mac-intel-wk2', 'api-gtk', ''],
                           ['unsafe-merge', 'vision-wk2', 'mac-safer-cpp', 'playstation', ''],
                           ['', 'tv', 'mac-site-isolation', '', ''],
-                          ['', 'tv-sim', '', '', ''],
+                          ['', 'tv-sim', 'mac-webdriver', '', ''],
                           ['', 'watch', '', '', ''],
                           ['', 'watch-sim', '', '', '']]
     approved_user_list_for_apple_internal_builds = []
@@ -400,10 +401,11 @@ class GitHubEWS(GitHub):
             icon = GitHubEWS.ICON_EMPTY_SPACE
             name = u'~~{}~~'.format(name)
             hover_over_text = 'Build was cancelled. Recent messages:' + self._steps_messages(build)
+        elif build.result == Buildbot.SKIPPED and StatusBubble.is_skipped_for_no_relevant_changes(build):
+            icon = GitHubEWS.ICON_BUILD_SKIPPED
+            hover_over_text = StatusBubble.NO_RELEVANT_CHANGES_MESSAGE
         elif build.result == Buildbot.SKIPPED:
             icon = GitHubEWS.ICON_EMPTY_SPACE
-            if re.search(r'Pull request .* doesn\'t have relevant changes', build.state_string):
-                return u'| '
             name = u'~~{}~~'.format(name)
             hover_over_text = 'The change is no longer eligible for processing.'
             if re.search(r'Pull request .* is already closed', build.state_string):

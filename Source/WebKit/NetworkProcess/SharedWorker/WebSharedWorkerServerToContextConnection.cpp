@@ -124,7 +124,7 @@ void WebSharedWorkerServerToContextConnection::launchSharedWorker(WebSharedWorke
     if (!connection)
         return;
 
-    NetworkProcess::singleton().addAllowedFirstPartyForCookies(connection->webProcessIdentifier(), WebCore::RegistrableDomain::uncheckedCreateFromHost(sharedWorker.origin().topOrigin.host()), LoadedWebArchive::No, [] { });
+    NetworkProcess::singleton().addAllowedFirstPartyDomainForCookies(connection->webProcessIdentifier(), WebCore::RegistrableDomain::uncheckedCreateFromHost(sharedWorker.origin().topOrigin.host()), LoadedWebArchive::No, [] { });
 
     CONTEXT_CONNECTION_RELEASE_LOG("launchSharedWorker: sharedWorkerIdentifier=%" PRIu64, sharedWorker.identifier().toUInt64());
     sharedWorker.markAsRunning();
@@ -137,7 +137,13 @@ void WebSharedWorkerServerToContextConnection::launchSharedWorker(WebSharedWorke
                     swOldConnection->unregisterServiceWorkerClient(*contextIdentifier);
                     if (RefPtr swNewConnection = connection->swConnection()) {
                         clientData->serviceWorkerClientData.identifier = *initializationData.clientIdentifier;
-                        swNewConnection->registerServiceWorkerClient(WTF::move(clientData->clientOrigin), WTF::move(clientData->serviceWorkerClientData), clientData->controllingServiceWorkerRegistrationIdentifier, WTF::move(clientData->userAgent));
+                        // This record's ClientOrigin was checked against the process that registered it, in
+                        // WebSWServerConnection::registerServiceWorkerClient(). It is now moving to this connection's
+                        // process, chosen by an identifier from the process that fetched the worker script, so check
+                        // the top origin against this process instead of going through the IPC handler.
+                        ASSERT(clientData->serviceWorkerClientData.identifier.processIdentifier() == swNewConnection->identifier());
+                        if (swNewConnection->checkTopOrigin(clientData->clientOrigin.topOrigin))
+                            swNewConnection->registerServiceWorkerClientInternal(WTF::move(clientData->clientOrigin), WTF::move(clientData->serviceWorkerClientData), clientData->controllingServiceWorkerRegistrationIdentifier, WTF::move(clientData->userAgent), WebCore::SWServer::IsBeingCreatedClient::No);
                     }
                 }
             }
@@ -181,7 +187,7 @@ void WebSharedWorkerServerToContextConnection::terminateSharedWorker(const WebSh
 
 void WebSharedWorkerServerToContextConnection::addSharedWorkerObject(WebCore::SharedWorkerObjectIdentifier sharedWorkerObjectIdentifier)
 {
-    CONTEXT_CONNECTION_RELEASE_LOG("addSharedWorkerObject: sharedWorkerObjectIdentifier=%" PUBLIC_LOG_STRING, sharedWorkerObjectIdentifier.toString().utf8());
+    CONTEXT_CONNECTION_RELEASE_LOG("addSharedWorkerObject: sharedWorkerObjectIdentifier=%" PUBLIC_LOG_STRING, makeUTF8CString(sharedWorkerObjectIdentifier.toString()));
     auto& sharedWorkerObjects = m_sharedWorkerObjects.ensure(sharedWorkerObjectIdentifier.processIdentifier(), [] { return HashSet<WebCore::SharedWorkerObjectIdentifier> { }; }).iterator->value;
     ASSERT(!sharedWorkerObjects.contains(sharedWorkerObjectIdentifier));
     sharedWorkerObjects.add(sharedWorkerObjectIdentifier);
@@ -198,7 +204,7 @@ void WebSharedWorkerServerToContextConnection::addSharedWorkerObject(WebCore::Sh
 
 void WebSharedWorkerServerToContextConnection::removeSharedWorkerObject(WebCore::SharedWorkerObjectIdentifier sharedWorkerObjectIdentifier)
 {
-    CONTEXT_CONNECTION_RELEASE_LOG("removeSharedWorkerObject: sharedWorkerObjectIdentifier=%" PUBLIC_LOG_STRING, sharedWorkerObjectIdentifier.toString().utf8());
+    CONTEXT_CONNECTION_RELEASE_LOG("removeSharedWorkerObject: sharedWorkerObjectIdentifier=%" PUBLIC_LOG_STRING, makeUTF8CString(sharedWorkerObjectIdentifier.toString()));
     auto it = m_sharedWorkerObjects.find(sharedWorkerObjectIdentifier.processIdentifier());
     ASSERT(it != m_sharedWorkerObjects.end());
     if (it == m_sharedWorkerObjects.end())

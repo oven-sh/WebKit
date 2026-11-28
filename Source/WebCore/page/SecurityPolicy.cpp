@@ -52,7 +52,7 @@ using OriginAccessMap = HashMap<SecurityOriginData, std::unique_ptr<OriginAccess
 static Lock originAccessMapLock;
 NODELETE static OriginAccessMap& originAccessMap() WTF_REQUIRES_LOCK(originAccessMapLock)
 {
-    ASSERT(originAccessMapLock.isHeld());
+    ASSERT_WITH_SECURITY_IMPLICATION(originAccessMapLock.isHeld());
     static NeverDestroyed<OriginAccessMap> originAccessMap;
     return originAccessMap;
 }
@@ -173,6 +173,16 @@ bool SecurityPolicy::shouldInheritSecurityOriginFromOwner(const URL& url)
     // Note: We generalize this to invalid URLs because we treat such URLs as about:blank.
     // FIXME: We also allow some URLs like "about:BLANK". We should probably block navigation to these URLs, see rdar://problem/57966056.
     return url.isEmpty() || url.isAboutBlank() || url.isAboutSrcDoc() || equalIgnoringASCIICase(url.string(), aboutBlankURL().string());
+}
+
+// https://html.spec.whatwg.org/#determining-the-origin
+Ref<SecurityOrigin> SecurityPolicy::determineOrigin(const URL& url, SandboxFlags sandboxFlags, SecurityOrigin* sourceOrigin)
+{
+    if (sandboxFlags.contains(SandboxFlag::Origin))
+        return SecurityOrigin::createOpaque();
+    if (sourceOrigin && shouldInheritSecurityOriginFromOwner(url))
+        return *sourceOrigin;
+    return SecurityOrigin::create(url);
 }
 
 bool SecurityPolicy::isBaseURLSchemeAllowed(const URL& url)

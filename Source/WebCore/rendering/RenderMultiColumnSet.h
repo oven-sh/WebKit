@@ -26,7 +26,7 @@
 #pragma once
 
 #include "LayerFragment.h"
-#include "RenderFragmentContainerSet.h"
+#include "RenderFragmentContainer.h"
 #include "RenderMultiColumnFlow.h"
 #include <wtf/Vector.h>
 
@@ -42,11 +42,11 @@ namespace WebCore {
 //
 // Column spans result in the creation of new column sets as well, since a spanning fragment has to be placed in between the column sets that
 // come before and after the span.
-class RenderMultiColumnSet final : public RenderFragmentContainerSet {
+class RenderMultiColumnSet final : public RenderFragmentContainer {
     WTF_MAKE_TZONE_ALLOCATED(RenderMultiColumnSet);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderMultiColumnSet);
 public:
-    RenderMultiColumnSet(RenderFragmentedFlow&, Style::ComputedStyle&&);
+    RenderMultiColumnSet(RenderFragmentedFlow&, UniqueRef<Style::ComputedStyle>&&);
     virtual ~RenderMultiColumnSet();
 
     RenderBlockFlow* multiColumnBlockFlow() const { return downcast<RenderBlockFlow>(parent()); }
@@ -116,18 +116,20 @@ public:
     void prepareForLayout(bool initial);
     // Begin laying out content for this column set. This happens at the beginning of flow thread
     // layout, and when advancing from a previous column set or spanner to this one.
-    void beginFlow(RenderBlock* container);
+    void beginFlow(RenderBox* container);
     // Finish laying out content for this column set. This happens at end of flow thread layout, and
     // when advancing to the next column set or spanner.
-    void endFlow(RenderBlock* container, LayoutUnit bottomInContainer);
+    void endFlow(RenderBox* container, LayoutUnit bottomInContainer);
     // Has this set been flowed in this layout pass?
     bool hasBeenFlowed() const { return logicalBottomInFragmentedFlow() != RenderFragmentedFlow::maxLogicalHeight(); }
+
+    void expandToEncompassFragmentedFlowContentsIfNeeded();
 
     NODELETE bool requiresBalancing() const;
 
     LayoutPoint columnTranslationForOffset(const LayoutUnit&) const;
     
-    void paintColumnRules(PaintInfo&, const LayoutPoint& paintOffset) override;
+    void paintColumnRules(PaintInfo&, const LayoutPoint& paintOffset);
 
     enum ColumnHitTestTranslationMode {
         ClampHitTestTranslationToColumns,

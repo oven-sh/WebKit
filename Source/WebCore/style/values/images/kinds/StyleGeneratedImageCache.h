@@ -36,8 +36,7 @@
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/Vector.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 template<typename> class GeneratedImageCache;
 
@@ -133,7 +132,7 @@ private:
     void evict(Entry& entry)
     {
         auto it = m_entries.find(entry.size());
-        ASSERT(it != m_entries.end());
+        ASSERT_WITH_SECURITY_IMPLICATION(it != m_entries.end());
 
         bool removed = it->value.removeFirstMatching([&](auto& candidate) {
             return candidate.get() == &entry;
@@ -147,5 +146,4 @@ private:
     Entries m_entries;
 };
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

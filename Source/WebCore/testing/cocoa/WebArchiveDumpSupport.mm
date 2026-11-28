@@ -46,7 +46,7 @@ static RetainPtr<CFURLResponseRef> createCFURLResponseFromResponseData(CFDataRef
     auto unarchiver = adoptNS([[NSKeyedUnarchiver alloc] initForReadingFromData:(__bridge NSData *)responseData error:nullptr]);
     unarchiver.get().decodingFailurePolicy = NSDecodingFailurePolicyRaiseException;
     @try {
-        response = [unarchiver decodeObjectOfClass:[NSURLResponse class] forKey:@"WebResourceResponse"]; // WebResourceResponseKey in WebResource.m
+        response = checked_objc_cast<NSURLResponse>([unarchiver decodeObjectOfClass:[NSURLResponse class] forKey:@"WebResourceResponse"]); // WebResourceResponseKey in WebResource.m
         [unarchiver finishDecoding];
     } @catch (NSException *exception) {
         LOG_ERROR("Failed to decode NS(HTTP)URLResponse: %@", exception);
@@ -62,8 +62,7 @@ static RetainPtr<CFURLResponseRef> createCFURLResponseFromResponseData(CFDataRef
     RetainPtr<CFHTTPMessageRef> httpMessage = adoptCF(CFHTTPMessageCreateResponse(kCFAllocatorDefault, httpResponse.get().statusCode, nullptr, kCFHTTPVersion1_1));
 
     NSDictionary *headerFields = httpResponse.get().allHeaderFields;
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL NSString *headerField in [headerFields keyEnumerator])
+    for (NSString *headerField in [headerFields keyEnumerator])
         CFHTTPMessageSetHeaderFieldValue(httpMessage.get(), (__bridge CFStringRef)headerField, (__bridge CFStringRef)[headerFields objectForKey:headerField]);
 
     return adoptCF(CFURLResponseCreateWithHTTPResponse(kCFAllocatorDefault, (__bridge CFURLRef)response.get().URL, httpMessage.get(), kCFURLCacheStorageAllowed));

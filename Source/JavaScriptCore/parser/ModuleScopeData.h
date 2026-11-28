@@ -36,23 +36,23 @@ class ModuleScopeData : public RefCounted<ModuleScopeData> {
     WTF_MAKE_NONCOPYABLE(ModuleScopeData);
     WTF_MAKE_TZONE_ALLOCATED(ModuleScopeData);
 public:
-    typedef UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, Vector<RefPtr<UniquedStringImpl>>, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>> IdentifierAliasMap;
+    typedef HashMap<RefPtr<UniquedStringImpl>, Vector<RefPtr<UniquedStringImpl>>, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>> IdentifierAliasMap;
 
     static Ref<ModuleScopeData> create() { return adoptRef(*new ModuleScopeData); }
 
     const IdentifierAliasMap& exportedBindings() const LIFETIME_BOUND { return m_exportedBindings; }
 
-    bool exportName(const Identifier& exportedName)
+    bool exportName(UniquedStringImpl* exportedName)
     {
-        return m_exportedNames.add(exportedName.impl()).isNewEntry;
+        return m_exportedNames.add(exportedName).isNewEntry;
     }
 
-    void exportBinding(const Identifier& localName, const Identifier& exportedName)
+    void exportBinding(UniquedStringImpl* localName, UniquedStringImpl* exportedName)
     {
-        m_exportedBindings.add(localName.impl(), Vector<RefPtr<UniquedStringImpl>>()).iterator->value.append(exportedName.impl());
+        m_exportedBindings.add(localName, Vector<RefPtr<UniquedStringImpl>>()).iterator->value.append(exportedName);
     }
 
-    void exportBinding(const Identifier& localName)
+    void exportBinding(UniquedStringImpl* localName)
     {
         exportBinding(localName, localName);
     }

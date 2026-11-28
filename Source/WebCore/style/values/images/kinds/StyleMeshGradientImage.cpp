@@ -35,8 +35,7 @@
 #include "StyleComputedStyle+GettersInlines.h"
 #include "StylePrimitiveNumericTypes+Conversions.h"
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 MeshGradientImage::MeshGradientImage(Gradient&& gradient)
     : GeneratedImage { Type::MeshGradientImage }
@@ -132,7 +131,7 @@ ImageDrawResult MeshGradientImage::drawAsPattern(GraphicsContext& context, const
             cached->setPatternBuffer(newBuffer.releaseNonNull(), descriptor, size, scaleFactor);
     }
 
-    return drawPatternBuffer(context, *buffer, descriptor, destination, tile, patternTransform, phase, spacing);
+    return drawPatternBuffer(context, *buffer, size, descriptor, destination, tile, patternTransform, phase, spacing);
 }
 
 bool MeshGradientImage::knownToBeOpaque(const RenderElement&) const
@@ -145,5 +144,4 @@ bool MeshGradientImage::containsCurrentColor() const
     return m_containsCurrentColor;
 }
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

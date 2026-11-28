@@ -179,6 +179,20 @@ void WebFullScreenManagerProxy::closeFullScreen(IPC::Connection& connection)
     close();
 }
 
+#if PLATFORM(IOS_FAMILY)
+void WebFullScreenManagerProxy::beginRequestFullscreen()
+{
+    if (CheckedPtr client = m_client)
+        client->beginRequestFullscreen();
+}
+
+void WebFullScreenManagerProxy::endRequestFullscreen()
+{
+    if (CheckedPtr client = m_client)
+        client->endRequestFullscreen();
+}
+#endif
+
 void WebFullScreenManagerProxy::close()
 {
     if (CheckedPtr client = m_client)
@@ -243,12 +257,20 @@ Awaitable<bool> WebFullScreenManagerProxy::enterFullScreen(IPC::Connection& conn
 {
     MESSAGE_CHECK_BASE_COROUTINE(isFrameInSendingProcess(frameID, connection), connection);
 
+#if ENABLE(DOCUMENT_PIP)
+    // https://wicg.github.io/document-picture-in-picture/#fullscreening-the-pip-window
+    // As stated in §3.2.4 Fullscreen, document picture-in-picture windows are disallowed from entering fullscreen.
+    if (RefPtr page = m_page)
+        MESSAGE_CHECK_BASE_COROUTINE(!page->isDocumentPictureInPicture(), connection);
+#endif
+
     m_fullScreenProcess = dynamicDowncast<WebProcessProxy>(AuxiliaryProcessProxy::fromConnection(connection));
     m_blocksReturnToFullscreenFromPictureInPicture = blocksReturnToFullscreenFromPictureInPicture;
 #if PLATFORM(IOS_FAMILY)
 #if ENABLE(VIDEO_USES_ELEMENT_FULLSCREEN)
     m_isVideoElement = mediaDetails.type == FullScreenMediaDetails::Type::Video;
 #endif
+    m_isProjectedVideo = mediaDetails.isProjectedVideo;
 #if ENABLE(QUICKLOOK_FULLSCREEN)
     m_mediaDetails = WTF::move(mediaDetails);
     m_launchInImmersive = mediaDetails.launchInImmersive;

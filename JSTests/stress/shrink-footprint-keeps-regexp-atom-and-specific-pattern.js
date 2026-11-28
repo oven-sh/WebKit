@@ -5,7 +5,7 @@
 // Releasing a RegExp's code leaves what describes its pattern alone: the single string it matches (its "atom") and the recognized
 // shapes (newlines, leading / trailing spaces). A global match or removal of an atom, a split at newlines and a trim use those
 // without going through RegExp::match, so they neither run the code nor count as a use of it. The legacy static properties
-// reify a global one-character match from the atom.
+// find the position of a global one-character match from the atom.
 
 function shouldBe(actual, expected, message) {
     if (actual !== expected)
@@ -52,7 +52,7 @@ function shrink(keepCodeInUse, then) {
         shouldBe(RegExp["$&"], "a");
         shouldBe(RegExp.rightContext, "");
         shouldBe(RegExp.input, "xaya");
-        // Reifying that ran the RegExp. The fast paths do not: nothing is compiled for them.
+        // Those reads found the position from the atom and ran no RegExp. The fast paths run none either: nothing is compiled for them.
         const withCodeBeforeTheFastPaths = $vm.codeBlockCensus().regExpsWithCode;
         throughTheFastPaths();
         shouldBe($vm.codeBlockCensus().regExpsWithCode, withCodeBeforeTheFastPaths, "the fast paths need no code");

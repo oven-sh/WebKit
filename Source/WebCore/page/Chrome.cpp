@@ -33,7 +33,6 @@
 #include "DateTimeChooser.h"
 #include "DigitalCredentialsRequestData.h"
 #include "DigitalCredentialsResponseData.h"
-#include "DocumentType.h"
 #include "DocumentView.h"
 #include "DocumentWindow.h"
 #include "ExceptionData.h"
@@ -400,7 +399,7 @@ bool Chrome::print(LocalFrame& frame)
     // FIXME: This should have PageGroupLoadDeferrer, like runModal() or runJavaScriptAlert(), because it's no different from those.
 
     if (frame.document()->isSandboxed(SandboxFlag::Modals)) {
-        protect(frame.document()->window())->printErrorMessage("Use of window.print is not allowed in a sandboxed frame when the allow-modals flag is not set."_s);
+        protect(frame.document()->window())->printErrorMessage("Use of window.print is not allowed in a sandboxed frame when the allow-modals flag is not set."_s, MessageSource::Security);
         return false;
     }
 
@@ -626,19 +625,6 @@ RefPtr<SearchPopupMenu> Chrome::createSearchPopupMenu(PopupMenuClient& client) c
 bool Chrome::requiresFullscreenForVideoPlayback()
 {
     return m_client->requiresFullscreenForVideoPlayback();
-}
-
-void Chrome::didReceiveDocType(LocalFrame& frame)
-{
-#if !PLATFORM(IOS_FAMILY)
-    UNUSED_PARAM(frame);
-#else
-    if (!frame.isMainFrame())
-        return;
-
-    RefPtr doctype = protect(frame.document())->doctype();
-    m_client->didReceiveMobileDocType(doctype && doctype->publicId().containsIgnoringASCIICase("xhtml mobile"_s));
-#endif
 }
 
 void Chrome::registerPopupOpeningObserver(PopupOpeningObserver& observer)

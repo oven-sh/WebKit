@@ -63,7 +63,7 @@ struct KindsInLayoutSet {
     bool holdsNamespace { false };
     bool mayHaveShapes { false };
 };
-using KindsInLayoutSets = UncheckedKeyHashMap<LayoutSetID, KindsInLayoutSet>;
+using KindsInLayoutSets = HashMap<LayoutSetID, KindsInLayoutSet>;
 
 struct TypeTestContext {
     const Plan& plan;

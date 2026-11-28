@@ -35,6 +35,7 @@
 #import <numbers>
 #import <objc/message.h>
 #import <objc/runtime.h>
+#import <wtf/Borrow.h>
 #import <wtf/RetainPtr.h>
 
 static constexpr CGFloat singleTapMovementThreshold = 45;
@@ -84,6 +85,9 @@ static unsigned incrementingTouchIdentifier = 1;
     _activeTouchesByIdentifier = NSMapTable.strongToWeakObjectsMapTable;
     _contentView = view;
 
+    // Web content needs to receive stylus and finger touches simultaneously.
+    self.requiresExclusiveTouchType = NO;
+
     [self reset];
 
     return self;
@@ -98,7 +102,7 @@ static unsigned incrementingTouchIdentifier = 1;
 {
     if (_wasExplicitlyCancelled && (_lastTouchEvent.type == WebKit::WKTouchEventType::Begin || _lastTouchEvent.type == WebKit::WKTouchEventType::Change)) {
         _lastTouchEvent.type = WebKit::WKTouchEventType::Cancel;
-        for (auto& touchPoint : _lastTouchEvent.touchPoints)
+        for (auto& touchPoint : borrow(_lastTouchEvent.touchPoints))
             touchPoint.phase = UITouchPhaseCancelled;
         [self performAction];
     }
@@ -314,6 +318,7 @@ static CGFloat rollAngleOrDefault(UITouch *touch, bool shouldReadRollAngle)
 
     [_activeTouchesByIdentifier removeAllObjects];
 
+    Borrow touchPoints { _lastTouchEvent.touchPoints };
     for (UITouch *touch in touches) {
         // Get the identifier of this touch. Or create one if one did not exist.
         RetainPtr associatedIdentifier = dynamic_objc_cast<NSNumber>(objc_getAssociatedObject(touch, &associatedTouchIdentifierKey));
@@ -334,7 +339,7 @@ static CGFloat rollAngleOrDefault(UITouch *touch, bool shouldReadRollAngle)
         [_activeTouchesByIdentifier setObject:touch forKey:associatedIdentifier.get()];
 
         // iPhone WebKit works as if it is full screen. Therefore Web coords are Global coords.
-        auto& touchPoint = _lastTouchEvent.touchPoints[touchIndex];
+        auto& touchPoint = touchPoints[touchIndex];
         auto locationInWindow = [touch locationInView:nil];
         auto locationInRootView = [[self view] convertPoint:locationInWindow fromView:nil];
         auto previousLocationInWindow = [touch previousLocationInView:nil];

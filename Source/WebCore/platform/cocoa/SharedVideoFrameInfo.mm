@@ -31,6 +31,7 @@
 #include "CVUtilities.h"
 #include "IOSurface.h"
 #include "Logging.h"
+#include "PlanarImageConverterCV.h"
 #include <wtf/Scope.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/persistence/PersistentCoders.h>
@@ -59,7 +60,7 @@ SharedVideoFrameInfo SharedVideoFrameInfo::fromCVPixelBuffer(CVPixelBufferRef pi
         return { type, static_cast<uint32_t>(CVPixelBufferGetWidth(pixelBuffer)), static_cast<uint32_t>(CVPixelBufferGetHeight(pixelBuffer)), static_cast<uint32_t>(CVPixelBufferGetBytesPerRow(pixelBuffer)) };
 
     return { type, static_cast<uint32_t>(CVPixelBufferGetWidthOfPlane(pixelBuffer, 0)), static_cast<uint32_t>(CVPixelBufferGetHeightOfPlane(pixelBuffer, 0)), static_cast<uint32_t>(CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 0)), static_cast<uint32_t>(CVPixelBufferGetWidthOfPlane(pixelBuffer, 1)), static_cast<uint32_t>(CVPixelBufferGetHeightOfPlane(pixelBuffer, 1)), static_cast<uint32_t>(CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 1)),
-        type == kCVPixelFormatType_420YpCbCr8VideoRange_8A_TriPlanar ? static_cast<uint32_t>(CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 2)) : 0
+        isPixelFormatWithAlphaPlane(type) ? static_cast<uint32_t>(CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 2)) : 0
     };
 }
 
@@ -67,11 +68,7 @@ bool SharedVideoFrameInfo::isReadWriteSupported() const
 {
     return m_bufferType == kCVPixelFormatType_32BGRA
         || m_bufferType == kCVPixelFormatType_32ARGB
-        || m_bufferType == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
-        || m_bufferType == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
-        || m_bufferType == kCVPixelFormatType_420YpCbCr10BiPlanarFullRange
-        || m_bufferType == kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
-        || m_bufferType == kCVPixelFormatType_420YpCbCr8VideoRange_8A_TriPlanar;
+        || PlanarImageConverter::pixelFormatDescription(m_bufferType);
 }
 
 size_t SharedVideoFrameInfo::storageSize() const
@@ -91,7 +88,7 @@ size_t SharedVideoFrameInfo::storageSize() const
     if (!WTF::safeAdd(sizePlaneA, sizePlaneB, size) || !WTF::safeAdd(size, sizeof(SharedVideoFrameInfo), size))
         return 0;
 
-    if (m_bufferType == kCVPixelFormatType_420YpCbCr8VideoRange_8A_TriPlanar) {
+    if (isPixelFormatWithAlphaPlane(m_bufferType)) {
         size_t sizePlaneAlpha;
         if (!WTF::safeMultiply(m_bytesPerRowPlaneAlpha, m_height, sizePlaneAlpha) || !WTF::safeAdd(sizePlaneAlpha, size, size))
             return 0;
@@ -307,7 +304,7 @@ static uint32_t computeHeightUV(const webrtc::VideoFrameBuffer& frame)
     return (height + 1) / 2;
 }
 
-SharedVideoFrameInfo SharedVideoFrameInfo::fromVideoFrameBuffer(const webrtc::VideoFrameBuffer& frame)
+SharedVideoFrameInfo SharedVideoFrameInfo::fromVideoFrameBuffer(const webrtc::VideoFrameBuffer& frame, bool isFullRange)
 {
     if (frame.type() == webrtc::VideoFrameBuffer::Type::kNative)
         return SharedVideoFrameInfo { };
@@ -315,14 +312,14 @@ SharedVideoFrameInfo SharedVideoFrameInfo::fromVideoFrameBuffer(const webrtc::Vi
     auto type = frame.type();
     if (type == webrtc::VideoFrameBuffer::Type::kI420) {
         return {
-            kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+            isFullRange ? kCVPixelFormatType_420YpCbCr8BiPlanarFullRange : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
             static_cast<uint32_t>(frame.width()), static_cast<uint32_t>(frame.height()), computeStrideY<uint8_t>(frame),
             computeWidthUV(frame), computeHeightUV(frame), computeStrideUV<uint8_t>(frame)
         };
     }
     if (type == webrtc::VideoFrameBuffer::Type::kI010) {
         return {
-            kCVPixelFormatType_420YpCbCr10BiPlanarFullRange,
+            isFullRange ? kCVPixelFormatType_420YpCbCr10BiPlanarFullRange : kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange,
             static_cast<uint32_t>(frame.width()), static_cast<uint32_t>(frame.height()), computeStrideY<uint16_t>(frame),
             computeWidthUV(frame), computeHeightUV(frame), computeStrideUV<uint16_t>(frame)
         };
@@ -332,7 +329,8 @@ SharedVideoFrameInfo SharedVideoFrameInfo::fromVideoFrameBuffer(const webrtc::Vi
 
 bool SharedVideoFrameInfo::writeVideoFrameBuffer(webrtc::VideoFrameBuffer& frameBuffer, std::span<uint8_t> data)
 {
-    ASSERT(m_bufferType == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange || m_bufferType == kCVPixelFormatType_420YpCbCr10BiPlanarFullRange);
+    ASSERT(m_bufferType == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange || m_bufferType == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+        || m_bufferType == kCVPixelFormatType_420YpCbCr10BiPlanarFullRange || m_bufferType == kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange);
     encode(data);
     return webrtc::copyVideoFrameBuffer(frameBuffer, data.subspan(sizeof(SharedVideoFrameInfo)).data());
 }

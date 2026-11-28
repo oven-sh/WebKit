@@ -26,6 +26,7 @@
 #include "config.h"
 #include "CustomElementRegistry.h"
 
+#include "ContextDestructionObserverInlines.h"
 #include "CustomElementReactionQueue.h"
 #include "Document.h"
 #include "DocumentQuirks.h"
@@ -34,7 +35,6 @@
 #include "HTMLElementFactory.h"
 #include "JSCustomElementInterface.h"
 #include "JSDOMPromiseDeferred.h"
-#include "LocalDOMWindow.h"
 #include "MathMLNames.h"
 #include "QualifiedName.h"
 #include "ShadowRoot.h"
@@ -44,24 +44,19 @@
 
 namespace WebCore {
 
-Ref<CustomElementRegistry> CustomElementRegistry::create(ScriptExecutionContext& scriptExecutionContext, LocalDOMWindow& window)
+Ref<CustomElementRegistry> CustomElementRegistry::createGlobal(Document& document)
 {
-    return adoptRef(*new CustomElementRegistry(scriptExecutionContext, window));
+    return adoptRef(*new CustomElementRegistry(document, IsScoped::No));
 }
 
 Ref<CustomElementRegistry> CustomElementRegistry::create(ScriptExecutionContext& scriptExecutionContext)
 {
-    return adoptRef(*new CustomElementRegistry(scriptExecutionContext));
+    return adoptRef(*new CustomElementRegistry(scriptExecutionContext, IsScoped::Yes));
 }
 
-CustomElementRegistry::CustomElementRegistry(ScriptExecutionContext& scriptExecutionContext, LocalDOMWindow& window)
+CustomElementRegistry::CustomElementRegistry(ScriptExecutionContext& scriptExecutionContext, IsScoped isScoped)
     : ContextDestructionObserver(&scriptExecutionContext)
-    , m_window(window)
-{
-}
-
-CustomElementRegistry::CustomElementRegistry(ScriptExecutionContext& scriptExecutionContext)
-    : ContextDestructionObserver(&scriptExecutionContext)
+    , m_isScoped(isScoped == IsScoped::Yes)
 {
 }
 
@@ -69,7 +64,8 @@ CustomElementRegistry::~CustomElementRegistry() = default;
 
 Document* CustomElementRegistry::document() const
 {
-    return m_window ? m_window->document() : nullptr;
+    auto* document = m_isScoped ? nullptr : downcast<Document>(scriptExecutionContext());
+    return document && document->window() ? document : nullptr;
 }
 
 void CustomElementRegistry::didAssociateWithDocument(Document& document)
@@ -171,14 +167,13 @@ JSC::JSValue CustomElementRegistry::get(const AtomString& name)
     return JSC::jsUndefined();
 }
 
-String CustomElementRegistry::getName(JSC::JSValue constructorValue)
+ExceptionOr<const AtomString&> CustomElementRegistry::getName(JSC::JSValue constructorValue)
 {
-    auto* constructor = constructorValue.getObject();
-    if (!constructor)
-        return String { };
-    RefPtr elementInterface = findInterface(constructor);
+    if (!constructorValue.isCallable())
+        return Exception { ExceptionCode::TypeError, "The argument must be a function"_s };
+    RefPtr elementInterface = findInterface(constructorValue.getObject());
     if (!elementInterface)
-        return String { };
+        return nullAtom();
     return elementInterface->name().localName();
 }
 
@@ -217,24 +212,28 @@ ExceptionOr<void> CustomElementRegistry::initialize(Node& root)
     }
 
     if (RefPtr document = dynamicDowncast<Document>(*containerRoot); document && document->usesNullCustomElementRegistry()) {
-        document->clearUsesNullCustomElementRegistry();
+        document->resetCustomElementRegistryType();
         document->setCustomElementRegistry(*this);
     } else if (RefPtr shadowRoot = dynamicDowncast<ShadowRoot>(*containerRoot); shadowRoot && shadowRoot->usesNullCustomElementRegistry()) {
-        ASSERT(shadowRoot->hasScopedCustomElementRegistry());
-        shadowRoot->clearUsesNullCustomElementRegistry();
+        shadowRoot->resetCustomElementRegistryType();
         shadowRoot->setCustomElementRegistry(*this);
         if (shadowRoot->isConnected())
             didAssociateWithDocument(protect(shadowRoot->document()).get());
     } else if (auto* documentFragment = dynamicDowncast<DocumentFragment>(*containerRoot); documentFragment && documentFragment->usesNullCustomElementRegistry())
-        documentFragment->clearUsesNullCustomElementRegistry();
+        documentFragment->resetCustomElementRegistryType();
 
     RefPtr registryOfTreeScope = root.isInTreeScope() ? root.treeScope().customElementRegistry() : nullptr;
     auto updateRegistryIfNeeded = [&](Element& element) {
-        if (!element.usesNullCustomElementRegistry())
+        if (element.usesNullCustomElementRegistry())
+            element.resetCustomElementRegistryType();
+        else if (registryForElement(element))
             return;
-        element.clearUsesNullCustomElementRegistry();
-        if (this != registryOfTreeScope)
-            addToScopedCustomElementRegistryMap(element, *this);
+        if (this != registryOfTreeScope) {
+            if (isScoped())
+                addToScopedCustomElementRegistryMap(element, *this);
+            else
+                element.setUsesGlobalCustomElementRegistry();
+        }
     };
     auto upgradeElementIfPossible = [&](Element& element) {
         if (element.isCustomElementUpgradeCandidate() && CustomElementRegistry::registryForElement(element) == this)
@@ -266,7 +265,7 @@ void CustomElementRegistry::addToScopedCustomElementRegistryMap(Element& element
 void CustomElementRegistry::removeFromScopedCustomElementRegistryMap(Element& element)
 {
     ASSERT(element.usesScopedCustomElementRegistryMap());
-    element.clearUsesScopedCustomElementRegistryMap();
+    element.resetCustomElementRegistryType();
     auto didRemove = scopedCustomElementRegistryMap().remove(element);
     ASSERT_UNUSED(didRemove, didRemove);
 }
@@ -275,6 +274,34 @@ WeakHashMap<Element, Ref<CustomElementRegistry>, WeakPtrImplWithEventTargetData>
 {
     static NeverDestroyed<WeakHashMap<Element, Ref<CustomElementRegistry>, WeakPtrImplWithEventTargetData>> map;
     return map.get();
+}
+
+CustomElementRegistry* CustomElementRegistry::effectiveGlobalCustomElementRegistry(const Node& node)
+{
+    return node.document().effectiveGlobalCustomElementRegistry();
+}
+
+// HTML has one map per similar-origin window agent. Entries only last while a constructor runs, so one map for the main thread is equivalent.
+HashMap<uintptr_t, RefPtr<CustomElementRegistry>>& CustomElementRegistry::activeCustomElementConstructorMap()
+{
+    ASSERT(isMainThread());
+    static NeverDestroyed<HashMap<uintptr_t, RefPtr<CustomElementRegistry>>> map;
+    return map.get();
+}
+
+CustomElementRegistry* CustomElementRegistry::activeCustomElementConstructorRegistry(JSC::JSObject* constructor)
+{
+    return activeCustomElementConstructorMap().get(reinterpret_cast<uintptr_t>(constructor));
+}
+
+void CustomElementRegistry::addToActiveCustomElementConstructorMap(JSC::JSObject* constructor, CustomElementRegistry& registry)
+{
+    activeCustomElementConstructorMap().set(reinterpret_cast<uintptr_t>(constructor), registry);
+}
+
+void CustomElementRegistry::removeFromActiveCustomElementConstructorMap(JSC::JSObject* constructor)
+{
+    activeCustomElementConstructorMap().remove(reinterpret_cast<uintptr_t>(constructor));
 }
 
 template<typename Visitor>

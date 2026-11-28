@@ -34,6 +34,8 @@
 
 #include "CBORBinary.h"
 
+#include <wtf/Borrow.h>
+
 namespace cbor {
 
 CBORWriter::~CBORWriter() = default;
@@ -85,7 +87,7 @@ bool CBORWriter::encodeCBOR(const CBORValue& node, int maxNestingLevel)
     }
     case CBORValue::Type::String: {
         // WTFString uses UTF16 but RFC7049 requires UTF8
-        auto utf8String = node.getString().utf8();
+        auto utf8String = makeUTF8CString(node.getString());
         startItem(CBORValue::Type::String, static_cast<uint64_t>(utf8String.length()));
         // Add the characters.
         m_encodedCBOR->append(utf8String.span());
@@ -95,7 +97,7 @@ bool CBORWriter::encodeCBOR(const CBORValue& node, int maxNestingLevel)
     case CBORValue::Type::Array: {
         const CBORValue::ArrayValue& array = node.getArray();
         startItem(CBORValue::Type::Array, array.size());
-        for (const auto& value : array) {
+        for (const auto& value : borrow(array)) {
             if (!encodeCBOR(value, maxNestingLevel - 1))
                 return false;
         }

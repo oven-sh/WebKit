@@ -34,8 +34,7 @@
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/ZippedRange.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(WillChangeAnimatableFeatures::Data);
 
@@ -134,25 +133,29 @@ bool WillChangeAnimatableFeatures::Data::operator==(const WillChangeAnimatableFe
 
 bool WillChangeAnimatableFeatures::Data::containsScrollPosition() const
 {
-    return std::ranges::any_of(*this, [](auto& feature) {
-        return WTF::holdsAlternative<CSS::Keyword::ScrollPosition>(feature);
-    });
+    for (auto& feature : *this) {
+        if (WTF::holdsAlternative<CSS::Keyword::ScrollPosition>(feature))
+            return true;
+    }
+    return false;
 }
 
 bool WillChangeAnimatableFeatures::Data::containsContents() const
 {
-    return std::ranges::any_of(*this, [](auto& feature) {
-        return WTF::holdsAlternative<CSS::Keyword::Contents>(feature);
-    });
+    for (auto& feature : *this) {
+        if (WTF::holdsAlternative<CSS::Keyword::Contents>(feature))
+            return true;
+    }
+    return false;
 }
 
 bool WillChangeAnimatableFeatures::Data::containsProperty(CSSPropertyID property) const
 {
-    return std::ranges::any_of(*this, [&](auto& feature) {
-        if (auto* value = std::get_if<WillChangeAnimatableFeature::CustomIdentWithCachedPropertyID>(&feature.value))
-            return *value == property;
-        return false;
-    });
+    for (auto& feature : *this) {
+        if (auto* value = std::get_if<WillChangeAnimatableFeature::CustomIdentWithCachedPropertyID>(&feature.value); value && *value == property)
+            return true;
+    }
+    return false;
 }
 
 bool WillChangeAnimatableFeatures::Data::createsContainingBlockForAbsolutelyPositioned(bool isRootElement) const
@@ -264,5 +267,4 @@ auto CSSValueConversion<WillChange>::operator()(BuilderState& state, const CSSVa
     });
 }
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

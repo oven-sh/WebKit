@@ -328,7 +328,7 @@ private:
         unsigned via; // identifier index given to resolve_scope, or environmentVia(...) for a statically located record, or UINT_MAX for |base| itself
     };
     static unsigned environmentVia(unsigned localScopeDepth, unsigned hops) { return 0x80000000u | (localScopeDepth << 16) | hops; }
-    UncheckedKeyHashMap<int, ScopeValue, IntHash<int>, WTF::SignedWithZeroKeyHashTraits<int>> m_scopeCacheContents; // cache register -> what it holds
+    HashMap<int, ScopeValue, IntHash<int>, WTF::SignedWithZeroKeyHashTraits<int>> m_scopeCacheContents; // cache register -> what it holds
     bool cacheScopeResolutions();
     bool resolveScopesStatically();
     unsigned m_staticResolves { 0 };
@@ -1216,7 +1216,7 @@ bool BytecodeOptimizerAccess::propagateCopies()
 {
     // Forward "available copies" dataflow: after `mov d, s`, uses of d can read s instead until either is
     // redefined. Meet is intersection; exception handler entry blocks start empty.
-    using CopyMap = UncheckedKeyHashMap<int, int, IntHash<int>, WTF::SignedWithZeroKeyHashTraits<int>>; // d.offset() -> s.offset()
+    using CopyMap = HashMap<int, int, IntHash<int>, WTF::SignedWithZeroKeyHashTraits<int>>; // d.offset() -> s.offset()
 
     auto killRegister = [](CopyMap& copies, VirtualRegister r) {
         if (copies.isEmpty())
@@ -1345,7 +1345,7 @@ bool BytecodeOptimizerAccess::resolveScopesStatically()
     for (auto& block : m_blocks) {
         if (!block.reachable)
             continue;
-        UncheckedKeyHashMap<int, Known, IntHash<int>, WTF::SignedWithZeroKeyHashTraits<int>> regEnv;
+        HashMap<int, Known, IntHash<int>, WTF::SignedWithZeroKeyHashTraits<int>> regEnv;
         for (unsigned i = block.start; i < block.end; ++i) {
             auto& insn = m_insns[i];
             if (!insn.live)
@@ -1559,8 +1559,8 @@ bool BytecodeOptimizerAccess::eliminateRedundantTDZChecks()
     // removing follow their binding's first use closely, so forgetting old ones costs little.
     struct KeySet {
         enum { capacity = 256 };
-        using Keys = UncheckedKeyHashSet<uint64_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
-        UncheckedKeyHashMap<int, Keys, IntHash<int>, WTF::SignedWithZeroKeyHashTraits<int>> byBase;
+        using Keys = HashSet<uint64_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
+        HashMap<int, Keys, IntHash<int>, WTF::SignedWithZeroKeyHashTraits<int>> byBase;
         unsigned size { 0 };
 
         bool contains(const Key& key) const
@@ -1636,10 +1636,10 @@ bool BytecodeOptimizerAccess::eliminateRedundantTDZChecks()
     auto transfer = [&](Block& block, KeySet& checked, bool apply) -> bool {
         bool changed = false;
         // Block-local knowledge about registers: which scope value / which binding's value they hold.
-        UncheckedKeyHashMap<int, ScopeValue, IntHash<int>, WTF::SignedWithZeroKeyHashTraits<int>> regScope;
-        UncheckedKeyHashMap<int, Key, IntHash<int>, WTF::SignedWithZeroKeyHashTraits<int>> regBinding;
+        HashMap<int, ScopeValue, IntHash<int>, WTF::SignedWithZeroKeyHashTraits<int>> regScope;
+        HashMap<int, Key, IntHash<int>, WTF::SignedWithZeroKeyHashTraits<int>> regBinding;
         // Registers defined in this block by something that cannot produce the empty value.
-        UncheckedKeyHashSet<int, IntHash<int>, WTF::SignedWithZeroKeyHashTraits<int>> neverEmpty;
+        HashSet<int, IntHash<int>, WTF::SignedWithZeroKeyHashTraits<int>> neverEmpty;
 
         auto scopeValueOf = [&](VirtualRegister scope) -> ScopeValue {
             auto it = regScope.find(scope.offset());

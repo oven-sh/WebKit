@@ -54,30 +54,30 @@ const ClassInfo DecimalPrototype::s_info = { "Decimal"_s, &Base::s_info, &decima
 
 /* Source for DecimalPrototype.lut.h
 @begin decimalPrototypeTable
-  isNaN                decimalProtoFuncIsNaN                DontEnum|Function 0 DecimalIntrinsic
-  isFinite             decimalProtoFuncIsFinite             DontEnum|Function 0 DecimalIntrinsic
-  exponent             decimalProtoFuncExponent             DontEnum|Function 0 DecimalIntrinsic
-  mantissa             decimalProtoFuncMantissa             DontEnum|Function 0 DecimalIntrinsic
-  abs                  decimalProtoFuncAbs                  DontEnum|Function 0 DecimalIntrinsic
-  negate               decimalProtoFuncNegate               DontEnum|Function 0 DecimalIntrinsic
-  add                  decimalProtoFuncAdd                  DontEnum|Function 1 DecimalIntrinsic
-  subtract             decimalProtoFuncSubtract             DontEnum|Function 1 DecimalIntrinsic
-  multiply             decimalProtoFuncMultiply             DontEnum|Function 1 DecimalIntrinsic
-  divide               decimalProtoFuncDivide               DontEnum|Function 1 DecimalIntrinsic
-  remainder            decimalProtoFuncRemainder            DontEnum|Function 1 DecimalIntrinsic
-  compare              decimalProtoFuncCompare              DontEnum|Function 1 DecimalIntrinsic
-  equals               decimalProtoFuncEquals               DontEnum|Function 1 DecimalIntrinsic
-  notEquals            decimalProtoFuncNotEquals            DontEnum|Function 1 DecimalIntrinsic
-  lessThan             decimalProtoFuncLessThan             DontEnum|Function 1 DecimalIntrinsic
-  lessThanOrEqual      decimalProtoFuncLessThanOrEqual      DontEnum|Function 1 DecimalIntrinsic
-  greaterThan          decimalProtoFuncGreaterThan          DontEnum|Function 1 DecimalIntrinsic
-  greaterThanOrEqual   decimalProtoFuncGreaterThanOrEqual   DontEnum|Function 1 DecimalIntrinsic
-  round                decimalProtoFuncRound                DontEnum|Function 1 DecimalIntrinsic
-  scale10              decimalProtoFuncScale10              DontEnum|Function 1 DecimalIntrinsic
-  toString             decimalProtoFuncToString             DontEnum|Function 0 DecimalIntrinsic
+  isNaN                decimalProtoFuncIsNaN                DontEnum|Function 0
+  isFinite             decimalProtoFuncIsFinite             DontEnum|Function 0
+  exponent             decimalProtoFuncExponent             DontEnum|Function 0
+  mantissa             decimalProtoFuncMantissa             DontEnum|Function 0
+  abs                  decimalProtoFuncAbs                  DontEnum|Function 0
+  negate               decimalProtoFuncNegate               DontEnum|Function 0
+  add                  decimalProtoFuncAdd                  DontEnum|Function 1
+  subtract             decimalProtoFuncSubtract             DontEnum|Function 1
+  multiply             decimalProtoFuncMultiply             DontEnum|Function 1
+  divide               decimalProtoFuncDivide               DontEnum|Function 1
+  remainder            decimalProtoFuncRemainder            DontEnum|Function 1
+  compare              decimalProtoFuncCompare              DontEnum|Function 1
+  equals               decimalProtoFuncEquals               DontEnum|Function 1
+  notEquals            decimalProtoFuncNotEquals            DontEnum|Function 1
+  lessThan             decimalProtoFuncLessThan             DontEnum|Function 1
+  lessThanOrEqual      decimalProtoFuncLessThanOrEqual      DontEnum|Function 1
+  greaterThan          decimalProtoFuncGreaterThan          DontEnum|Function 1
+  greaterThanOrEqual   decimalProtoFuncGreaterThanOrEqual   DontEnum|Function 1
+  round                decimalProtoFuncRound                DontEnum|Function 1
+  scale10              decimalProtoFuncScale10              DontEnum|Function 1
+  toString             decimalProtoFuncToString             DontEnum|Function 0
   toLocaleString       decimalProtoFuncToLocaleString       DontEnum|Function 0
-  toExponential        decimalProtoFuncToExponential        DontEnum|Function 0 DecimalIntrinsic
-  toFixed              decimalProtoFuncToFixed              DontEnum|Function 0 DecimalIntrinsic
+  toExponential        decimalProtoFuncToExponential        DontEnum|Function 0
+  toFixed              decimalProtoFuncToFixed              DontEnum|Function 0
   toPrecision          decimalProtoFuncToPrecision          DontEnum|Function 0
   toJSON               decimalProtoFuncToJSON               DontEnum|Function 0
   valueOf              decimalProtoFuncValueOf              DontEnum|Function 1

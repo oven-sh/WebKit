@@ -240,7 +240,7 @@ WebCore::IntPoint PageClientImpl::accessibilityScreenToRootView(const WebCore::I
 
 WebCore::IntRect PageClientImpl::rootViewToAccessibilityScreen(const WebCore::IntRect& rect)
 {
-    return rootViewToScreen(rect);    
+    return rootViewToScreen(rect);
 }
 
 void PageClientImpl::doneWithKeyEvent(const NativeWebKeyboardEvent&, bool)
@@ -252,12 +252,30 @@ void PageClientImpl::doneWithTouchEvent(const WebTouchEvent& touchEvent, bool wa
 {
     if (wasEventHandled) {
 #if ENABLE(WPE_PLATFORM)
-        // If the touch event was handled, we must interrupt any gesture detection sequence ongoing so that gestures
-        // are not detected by engine itself.
         if (!m_view.wpeView())
             return;
-        if (auto* gestureController = wpe_view_get_gesture_controller(m_view.wpeView()))
+        if (auto* gestureController = wpe_view_get_gesture_controller(m_view.wpeView())) {
+            // A prevented touchmove must stop scrolling, but not a single-finger tap while
+            // the touch is still within the tap threshold. Feed the move to the detector
+            // (without acting on it) so it can still notice the threshold being exceeded.
+            if (touchEvent.type() == WebEventType::TouchMove
+                && touchEvent.isNativeWebTouchEvent()
+                && touchEvent.touchPoints().size() == 1
+                && wpe_gesture_controller_get_gesture(gestureController) == WPE_GESTURE_TAP) {
+                wpe_gesture_controller_handle_event(gestureController, static_cast<const NativeWebTouchEvent&>(touchEvent).nativeEvent());
+                if (wpe_gesture_controller_get_gesture(gestureController) == WPE_GESTURE_TAP)
+                    return;
+            }
+
+            // Otherwise interrupt any ongoing gesture detection so that gestures are not
+            // detected by the engine itself.
             wpe_gesture_controller_cancel(gestureController);
+        }
+
+#if ENABLE(CONTEXT_MENUS)
+        // Cancel timer to open the context menu on long press with touch input.
+        static_cast<WKWPE::ViewPlatform&>(m_view).cancelLongPress();
+#endif // ENABLE(CONTEXT_MENUS)
 #endif
         return;
     }
@@ -467,6 +485,13 @@ void PageClientImpl::setFullScreenClientForTesting(std::unique_ptr<WebFullScreen
 
 void PageClientImpl::closeFullScreenManager()
 {
+#if ENABLE(WPE_PLATFORM)
+    if (m_view.wpeView()) {
+        static_cast<WKWPE::ViewPlatform&>(m_view).closeFullScreen();
+        return;
+    }
+#endif
+
     notImplemented();
 }
 

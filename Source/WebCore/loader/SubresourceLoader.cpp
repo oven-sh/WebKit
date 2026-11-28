@@ -58,6 +58,7 @@
 #include "ResourceTiming.h"
 #include "SecurityOrigin.h"
 #include "Settings.h"
+#include "SubresourceIntegrity.h"
 #include <wtf/CompletionHandler.h>
 #include <wtf/Ref.h>
 #include <wtf/StdLibExtras.h>
@@ -535,6 +536,13 @@ void SubresourceLoader::didReceiveResponse(ResourceResponse&& response, Completi
         // FIXME: Main resources have a different set of rules for multipart than images do.
         // Hopefully we can merge those 2 paths.
         if (isResponseMultipart && resource && resource->type() != CachedResource::Type::MainResource) {
+            // Each part is handed over as it arrives, before the body has been fully read and checked.
+            if (!options().integrity.isEmpty()) {
+                SUBRESOURCELOADER_RELEASE_LOG(SubResourceLoaderDidReceiveResponseCancelingLoadBecauseOfMultipartWithIntegrity);
+                cancel(ResourceError { errorDomainWebKitInternal, 0, request().url(), makeString("Cannot load "_s, request().url().stringCenterEllipsizedToLength(), ". Integrity metadata cannot be checked for a multipart response."_s), ResourceError::Type::AccessControl });
+                return;
+            }
+
             m_loadingMultipartContent = true;
 
             // We don't count multiParts in a CachedResourceLoader's request count
@@ -589,6 +597,10 @@ void SubresourceLoader::didReceiveBuffer(const FragmentedSharedBuffer& buffer, l
     Ref protectedThis { *this };
 
     ResourceLoader::didReceiveBuffer(buffer, encodedDataLength, dataPayloadType);
+
+    // With integrity metadata, the body is handed over once it has been fully read and checked, in didFinishLoading().
+    if (!options().integrity.isEmpty())
+        return;
 
     if (!m_loadingMultipartContent) {
         if (RefPtr resourceData = this->resourceData())
@@ -732,6 +744,17 @@ std::expected<void, String> SubresourceLoader::checkRedirectionCrossOriginAccess
     // Implementing https://fetch.spec.whatwg.org/#concept-http-redirect-fetch step 14.
     updateReferrerPolicy(redirectResponse.httpHeaderField(HTTPHeaderName::ReferrerPolicy));
 
+    // Implementing https://fetch.spec.whatwg.org/#concept-http-redirect-fetch step 22, which runs main fetch again. That updates
+    // the request's response tainting, and https://fetch.spec.whatwg.org/#http-network-or-cache-fetch step 8.3 then recomputes
+    // includeCredentials. Like the initial request, this only ever restricts the stored credentials policy.
+    if (options().storedCredentialsPolicy == StoredCredentialsPolicy::Use) {
+        auto responseTainting = !newCrossOriginFlag ? ResourceResponse::Tainting::Basic : options().mode == FetchOptions::Mode::Cors ? ResourceResponse::Tainting::Cors : ResourceResponse::Tainting::Opaque;
+        if (storedCredentialsPolicyForCredentialsMode(options().credentials, responseTainting) == StoredCredentialsPolicy::DoNotUse) {
+            setStoredCredentialsPolicy(StoredCredentialsPolicy::DoNotUse);
+            newRequest.setAllowCookies(false);
+        }
+    }
+
     if (options().mode == FetchOptions::Mode::Cors && redirectingToNewOrigin) {
         cleanHTTPRequestHeadersForAccessControl(newRequest, options().httpHeadersToKeep);
         updateRequestForAccessControl(newRequest, *protect(m_origin), options().storedCredentialsPolicy);
@@ -772,6 +795,16 @@ void SubresourceLoader::didFinishLoading(const NetworkLoadMetrics& networkLoadMe
         return;
 
     ASSERT(!resource->resourceToRevalidate());
+
+    if (!options().integrity.isEmpty()) {
+        ASSERT(options().dataBufferingPolicy == DataBufferingPolicy::BufferData);
+        if (auto error = checkResponseBodyIntegrity(resource->response(), resource->responseTainting(), options().destination, protect(resourceData()).get(), options().integrity)) {
+            SUBRESOURCELOADER_RELEASE_LOG(SubResourceLoaderDidFinishLoadingFailedIntegrityCheck);
+            didFail(*error);
+            return;
+        }
+    }
+
     // FIXME (129394): We should cancel the load when a decode error occurs instead of continuing the load to completion.
     ASSERT(!resource->errorOccurred() || resource->status() == CachedResource::DecodeError || !resource->isLoading());
     LOG_WITH_STREAM(ResourceLoading, stream << "Received '"_s << resource->url().string() << "'."_s);
@@ -813,6 +846,14 @@ void SubresourceLoader::didFinishLoading(const NetworkLoadMetrics& networkLoadMe
     }
     releaseResources();
 }
+
+#if USE(QUICK_LOOK)
+void SubresourceLoader::didFinishQuickLookLoading(URL&& temporaryQuickLookFileURL)
+{
+    if (m_previewLoader)
+        m_previewLoader->didFinishQuickLookLoading(WTF::move(temporaryQuickLookFileURL));
+}
+#endif
 
 void SubresourceLoader::didFail(const ResourceError& error)
 {

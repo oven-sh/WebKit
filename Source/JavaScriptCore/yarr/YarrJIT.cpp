@@ -58,6 +58,8 @@
 #include <wtf/HexNumber.h>
 #include <wtf/ListDump.h>
 #include <wtf/MathExtras.h>
+#include <wtf/RecursableLambda.h>
+#include <wtf/SegmentedVector.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
 
@@ -1453,19 +1455,6 @@ class YarrGenerator final : public YarrJITInfo {
         }
     }
 #endif
-
-    size_t alternativeEndOpIndex(size_t opIndex)
-    {
-        if (m_ops[opIndex].m_endOp != notFound)
-            return m_ops[opIndex].m_endOp;
-        size_t endIndex = opIndex;
-        while (m_ops[endIndex].m_nextOp != notFound)
-            endIndex = m_ops[endIndex].m_nextOp;
-        ASSERT(m_ops[endIndex].m_op == YarrOpCode::SimpleNestedAlternativeEnd || m_ops[endIndex].m_op == YarrOpCode::StringListAlternativeEnd || m_ops[endIndex].m_op == YarrOpCode::NestedAlternativeEnd);
-        for (size_t i = opIndex; i != notFound; i = m_ops[i].m_nextOp)
-            m_ops[i].m_endOp = endIndex;
-        return endIndex;
-    }
 
 #if !defined(YARR_FOR_IMAGE)
     NODELETE void optimizeAlternative(PatternAlternative* alternative)
@@ -3236,6 +3225,22 @@ class YarrGenerator final : public YarrJITInfo {
     };
 
 #endif
+    // When every repeated alternative must start with a character from its own class, and any two of
+    // those classes are either identical or disjoint, BodyAlternativeBegin reads the first character
+    // once and jumps straight to the first alternative that can match it. An alternative entered that
+    // way can only be followed by a later alternative with the identical class (retryOp), so a
+    // failure skips every alternative in between.
+    struct BodyAlternativeDispatchInfo {
+        const CharacterClass* firstCharacterClass { nullptr };
+        size_t retryOp { notFound };
+        MacroAssembler::JumpList entries;
+        // Used only by BodyAlternativeBegin: a first character that no alternative can match jumps
+        // through failures to advanceLabel, which advances the start position and retries. An
+        // alternative with no retryOp jumps there too.
+        MacroAssembler::JumpList failures;
+        MacroAssembler::Label advanceLabel;
+    };
+
     // This structure is used to hold the compiled opcode information,
     // including reference back to the original PatternTerm/PatternAlternatives,
     // and JIT compilation data structures.
@@ -3260,6 +3265,8 @@ class YarrGenerator final : public YarrJITInfo {
         size_t m_index { 0 };
         size_t m_previousOp;
         size_t m_nextOp;
+        // For every Begin, Next, and End node of a set of alternatives, the indices of its Begin and End nodes.
+        size_t m_beginOp { notFound };
         size_t m_endOp { notFound };
 
         // The operation, as a YarrOpCode, and also a reference to the PatternTerm.
@@ -3341,6 +3348,9 @@ class YarrGenerator final : public YarrJITInfo {
 
         // Shared UTF-16 lead surrogate across all repeated alternatives' first character.
         std::optional<char16_t> m_bodyAltSharedLead;
+
+        // Set on every repeated body alternative when they are dispatched on their first character.
+        BodyAlternativeDispatchInfo* m_bodyAltDispatchInfo { nullptr };
 
         // For quantified parentheses (FixedCount/Greedy/NonGreedy): label for the
         // content's backtrack entry. BEGIN.bt jumps here to re-drive an iteration's
@@ -6410,6 +6420,99 @@ class YarrGenerator final : public YarrJITInfo {
         }
     }
 
+    void generateBodyAlternativeDispatch(size_t beginOpIndex, bool checkedSharedLead)
+    {
+        YarrOp& beginOp = m_ops[beginOpIndex];
+        const MacroAssembler::RegisterID character = m_regs.regT0;
+        const MacroAssembler::RegisterID scratch = m_regs.regT1;
+
+        JIT_COMMENT(m_jit, "Body alternative dispatch on the first character");
+        BodyAlternativeDispatchInfo& beginInfo = *beginOp.m_bodyAltDispatchInfo;
+        // The prefilter already proved that the first unit is the shared lead surrogate, so only
+        // the trail surrogate tells the classes apart.
+        if (checkedSharedLead) {
+            // Only the lead is known to be readable. If it is the last unit, no pair can follow.
+            if (beginOp.m_checkedOffset == 1)
+                beginInfo.failures.append(atEndOfInput());
+            MacroAssembler::BaseIndex address = negativeOffsetIndexedAddress(beginOp.m_checkedOffset - 1, character);
+            verifySubjectRead(address, 2, __LINE__);
+            m_jit.load16Unaligned(address, character);
+        } else
+            readCharacter(beginOp.m_checkedOffset, character);
+
+        BitVector retryOps;
+        Vector<BodyAlternativeDispatchInfo*, 16> dispatchedInfos;
+        Vector<CharacterClass, 16> trailsOnlyClasses;
+        for (size_t opIndex = beginOpIndex; m_ops[opIndex].m_op != YarrOpCode::BodyAlternativeEnd; opIndex = m_ops[opIndex].m_nextOp) {
+            BodyAlternativeDispatchInfo& info = *m_ops[opIndex].m_bodyAltDispatchInfo;
+            if (info.retryOp != notFound)
+                retryOps.set(info.retryOp);
+            if (retryOps.get(opIndex))
+                continue;
+            dispatchedInfos.append(&info);
+#if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS)
+            if (checkedSharedLead) {
+                trailsOnlyClasses.constructAndAppend();
+                buildTrailsOnlyClass(*info.firstCharacterClass, trailsOnlyClasses.last());
+            }
+#endif
+        }
+
+        auto classFor = [&](size_t i) -> const CharacterClass* {
+            return checkedSharedLead ? &trailsOnlyClasses[i] : dispatchedInfos[i]->firstCharacterClass;
+        };
+
+        // When all the characters fit in a 256-entry window, map each one to its alternative with a
+        // single table load, so that only one comparison per alternative remains.
+        char32_t lowest = UCHAR_MAX_VALUE;
+        char32_t highest = 0;
+        for (size_t i = 0; i < dispatchedInfos.size(); ++i) {
+            for (auto& range : normalizedRanges(*classFor(i))) {
+                lowest = std::min(lowest, range.begin);
+                highest = std::max(highest, range.end);
+            }
+        }
+        if (highest - lowest < CharacterClass::latin1TableSize && dispatchedInfos.size() < std::numeric_limits<uint8_t>::max()) {
+            CharacterClass::ByteTable table;
+            for (size_t i = 0; i < dispatchedInfos.size(); ++i) {
+                for (auto& range : normalizedRanges(*classFor(i))) {
+                    for (char32_t codePoint = range.begin; codePoint <= range.end; ++codePoint)
+                        table.data[codePoint - lowest] = i + 1;
+                }
+            }
+#if !defined(YARR_FOR_IMAGE)
+            const uint8_t* tableData = m_boyerMooreData->addLatin1Table(table);
+#endif
+            m_jit.sub32(MacroAssembler::Imm32(lowest), character);
+            beginInfo.failures.append(m_jit.branch32(MacroAssembler::Above, character, MacroAssembler::TrustedImm32(highest - lowest)));
+#if !defined(YARR_FOR_IMAGE)
+            m_jit.move(MacroAssembler::TrustedImmPtr(tableData), scratch);
+#else
+            m_addressing.moveAddressOfData(std::span { table.data }.first(highest - lowest + 1), scratch);
+#endif
+            m_jit.load8(MacroAssembler::BaseIndex(scratch, character, MacroAssembler::TimesOne), character);
+            for (size_t i = 0; i < dispatchedInfos.size(); ++i)
+                dispatchedInfos[i]->entries.append(m_jit.branch32(MacroAssembler::Equal, character, MacroAssembler::TrustedImm32(i + 1)));
+        } else {
+            for (size_t i = 0; i < dispatchedInfos.size(); ++i)
+                matchCharacterClass(character, scratch, MatchTargets(dispatchedInfos[i]->entries), classFor(i));
+        }
+        beginInfo.failures.append(m_jit.jump());
+        beginInfo.entries.link(&m_jit);
+    }
+
+    void backtrackBodyAlternativeWithDispatch(YarrOp& op)
+    {
+        size_t retryOp = op.m_bodyAltDispatchInfo->retryOp;
+        MacroAssembler::Label target;
+        if (retryOp == notFound) {
+            target = alternativeBeginOp(op).m_bodyAltDispatchInfo->advanceLabel;
+            ASSERT(target.isSet());
+        } else
+            target = m_ops[retryOp].m_reentry;
+        m_backtrackingState.linkTo(target, &m_jit);
+    }
+
     void generate()
     {
         // Forwards generate the matching code.
@@ -6478,6 +6581,7 @@ class YarrGenerator final : public YarrJITInfo {
                 defineReentryLabel(op);
 
                 // These may advance |index| to a candidate position before entering the body.
+                bool checkedSharedLead = false;
                 auto emitStartPositionPrefilters = [&] {
 #if defined(YARR_FOR_IMAGE)
                 if (m_pattern.hasEndAnchoredFixedSize())
@@ -6752,6 +6856,7 @@ class YarrGenerator final : public YarrJITInfo {
                     // only when the lead matches. Mismatch advances index by 1 and retries.
                     ASSERT(m_decodeSurrogatePairs);
                     char16_t sharedLeadSurrogate = op.m_bodyAltSharedLead.value();
+                    checkedSharedLead = true;
 
                     // We are intentionally not using tryReadUnicodeChar here as we decomposed a non-BMP character into lead and trail surrogates
                     // and searching for a shared lead surrogate.
@@ -6788,6 +6893,12 @@ class YarrGenerator final : public YarrJITInfo {
 #if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS) && ENABLE(YARR_JIT_UNICODE_CAN_INCREMENT_INDEX_FOR_NON_BMP)
                 initAdvanceLatch(alternative->m_minimumSize);
 #endif
+#if ENABLE(YARR_JIT_ALL_PARENS_EXPRESSIONS)
+                // Before generateBodyAlternativeDispatch(): it jumps to every alternative but the first, so what is emitted behind it runs for the first only.
+                releaseAllParenContexts();
+#endif
+                if (op.m_bodyAltDispatchInfo)
+                    generateBodyAlternativeDispatch(opIndex, checkedSharedLead);
                 break;
             }
             case YarrOpCode::BodyAlternativeNext:
@@ -6829,6 +6940,8 @@ class YarrGenerator final : public YarrJITInfo {
                     // PRIOR alteranative, and we will only check input availability if we
                     // need to progress it forwards.
                     defineReentryLabel(op);
+                    if (op.m_bodyAltDispatchInfo)
+                        op.m_bodyAltDispatchInfo->entries.link(&m_jit);
                     if (shouldRecordSubpatterns() && priorAlternative->needToCleanupCaptures()) {
                         for (unsigned subpattern = priorAlternative->firstCleanupSubpatternId(); subpattern <= priorAlternative->m_lastSubpatternId; subpattern++)
                             clearSubpattern(subpattern);
@@ -6878,7 +6991,7 @@ class YarrGenerator final : public YarrJITInfo {
                 PatternDisjunction* disjunction = term->parentheses.disjunction;
 
                 if (op.m_op == YarrOpCode::StringListAlternativeBegin) {
-                    YarrOp* endOp = &m_ops[alternativeEndOpIndex(opIndex)];
+                    YarrOp* endOp = &alternativeEndOp(op);
 
                     termMatchTargets.last() = alternative->m_isLastAlternative ? MatchTargets(MatchTargets::PreferredTarget::MatchSuccessFallThrough) : MatchTargets(endOp->m_jumps, op.m_jumps, MatchTargets::PreferredTarget::MatchFailFallThrough);
                 }
@@ -6917,7 +7030,7 @@ class YarrGenerator final : public YarrJITInfo {
                 PatternAlternative* alternative = op.m_alternative;
                 PatternDisjunction* disjunction = term->parentheses.disjunction;
 
-                YarrOp* endOp = &m_ops[alternativeEndOpIndex(opIndex)];
+                YarrOp* endOp = &alternativeEndOp(op);
 
                 if (op.m_op == YarrOpCode::StringListAlternativeNext)
                     termMatchTargets.last() = alternative->m_isLastAlternative ? MatchTargets(MatchTargets::PreferredTarget::MatchSuccessFallThrough) : MatchTargets(endOp->m_jumps, op.m_jumps, MatchTargets::PreferredTarget::MatchFailFallThrough);
@@ -6955,12 +7068,6 @@ class YarrGenerator final : public YarrJITInfo {
                 if (op.m_op != YarrOpCode::StringListAlternativeNext) {
                     // If we reach here then the last alternative has matched - jump to the
                     // End node, to skip over any further alternatives.
-                    //
-                    // FIXME: this is logically O(N^2) (though N can be expected to be very
-                    // small). We could avoid this either by adding an extra jump to the JIT
-                    // data structures, or by making backtracking code that jumps to Next
-                    // alternatives are responsible for checking that input is available (if
-                    // we didn't need to plant the input checks, then m_jumps would be free).
                     endOp->m_jumps.append(m_jit.jump());
                 }
 
@@ -7536,9 +7643,6 @@ class YarrGenerator final : public YarrJITInfo {
             // alternative's claimed frontier, before alternative 0's terms. Route
             // on the match-start character now so every path is dispatched.
             if (op.m_op == YarrOpCode::BodyAlternativeBegin) {
-#if ENABLE(YARR_JIT_ALL_PARENS_EXPRESSIONS)
-                releaseAllParenContexts();
-#endif
                 if (op.m_bodyDispatch) {
                     generateBodyDispatch(op);
                     bindBodyDispatchEntry(*op.m_bodyDispatch, 0);
@@ -7615,17 +7719,17 @@ class YarrGenerator final : public YarrJITInfo {
                         emitBodyDispatchAdvance(*op.m_bodyDispatch, *beginOp, alternative->m_minimumSize);
                         break;
                     }
+                    if (op.m_bodyAltDispatchInfo) {
+                        backtrackBodyAlternativeWithDispatch(op);
+                        break;
+                    }
                     m_backtrackingState.linkTo(m_ops[op.m_nextOp].m_reentry, &m_jit);
                     break;
                 }
                 YarrOp& endOp = m_ops[op.m_nextOp];
                 ASSERT(endOp.m_op == YarrOpCode::BodyAlternativeEnd);
 
-                YarrOp* beginOp = &op;
-                while (beginOp->m_op != YarrOpCode::BodyAlternativeBegin) {
-                    ASSERT(beginOp->m_op == YarrOpCode::BodyAlternativeNext);
-                    beginOp = &m_ops[beginOp->m_previousOp];
-                }
+                YarrOp* beginOp = &alternativeBeginOp(op);
 
                 bool onceThrough = endOp.m_nextOp == notFound;
                 
@@ -7652,6 +7756,10 @@ class YarrGenerator final : public YarrJITInfo {
                         // We need to generate a trampoline of code to execute before looping back
                         // around to the first alternative.
                         m_backtrackingState.link(*this, op);
+                        if (auto* dispatchInfo = beginOp->m_bodyAltDispatchInfo) {
+                            dispatchInfo->advanceLabel = m_jit.label();
+                            dispatchInfo->failures.linkTo(dispatchInfo->advanceLabel, &m_jit);
+                        }
 
                         // No need to advance and retry for a sticky pattern. And it is already handled before this branch.
                         ASSERT(!m_pattern.sticky());
@@ -8032,7 +8140,7 @@ class YarrGenerator final : public YarrJITInfo {
                 // have planted a jump to be linked to the end. This jump was added to the
                 // End node's m_jumps list. If we are back at the beginning, link it here.
                 if (isBegin) {
-                    YarrOp* endOp = &m_ops[alternativeEndOpIndex(opIndex)];
+                    YarrOp* endOp = &alternativeEndOp(op);
                     m_backtrackingState.append(endOp->m_jumps);
                 }
                 op.m_contentBacktrackEntryLabel = m_jit.label();
@@ -8609,6 +8717,28 @@ class YarrGenerator final : public YarrJITInfo {
         return true;
     }
 
+    YarrOp& alternativeBeginOp(const YarrOp& op)
+    {
+        ASSERT(op.m_beginOp != notFound);
+        YarrOp& beginOp = m_ops[op.m_beginOp];
+        ASSERT(beginOp.m_op == YarrOpCode::BodyAlternativeBegin || beginOp.m_op == YarrOpCode::SimpleNestedAlternativeBegin || beginOp.m_op == YarrOpCode::StringListAlternativeBegin || beginOp.m_op == YarrOpCode::NestedAlternativeBegin);
+        return beginOp;
+    }
+
+    YarrOp& alternativeEndOp(const YarrOp& op)
+    {
+        ASSERT(op.m_endOp != notFound);
+        YarrOp& endOp = m_ops[op.m_endOp];
+        ASSERT(endOp.m_op == YarrOpCode::BodyAlternativeEnd || endOp.m_op == YarrOpCode::SimpleNestedAlternativeEnd || endOp.m_op == YarrOpCode::StringListAlternativeEnd || endOp.m_op == YarrOpCode::NestedAlternativeEnd);
+        return endOp;
+    }
+
+    void recordAlternativeEndOp(size_t endIndex)
+    {
+        for (size_t index = endIndex; index != notFound; index = m_ops[index].m_previousOp)
+            m_ops[index].m_endOp = endIndex;
+    }
+
     // Compilation methods:
     // ====================
 
@@ -8755,6 +8885,7 @@ class YarrGenerator final : public YarrJITInfo {
 
         appendOp(alternativeBeginOpCode);
         m_ops.last().m_previousOp = notFound;
+        m_ops.last().m_beginOp = m_ops.size() - 1;
         m_ops.last().m_term = term;
         m_ops.last().m_dispatch = dispatch;
         PatternDisjunction* disjunction = term->parentheses.disjunction;
@@ -8818,6 +8949,7 @@ class YarrGenerator final : public YarrJITInfo {
             lastOp.m_alternative = nestedAlternative;
             lastOp.m_nextOp = thisOpIndex;
             thisOp.m_previousOp = lastOpIndex;
+            thisOp.m_beginOp = lastOp.m_beginOp;
             thisOp.m_term = term;
             thisOp.m_dispatch = dispatch;
 #if ENABLE(YARR_JIT_ALL_PARENS_EXPRESSIONS)
@@ -8831,6 +8963,7 @@ class YarrGenerator final : public YarrJITInfo {
         lastOp.m_alternative = nullptr;
         lastOp.m_nextOp = notFound;
         lastOp.m_checkedOffset = checkedOffset;
+        recordAlternativeEndOp(m_ops.size() - 1);
         if (dispatch)
             dispatch->endOpIndex = m_ops.size() - 1;
 
@@ -9099,7 +9232,7 @@ class YarrGenerator final : public YarrJITInfo {
 #if !defined(YARR_FOR_IMAGE)
     bool copyForwardAlternativeInto(PatternAlternative& source, PatternDisjunction& destination)
 #else
-    using CopiedLookaheads = UncheckedKeyHashMap<const PatternTerm*, const PatternTerm*>;
+    using CopiedLookaheads = HashMap<const PatternTerm*, const PatternTerm*>;
 
     bool copyForwardAlternativeInto(PatternAlternative& source, PatternDisjunction& destination, CopiedLookaheads& copiedLookaheads)
 #endif
@@ -9252,6 +9385,7 @@ class YarrGenerator final : public YarrJITInfo {
 
         appendOp(YarrOpCode::SimpleNestedAlternativeBegin);
         m_ops.last().m_previousOp = notFound;
+        m_ops.last().m_beginOp = m_ops.size() - 1;
         m_ops.last().m_term = term;
         auto& alternatives = disjunction->m_alternatives;
         for (unsigned i = 0; i < alternatives.size(); ++i) {
@@ -9277,6 +9411,7 @@ class YarrGenerator final : public YarrJITInfo {
             lastOp.m_alternative = nestedAlternative;
             lastOp.m_nextOp = thisOpIndex;
             thisOp.m_previousOp = lastOpIndex;
+            thisOp.m_beginOp = lastOp.m_beginOp;
             thisOp.m_term = term;
         }
         YarrOp& lastOp = m_ops.last();
@@ -9285,6 +9420,7 @@ class YarrGenerator final : public YarrJITInfo {
         lastOp.m_alternative = nullptr;
         lastOp.m_nextOp = notFound;
         lastOp.m_checkedOffset = checkedOffset;
+        recordAlternativeEndOp(m_ops.size() - 1);
 
         // The End op is back in the enclosing direction.
         m_direction = enclosingDirection;
@@ -9406,6 +9542,7 @@ class YarrGenerator final : public YarrJITInfo {
         if (alternatives.size() && alternatives[0]->onceThrough()) {
             appendOp(YarrOp(YarrOpCode::BodyAlternativeBegin));
             m_ops.last().m_previousOp = notFound;
+            m_ops.last().m_beginOp = m_ops.size() - 1;
 
             do {
                 size_t lastOpIndex = m_ops.size() - 1;
@@ -9423,7 +9560,8 @@ class YarrGenerator final : public YarrJITInfo {
                 lastOp.m_alternative = alternative;
                 lastOp.m_nextOp = thisOpIndex;
                 thisOp.m_previousOp = lastOpIndex;
-                
+                thisOp.m_beginOp = lastOp.m_beginOp;
+
                 ++currentAlternativeIndex;
             } while (currentAlternativeIndex < alternatives.size() && alternatives[currentAlternativeIndex]->onceThrough());
 
@@ -9434,6 +9572,7 @@ class YarrGenerator final : public YarrJITInfo {
             lastOp.m_alternative = nullptr;
             lastOp.m_nextOp = notFound;
             lastOp.m_checkedOffset = 0;
+            recordAlternativeEndOp(m_ops.size() - 1);
         }
 
         if (currentAlternativeIndex == alternatives.size()) {
@@ -9455,6 +9594,7 @@ class YarrGenerator final : public YarrJITInfo {
         size_t repeatLoop = m_ops.size();
         appendOp(YarrOp(YarrOpCode::BodyAlternativeBegin));
         m_ops.last().m_previousOp = notFound;
+        m_ops.last().m_beginOp = m_ops.size() - 1;
         m_ops.last().m_bodyDispatch = bodyDispatch;
         m_ops.last().m_bodyDispatchAlternativeIndex = 0;
 
@@ -9518,8 +9658,11 @@ class YarrGenerator final : public YarrJITInfo {
             }
         }
 
+        size_t firstRepeatedAlternativeIndex = currentAlternativeIndex;
+        Vector<size_t, 16> alternativeOpIndices;
         do {
             size_t lastOpIndex = m_ops.size() - 1;
+            alternativeOpIndices.append(lastOpIndex);
 
             PatternAlternative* alternative = alternatives[currentAlternativeIndex].get();
             ASSERT(!alternative->onceThrough());
@@ -9535,6 +9678,7 @@ class YarrGenerator final : public YarrJITInfo {
             lastOp.m_alternative = alternative;
             lastOp.m_nextOp = thisOpIndex;
             thisOp.m_previousOp = lastOpIndex;
+            thisOp.m_beginOp = lastOp.m_beginOp;
             // The Next op belongs to the alternative that follows the one just
             // compiled; its dispatch entry binds after that op's claim delta. The
             // End op keeps the pointer (with an index past the last alternative)
@@ -9551,11 +9695,175 @@ class YarrGenerator final : public YarrJITInfo {
         lastOp.m_alternative = nullptr;
         lastOp.m_nextOp = repeatLoop;
         lastOp.m_checkedOffset = 0;
+        recordAlternativeEndOp(m_ops.size() - 1);
 #if defined(YARR_FOR_IMAGE)
 #if CPU(X86_64) || CPU(ARM64)
         m_ops[repeatLoop].m_startPositionSearch = planStartPositionSearch(*disjunction, firstRepeatedAlternative, repeatLoop);
 #endif
 #endif
+
+        // A body that BodyDispatchInfo dispatches keeps that dispatch. Both route the Begin op and the
+        // failure of an alternative, so a body has at most one of the two.
+        if (!bodyDispatch)
+            setUpBodyAlternativeDispatch(disjunction, firstRepeatedAlternativeIndex, alternativeOpIndices);
+    }
+
+    void setUpBodyAlternativeDispatch(PatternDisjunction* disjunction, size_t firstAlternativeIndex, const Vector<size_t, 16>& alternativeOpIndices)
+    {
+        auto& alternatives = disjunction->m_alternatives;
+        constexpr size_t minimumAlternativeCountForDispatch = 3;
+        if (alternativeOpIndices.size() < minimumAlternativeCountForDispatch)
+            return;
+        if (m_pattern.sticky() || m_pattern.ignoreCase() || !disjunction->m_minimumSize)
+            return;
+
+        // Returns the PatternCharacter or CharacterClass term that the character at |position| of any
+        // match of the alternative must satisfy. optimizeAlternative may have moved fixed-count pattern
+        // characters from later positions ahead of that term.
+        auto findFirstTerm = recursableLambda([](auto self, PatternAlternative* alt, unsigned position) -> const PatternTerm* {
+            bool skippedReorderedCharacters = false;
+            for (auto& term : alt->m_terms) {
+                if (term.type == PatternTerm::Type::PatternCharacter && term.quantityType == QuantifierType::FixedCount && term.inputPosition > position) {
+                    skippedReorderedCharacters = true;
+                    continue;
+                }
+
+                if (!term.quantityMinCount || term.m_matchDirection != MatchDirection::Forward)
+                    return nullptr;
+
+                switch (term.type) {
+                case PatternTerm::Type::PatternCharacter:
+                    // Unlike a character class, a pattern character is not case-folded at parse time.
+                    if (term.inputPosition != position || term.ignoreCase())
+                        return nullptr;
+                    return &term;
+
+                case PatternTerm::Type::CharacterClass: {
+                    if (term.inputPosition != position || term.invert())
+                        return nullptr;
+                    const CharacterClass* characterClass = term.characterClass;
+                    if (characterClass->m_anyCharacter || characterClass->hasStrings())
+                        return nullptr;
+                    return &term;
+                }
+
+                case PatternTerm::Type::ParenthesesSubpattern: {
+                    // The inputPosition of parentheses is where their content ends, not where it starts.
+                    if (skippedReorderedCharacters || term.m_invert)
+                        return nullptr;
+                    PatternDisjunction* sub = term.parentheses.disjunction;
+                    if (sub->m_alternatives.size() != 1)
+                        return nullptr;
+                    return self(sub->m_alternatives[0].get(), position);
+                }
+
+                default:
+                    return nullptr;
+                }
+            }
+            return nullptr;
+        });
+
+        auto rangesEqual = [](const Vector<CharacterRange>& a, const Vector<CharacterRange>& b) {
+            return std::ranges::equal(a, b, [](auto& x, auto& y) { return x.begin == y.begin && x.end == y.end; });
+        };
+
+        auto rangesIntersect = [](const Vector<CharacterRange>& a, const Vector<CharacterRange>& b) {
+            size_t i = 0;
+            size_t j = 0;
+            while (i < a.size() && j < b.size()) {
+                if (a[i].end < b[j].begin)
+                    ++i;
+                else if (b[j].end < a[i].begin)
+                    ++j;
+                else
+                    return true;
+            }
+            return false;
+        };
+
+        unsigned minimumSize = alternatives[firstAlternativeIndex]->m_minimumSize;
+        Vector<const PatternTerm*, 16> firstTerms;
+        Vector<Vector<CharacterRange>, 16> classRanges;
+        for (size_t i = firstAlternativeIndex; i < alternatives.size(); ++i) {
+            PatternAlternative* alternative = alternatives[i].get();
+            if (alternative->m_minimumSize != minimumSize)
+                return;
+            const PatternTerm* firstTerm = findFirstTerm(alternative, 0);
+            if (!firstTerm)
+                return;
+            Vector<CharacterRange> ranges;
+            if (firstTerm->type == PatternTerm::Type::PatternCharacter)
+                ranges.append(CharacterRange(firstTerm->patternCharacter, firstTerm->patternCharacter));
+            else
+                ranges = normalizedRanges(*firstTerm->characterClass);
+            if (ranges.isEmpty())
+                return;
+            firstTerms.append(firstTerm);
+            classRanges.append(WTF::move(ranges));
+        }
+
+        // Check that all ranges are (1) equal or (2) mutually exclusive. Then we can optimize dispatching alternative and backtracking alternative.
+        for (size_t i = 0; i < classRanges.size(); ++i) {
+            for (size_t j = i + 1; j < classRanges.size(); ++j) {
+                if (!rangesEqual(classRanges[i], classRanges[j]) && rangesIntersect(classRanges[i], classRanges[j]))
+                    return;
+            }
+        }
+
+        dataLogLnIf(Options::verboseRegExpCompilation(), "Using body alternative dispatch on the first character");
+        for (size_t i = 0; i < alternativeOpIndices.size(); ++i) {
+            BodyAlternativeDispatchInfo& info = m_bodyAltDispatchInfos.alloc();
+            m_ops[alternativeOpIndices[i]].m_bodyAltDispatchInfo = &info;
+            info.firstCharacterClass = characterClassForFirstTerm(*firstTerms[i]);
+            for (size_t j = i + 1; j < alternativeOpIndices.size(); ++j) {
+                // Fallback should be the next alternative which has the exact same class range.
+                if (rangesEqual(classRanges[i], classRanges[j])) {
+                    info.retryOp = alternativeOpIndices[j];
+                    break;
+                }
+            }
+        }
+    }
+
+    const CharacterClass* characterClassForFirstTerm(const PatternTerm& term)
+    {
+        if (term.type == PatternTerm::Type::CharacterClass)
+            return term.characterClass;
+
+        ASSERT(term.type == PatternTerm::Type::PatternCharacter);
+        char32_t character = term.patternCharacter;
+        CharacterClass& characterClass = m_bodyAltDispatchCharacterClasses.alloc();
+        if (isLatin1(character))
+            characterClass.m_matches8.append(character);
+        else
+            characterClass.m_matches32.append(character);
+        characterClass.m_characterWidths = U_IS_BMP(character) ? CharacterClassWidths::HasBMPChars : CharacterClassWidths::HasNonBMPChars;
+        return &characterClass;
+    }
+
+    static Vector<CharacterRange> normalizedRanges(const CharacterClass& characterClass)
+    {
+        Vector<CharacterRange> ranges;
+        for (char32_t character : characterClass.m_matches8)
+            ranges.append(CharacterRange(character, character));
+        for (auto& range : characterClass.m_ranges8)
+            ranges.append(range);
+        for (char32_t character : characterClass.m_matches32)
+            ranges.append(CharacterRange(character, character));
+        for (auto& range : characterClass.m_ranges32)
+            ranges.append(range);
+        std::ranges::sort(ranges, [](auto& a, auto& b) { return a.begin < b.begin; });
+
+        Vector<CharacterRange> merged;
+        for (auto& range : ranges) {
+            if (!merged.isEmpty() && range.begin <= merged.last().end + 1) {
+                merged.last().end = std::max(merged.last().end, range.end);
+                continue;
+            }
+            merged.append(range);
+        }
+        return merged;
     }
 
 #if !defined(YARR_FOR_IMAGE)
@@ -10324,7 +10632,7 @@ class YarrGenerator final : public YarrJITInfo {
         // Identical chains are shared (keyed by their member list), and the attempt is abandoned as
         // soon as the chain or stub bound is passed rather than after routing every character (a
         // pattern built to defeat dispatch could otherwise spend seconds here).
-        UncheckedKeyHashMap<Vector<unsigned, 4>, unsigned> chainIndexByMembers;
+        HashMap<Vector<unsigned, 4>, unsigned> chainIndexByMembers;
         unsigned stubCount = 0;
         bool overBudget = false;
         auto chainIdFor = [&](Vector<unsigned, 4>&& members) -> unsigned {
@@ -10572,7 +10880,8 @@ class YarrGenerator final : public YarrJITInfo {
     // candidate fails no other alternative can match at this position and the
     // right action is to advance the search -- a static decision, needing no
     // per-match state and hence no Yarr frame. (Overlapping sets are left to
-    // the plain alternative chain, whose per-alternative first-character
+    // setUpBodyAlternativeDispatch(), which takes sets that are identical, or
+    // to the plain alternative chain, whose per-alternative first-character
     // rejection is already as cheap as a decision-tree node.)
     BodyDispatchInfo* tryPrepareBodyDispatch(PatternDisjunction* disjunction, size_t firstRepeated)
     {
@@ -13467,7 +13776,7 @@ private:
     MacroAssembler::Label m_hasTurnsOfSubject;
     Vector<std::unique_ptr<CachedClassTable>> m_classTables;
     unsigned m_classTableLimitHits { 0 };
-    UncheckedKeyHashMap<const PatternTerm*, size_t> m_lookaheadEndOps;
+    HashMap<const PatternTerm*, size_t> m_lookaheadEndOps;
     ptrdiff_t m_codeSize { 0 };
 #endif
     YarrCodeBlock* const m_codeBlock;
@@ -13539,6 +13848,8 @@ private:
     Vector<UniqueRef<BoyerMooreInfo>, 4> m_bmInfos;
     Vector<UniqueRef<BoyerMooreBitmap::Map>> m_bmMaps;
     Vector<UniqueRef<MaskedAlternativeInfo>, 2> m_maskedAltInfos; // For multi-pattern SIMD search
+    SegmentedVector<BodyAlternativeDispatchInfo, 16> m_bodyAltDispatchInfos;
+    SegmentedVector<CharacterClass, 16> m_bodyAltDispatchCharacterClasses;
 
     // This class records state whilst generating the backtracking path of code.
     BacktrackingState m_backtrackingState;

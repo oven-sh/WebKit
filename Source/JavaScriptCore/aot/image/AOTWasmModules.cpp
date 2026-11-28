@@ -237,8 +237,18 @@ private:
             return Wasm::ImagePointerTable::slotOfOperation(std::bit_cast<void*>(tagCFunction<OperationPtrTag>(B3::operationMemoryMove)));
         case B3::RuntimeFunction::GCSafeMemoryMove:
             return Wasm::ImagePointerTable::slotOfOperation(std::bit_cast<void*>(tagCFunction<OperationPtrTag>(B3::operationGCSafeMemoryMove)));
-        case B3::RuntimeFunction::MemoryFill:
-            return Wasm::ImagePointerTable::slotOfOperation(std::bit_cast<void*>(tagCFunction<OperationPtrTag>(B3::operationMemoryFill)));
+        case B3::RuntimeFunction::MemoryFill8:
+            return Wasm::ImagePointerTable::slotOfOperation(std::bit_cast<void*>(tagCFunction<OperationPtrTag>(B3::operationMemoryFill8)));
+        case B3::RuntimeFunction::MemoryFill16:
+            return Wasm::ImagePointerTable::slotOfOperation(std::bit_cast<void*>(tagCFunction<OperationPtrTag>(B3::operationMemoryFill16)));
+        case B3::RuntimeFunction::MemoryFill32:
+            return Wasm::ImagePointerTable::slotOfOperation(std::bit_cast<void*>(tagCFunction<OperationPtrTag>(B3::operationMemoryFill32)));
+        case B3::RuntimeFunction::MemoryFill64:
+            return Wasm::ImagePointerTable::slotOfOperation(std::bit_cast<void*>(tagCFunction<OperationPtrTag>(B3::operationMemoryFill64)));
+        case B3::RuntimeFunction::GCSafeMemoryFill64:
+            return Wasm::ImagePointerTable::slotOfOperation(std::bit_cast<void*>(tagCFunction<OperationPtrTag>(B3::operationGCSafeMemoryFill64)));
+        case B3::RuntimeFunction::MemoryFill128:
+            return Wasm::ImagePointerTable::slotOfOperation(std::bit_cast<void*>(tagCFunction<OperationPtrTag>(B3::operationMemoryFill128)));
         default:
             return std::nullopt;
         }
@@ -346,13 +356,13 @@ struct WasmModuleCompiler {
     std::optional<uint32_t> passedGlobal { findGlobalToPass(info) };
     Vector<uint32_t> jsEntrypointTypes { };
     Wasm::ImagePointerTable pointers { };
-    UncheckedKeyHashMap<const Wasm::RTT*, uint32_t> typeIndices { };
+    HashMap<const Wasm::RTT*, uint32_t> typeIndices { };
     Vector<Wasm::StructLayoutInImage> structLayouts { };
     bool usesGCTypes { false };
 
     void numberTypes()
     {
-        UncheckedKeyHashSet<const Wasm::RTT*> typesWithJSEntrypoint;
+        HashSet<const Wasm::RTT*> typesWithJSEntrypoint;
         for (auto& exported : info.exports) {
             if (exported.kind != Wasm::ExternalKind::Function || exported.kindIndex < info.importFunctionCount())
                 continue;

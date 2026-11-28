@@ -187,7 +187,7 @@ public:
     // back to naming their records in that payload, as before the first call; the next unlinkedCodeBlockFor() decodes
     // them again. Only with no collection and no compiler thread running (Heap::deleteAllUnlinkedCodeBlocks).
     // (Not if one of them is in `linkedAgainst`.)
-    bool returnCodeToCache(VM&, const UncheckedKeyHashSet<UnlinkedCodeBlock*>& linkedAgainst);
+    bool returnCodeToCache(VM&, const HashSet<UnlinkedCodeBlock*>& linkedAgainst);
 
     void recordParse(CodeFeatures features, LexicallyScopedFeatures lexicallyScopedFeatures, bool hasCapturedVariables)
     {

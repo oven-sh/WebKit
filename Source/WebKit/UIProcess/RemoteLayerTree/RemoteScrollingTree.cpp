@@ -57,7 +57,7 @@ RemoteScrollingTree::~RemoteScrollingTree() = default;
 
 void RemoteScrollingTree::invalidate()
 {
-    ASSERT(isMainRunLoop());
+    RELEASE_ASSERT(isMainRunLoop());
     Locker locker { m_treeLock };
     m_scrollingCoordinatorProxy = nullptr;
     removeAllNodes();
@@ -65,13 +65,13 @@ void RemoteScrollingTree::invalidate()
 
 RemoteScrollingCoordinatorProxy* RemoteScrollingTree::scrollingCoordinatorProxy() const
 {
-    ASSERT(isMainRunLoop());
+    RELEASE_ASSERT(isMainRunLoop());
     return m_scrollingCoordinatorProxy.get();
 }
 
 void RemoteScrollingTree::scrollingTreeNodeDidScroll(ScrollingTreeScrollingNode& node, ScrollingLayerPositionAction scrollingLayerPositionAction)
 {
-    ASSERT(isMainRunLoop());
+    RELEASE_ASSERT(isMainRunLoop());
 
     ScrollingTree::scrollingTreeNodeDidScroll(node, scrollingLayerPositionAction);
 
@@ -86,6 +86,7 @@ void RemoteScrollingTree::scrollingTreeNodeDidScroll(ScrollingTreeScrollingNode&
             .updateType = ScrollUpdateType::PositionUpdate,
             .updateLayerPositionAction = scrollingLayerPositionAction,
             .layoutViewportOriginOrOverrideRect = layoutViewportOrigin,
+            .scrollRelativity = relativityForScrollUpdate(),
         }
     };
     addPendingScrollUpdate(WTF::move(scrollUpdate));
@@ -93,7 +94,7 @@ void RemoteScrollingTree::scrollingTreeNodeDidScroll(ScrollingTreeScrollingNode&
 
 void RemoteScrollingTree::scrollingTreeNodeDidStopAnimatedScroll(ScrollingTreeScrollingNode& node)
 {
-    ASSERT(isMainRunLoop());
+    RELEASE_ASSERT(isMainRunLoop());
 
     auto scrollUpdate = ScrollUpdate {
         .nodeID = node.scrollingNodeID(),
@@ -107,7 +108,7 @@ void RemoteScrollingTree::scrollingTreeNodeDidStopAnimatedScroll(ScrollingTreeSc
 
 void RemoteScrollingTree::scrollingTreeNodeDidStopWheelEventScroll(WebCore::ScrollingTreeScrollingNode& node)
 {
-    ASSERT(isMainRunLoop());
+    RELEASE_ASSERT(isMainRunLoop());
 
     auto scrollUpdate = ScrollUpdate {
         .nodeID = node.scrollingNodeID(),
@@ -121,7 +122,7 @@ void RemoteScrollingTree::scrollingTreeNodeDidStopWheelEventScroll(WebCore::Scro
 
 RequestsScrollHandling RemoteScrollingTree::scrollingTreeNodeRequestsScroll(ScrollingNodeID nodeID, const RequestedScrollData& request)
 {
-    ASSERT(isMainRunLoop());
+    RELEASE_ASSERT(isMainRunLoop());
 
     RefPtr scrollingCoordinatorProxy = m_scrollingCoordinatorProxy;
     if (!scrollingCoordinatorProxy)
@@ -132,7 +133,7 @@ RequestsScrollHandling RemoteScrollingTree::scrollingTreeNodeRequestsScroll(Scro
 
 bool RemoteScrollingTree::scrollingTreeNodeRequestsKeyboardScroll(ScrollingNodeID nodeID, const RequestedKeyboardScrollData& request)
 {
-    ASSERT(isMainRunLoop());
+    RELEASE_ASSERT(isMainRunLoop());
 
     RefPtr scrollingCoordinatorProxy = m_scrollingCoordinatorProxy;
     if (!scrollingCoordinatorProxy)
@@ -249,7 +250,7 @@ Ref<ScrollingTreeNode> RemoteScrollingTree::createScrollingTreeNode(ScrollingNod
 
 void RemoteScrollingTree::currentSnapPointIndicesDidChange(ScrollingNodeID nodeID, std::optional<unsigned> horizontal, std::optional<unsigned> vertical)
 {
-    ASSERT(isMainRunLoop());
+    RELEASE_ASSERT(isMainRunLoop());
 
     RefPtr scrollingCoordinatorProxy = m_scrollingCoordinatorProxy;
     if (!scrollingCoordinatorProxy)
@@ -260,7 +261,7 @@ void RemoteScrollingTree::currentSnapPointIndicesDidChange(ScrollingNodeID nodeI
 
 void RemoteScrollingTree::reportExposedUnfilledArea(MonotonicTime time, unsigned unfilledArea)
 {
-    ASSERT(isMainRunLoop());
+    RELEASE_ASSERT(isMainRunLoop());
 
     auto* scrollingCoordinatorProxy = m_scrollingCoordinatorProxy.get();
     if (!scrollingCoordinatorProxy)
@@ -271,7 +272,7 @@ void RemoteScrollingTree::reportExposedUnfilledArea(MonotonicTime time, unsigned
 
 void RemoteScrollingTree::reportSynchronousScrollingReasonsChanged(MonotonicTime timestamp, OptionSet<SynchronousScrollingReason> reasons)
 {
-    ASSERT(isMainRunLoop());
+    RELEASE_ASSERT(isMainRunLoop());
 
     RefPtr scrollingCoordinatorProxy = m_scrollingCoordinatorProxy;
     if (!scrollingCoordinatorProxy)
@@ -282,7 +283,7 @@ void RemoteScrollingTree::reportSynchronousScrollingReasonsChanged(MonotonicTime
 
 void RemoteScrollingTree::receivedWheelEventWithPhases(PlatformWheelEventPhase phase, PlatformWheelEventPhase momentumPhase)
 {
-    ASSERT(isMainRunLoop());
+    RELEASE_ASSERT(isMainRunLoop());
 
     RefPtr scrollingCoordinatorProxy = m_scrollingCoordinatorProxy;
     if (!scrollingCoordinatorProxy)
@@ -293,7 +294,7 @@ void RemoteScrollingTree::receivedWheelEventWithPhases(PlatformWheelEventPhase p
 
 void RemoteScrollingTree::deferWheelEventTestCompletionForReason(ScrollingNodeID nodeID, WheelEventTestMonitor::DeferReason reason)
 {
-    ASSERT(isMainRunLoop());
+    RELEASE_ASSERT(isMainRunLoop());
 
     RefPtr scrollingCoordinatorProxy = m_scrollingCoordinatorProxy;
     if (!scrollingCoordinatorProxy || !isMonitoringWheelEvents())
@@ -304,7 +305,7 @@ void RemoteScrollingTree::deferWheelEventTestCompletionForReason(ScrollingNodeID
 
 void RemoteScrollingTree::removeWheelEventTestCompletionDeferralForReason(ScrollingNodeID nodeID, WheelEventTestMonitor::DeferReason reason)
 {
-    ASSERT(isMainRunLoop());
+    RELEASE_ASSERT(isMainRunLoop());
 
     RefPtr scrollingCoordinatorProxy = m_scrollingCoordinatorProxy;
     if (!scrollingCoordinatorProxy || !isMonitoringWheelEvents())

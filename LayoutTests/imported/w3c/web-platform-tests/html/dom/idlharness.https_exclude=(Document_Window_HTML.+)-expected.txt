@@ -694,7 +694,7 @@ PASS OffscreenCanvasRenderingContext2D interface: existence and properties of in
 PASS OffscreenCanvasRenderingContext2D interface: existence and properties of interface prototype object's "constructor" property
 PASS OffscreenCanvasRenderingContext2D interface: existence and properties of interface prototype object's @@unscopables property
 PASS OffscreenCanvasRenderingContext2D interface: attribute canvas
-FAIL OffscreenCanvasRenderingContext2D interface: operation getContextAttributes() assert_own_property: interface prototype object missing non-static operation expected property "getContextAttributes" missing
+PASS OffscreenCanvasRenderingContext2D interface: operation getContextAttributes()
 PASS OffscreenCanvasRenderingContext2D interface: operation save()
 PASS OffscreenCanvasRenderingContext2D interface: operation restore()
 PASS OffscreenCanvasRenderingContext2D interface: operation reset()
@@ -1352,7 +1352,7 @@ PASS ImageData must be primary interface of new ImageData(10, 10)
 PASS Stringification of new ImageData(10, 10)
 PASS ImageData interface: new ImageData(10, 10) must inherit property "width" with the proper type
 PASS ImageData interface: new ImageData(10, 10) must inherit property "height" with the proper type
-FAIL ImageData interface: new ImageData(10, 10) must inherit property "data" with the proper type assert_inherits: property "data" found on object expected in prototype chain
+PASS ImageData interface: new ImageData(10, 10) must inherit property "data" with the proper type
 PASS ImageData interface: new ImageData(10, 10) must inherit property "pixelFormat" with the proper type
 PASS ImageData interface: new ImageData(10, 10) must inherit property "colorSpace" with the proper type
 PASS ImageBitmap interface: existence and properties of interface object

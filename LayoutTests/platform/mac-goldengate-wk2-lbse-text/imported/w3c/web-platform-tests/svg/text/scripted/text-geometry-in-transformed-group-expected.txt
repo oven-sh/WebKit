@@ -1,0 +1,16 @@
+Hello World
+abcd
+Hello World
+
+PASS <text> bounding client rect
+PASS <tspan> client rects
+PASS Range around text node
+PASS Range around single character
+PASS Range around <tspan> text node
+PASS caretPositionFromPoint() in <text>
+PASS caretPositionFromPoint() in <tspan>
+PASS <tspan> and its text node agree at a fractional position
+PASS scrollIntoView() of <rect>
+PASS scrollIntoView() of <text>
+FAIL scrollIntoView() of <tspan> assert_equals: expected 654 but got 634
+

@@ -303,8 +303,6 @@ void Frame::disownOpener(NotifyUIProcess notifyUIProcess)
     }
 
     m_opener = nullptr;
-
-    reinitializeDocumentSecurityContext();
 }
 
 void Frame::setOpenerForWebKitLegacy(Frame* frame)
@@ -324,7 +322,7 @@ void Frame::detachFromAllOpenedFrames()
 
 bool Frame::hasOpenedFrames() const
 {
-    return !m_openedFrames.isEmptyIgnoringNullReferences();
+    return !m_openedFrames.computeIsEmpty();
 }
 
 void Frame::setOwnerElement(HTMLFrameOwnerElement* element)
@@ -376,15 +374,29 @@ void Frame::stopForBackForwardCache()
     }
 }
 
+static void updateLocalChildrenFrameOwnerZoom(Frame& frame)
+{
+    for (RefPtr child = frame.tree().firstChild(); child; child = child->tree().nextSibling()) {
+        if (RefPtr localChild = dynamicDowncast<LocalFrame>(child))
+            localChild->frameOwnerZoomDidChange();
+    }
+}
+
 void Frame::updateFrameTreeSyncData(Ref<FrameTreeSyncData>&& data)
 {
     m_frameTreeSyncData = WTF::move(data);
+    updateLocalChildrenFrameOwnerZoom(*this);
+    if (RefPtr remoteFrame = dynamicDowncast<RemoteFrame>(*this))
+        remoteFrame->updateViewScrollPositionFromFrameTreeSyncData();
 }
 
 void Frame::updateFrameTreeSyncData(const FrameTreeSyncSerializationData& data)
 {
-    if (static_cast<FrameTreeSyncDataType>(data.value.index()) != FrameTreeSyncDataType::FrameGeometry) {
+    auto dataType = static_cast<FrameTreeSyncDataType>(data.value.index());
+    if (dataType != FrameTreeSyncDataType::FrameGeometry) {
         protect(frameTreeSyncData())->update(data);
+        if (RefPtr remoteFrame = dynamicDowncast<RemoteFrame>(*this); remoteFrame && dataType == FrameTreeSyncDataType::FrameViewportInfo)
+            remoteFrame->updateViewScrollPositionFromFrameTreeSyncData();
         return;
     }
 
@@ -413,6 +425,7 @@ void Frame::updateFrameTreeSyncData(const FrameTreeSyncSerializationData& data)
     protect(frameTreeSyncData())->update(data);
 
     invalidateChildFrameForDarkAppearanceChange(oldChildrenFrameLayoutMap, m_frameTreeSyncData->frameGeometry.childrenFrameLayoutInfo);
+    updateLocalChildrenFrameOwnerZoom(*this);
 }
 
 bool Frame::frameCanCreatePaymentSession() const
@@ -446,17 +459,8 @@ float Frame::frameScaleFactor() const
 {
     RefPtr page = this->page();
 
-    if (!page)
+    if (!page || !isMainFrame())
         return 1.0;
-
-    // https://github.com/w3c/csswg-drafts/issues/9644
-    // Check if this frame's owner element (iframe) has CSS zoom applied.
-    if (!isMainFrame()) {
-        if (RefPtr parentFrame = tree().parent())
-            return parentFrame->frameScaleFactorForChild(*this);
-
-        return 1.0;
-    }
 
     if (page->delegatesScaling())
         return 1;

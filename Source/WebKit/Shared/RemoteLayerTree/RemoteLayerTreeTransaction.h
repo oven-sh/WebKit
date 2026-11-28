@@ -39,6 +39,7 @@
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/UniqueRef.h>
 #include <wtf/text/StringHash.h>
 #include <wtf/text/WTFString.h>
 
@@ -74,7 +75,7 @@ struct ChangedLayers {
     ~ChangedLayers();
 };
 
-class RemoteLayerTreeTransaction final : public CanMakeCheckedPtr<RemoteLayerTreeTransaction, WTF::DefaultedOperatorEqual::No, WTF::CheckedPtrDeleteCheckException::Yes> {
+class RemoteLayerTreeTransaction final : public CanMakeCheckedPtr<RemoteLayerTreeTransaction> {
     WTF_MAKE_TZONE_ALLOCATED(RemoteLayerTreeTransaction);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RemoteLayerTreeTransaction);
 public:
@@ -130,11 +131,10 @@ public:
 
     RemoteLayerTreeTransaction();
     ~RemoteLayerTreeTransaction();
-    RemoteLayerTreeTransaction(RemoteLayerTreeTransaction&&);
-    RemoteLayerTreeTransaction& operator=(RemoteLayerTreeTransaction&&);
 
     std::optional<WebCore::PlatformLayerIdentifier> rootLayerID() const { return m_rootLayerID.asOptional(); }
     NODELETE void setRootLayerID(WebCore::PlatformLayerIdentifier);
+    void copyRootStateFrom(const RemoteLayerTreeTransaction&);
     void layerPropertiesChanged(PlatformCALayerRemote&);
     void setCreatedLayers(Vector<LayerCreationProperties>);
     void setDestroyedLayerIDs(Vector<WebCore::PlatformLayerIdentifier>);
@@ -197,5 +197,7 @@ private:
     WebCore::AcceleratedTimelinesUpdate m_timelinesUpdate;
 #endif
 };
+
+using RemoteLayerTreeFullState = Vector<UniqueRef<RemoteLayerTreeTransaction>>;
 
 } // namespace WebKit

@@ -100,8 +100,8 @@ public:
 
     // Sends single-line strokes that have been buffered on the proxy's graphics
     // context into the IPC stream. Call before any cross-buffer read of this
-    // image buffer (drawImageBuffer source, clipToImageBuffer source, etc.) so
-    // the GPU process sees the up-to-date contents.
+    // image buffer (drawImageBuffer source, etc.) so the GPU process sees the
+    // up-to-date contents.
     void sendPendingDrawsIfNecessary() const { m_context.sendPendingDrawsIfNecessary(); }
 private:
     RemoteImageBufferProxy(Parameters, std::unique_ptr<WebCore::ImageBufferBackend>&&, RemoteRenderingBackendProxy&);
@@ -143,7 +143,7 @@ private:
 
     // Fetches the backing store handle from the GPU process, for a backend that
     // stands in for a backing store this process cannot map.
-    void ensureBackendHandle() const;
+    void ensureBackendHandle();
 
     mutable RefPtr<RemoteImageBufferProxyFlushFence> m_pendingFlush;
 #if PLATFORM(COCOA)

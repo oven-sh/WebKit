@@ -3772,7 +3772,7 @@ macro enumeratorNext(size, get, dispatch, slowPath)
     loadConstantOrVariableCell(size, t1, t0, .nextSlowPath)
 
     loadVariable(get, m_enumerator, t1)
-    loadi JSPropertyNameEnumerator::m_cachedStructureID[t1], t2
+    loadi JSPropertyNameEnumerator::m_cachedStructureIDForNames[t1], t2
     bineq t2, JSCell::m_structureID[t0], .nextSlowPath
 
     loadVariable(get, m_index, t2)
@@ -3815,7 +3815,7 @@ macro enumeratorGetByVal(size, get, dispatch, metadata, return, slowPath)
     loadConstantOrVariableCell(size, t1, t0, .getSlowPath)
 
     loadVariable(get, m_enumerator, t1)
-    loadi JSPropertyNameEnumerator::m_cachedStructureID[t1], t2
+    loadi JSPropertyNameEnumerator::m_cachedStructureIDForNamesAndOffsets[t1], t2
     bineq t2, JSCell::m_structureID[t0], .getSlowPath
 
     loadVariable(get, m_index, t2)
@@ -3869,7 +3869,7 @@ llintOpWithMetadata(op_enumerator_put_by_val, OpEnumeratorPutByVal, macro (size,
     loadConstantOrVariableCell(size, t1, t0, .putSlowPath)
 
     loadVariable(get, m_enumerator, t1)
-    loadi JSPropertyNameEnumerator::m_cachedStructureID[t1], t2
+    loadi JSPropertyNameEnumerator::m_cachedStructureIDForNamesAndOffsets[t1], t2
     bineq t2, JSCell::m_structureID[t0], .putSlowPath
 
     structureIDToStructureWithScratch(t2, t3)
@@ -3920,7 +3920,7 @@ macro hasPropertyImpl(opcodeStruct, size, get, dispatch, metadata, return, slowP
     loadConstantOrVariableCell(size, t1, t0, .callSlowPath)
 
     loadVariable(get, m_enumerator, t1)
-    loadi JSPropertyNameEnumerator::m_cachedStructureID[t1], t2
+    loadi JSPropertyNameEnumerator::m_cachedStructureIDForNames[t1], t2
     bineq t2, JSCell::m_structureID[t0], .callSlowPath
 
     move ValueTrue, t2

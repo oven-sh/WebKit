@@ -969,6 +969,7 @@ class BufferHelper : public ReadWriteResource
                            VkAccessFlags readAccessType,
                            VkPipelineStageFlags readPipelineStageFlags,
                            PipelineStage stageIndex,
+                           const GLbitfield memoryBarrierBits,
                            PipelineBarrierArray *pipelineBarriers,
                            EventBarrierArray *eventBarriers,
                            RefCountedEventCollector *eventCollector);
@@ -978,6 +979,7 @@ class BufferHelper : public ReadWriteResource
                             VkPipelineStageFlags writeStage,
                             PipelineStage stageIndex,
                             const QueueSerial &queueSerial,
+                            const GLbitfield memoryBarrierBits,
                             PipelineBarrierArray *pipelineBarriers,
                             EventBarrierArray *eventBarriers,
                             RefCountedEventCollector *eventCollector);
@@ -1073,7 +1075,7 @@ class BufferHelper : public ReadWriteResource
         {
             mXFBOrComputeWriteHeuristicBits |= 1;
         }
-        else if ((writeStage == PipelineStage::ComputeShader) && hasVertexInputRead &&
+        else if (writeStage == PipelineStage::ComputeShader && hasVertexInputRead &&
                  context->getFeatures().isVertexSyncDeferred.enabled)
         {
             // When a buffer is written in compute after read in vertex stage, using vkEvent
@@ -1181,9 +1183,6 @@ class BufferPool : angle::NonCopyable
     // Tracks the number of new buffers needed for suballocation since last pruneEmptyBuffers call.
     // We will use this heuristic information to decide how many empty buffers to keep around.
     size_t mNumberOfNewBuffersNeededSinceLastPrune;
-    // max size to go down the suballocation code path. Any allocation greater or equal this size
-    // will call into vulkan directly to allocate a dedicated VkDeviceMemory.
-    static constexpr size_t kMaxBufferSizeForSuballocation = 8 * 1024 * 1024;
 };
 using BufferPoolPointerArray = std::array<std::unique_ptr<BufferPool>, VK_MAX_MEMORY_TYPES>;
 
@@ -1446,7 +1445,8 @@ class CommandBufferHelperCommon : angle::NonCopyable
     void bufferWrite(Context *context,
                      VkAccessFlags writeAccessType,
                      const gl::ShaderBitSet &writeShaderStages,
-                     BufferHelper *buffer);
+                     BufferHelper *buffer,
+                     const GLbitfield memoryBarrierBits);
 
     void bufferRead(Context *context,
                     VkAccessFlags readAccessType,
@@ -1456,7 +1456,8 @@ class CommandBufferHelperCommon : angle::NonCopyable
     void bufferRead(Context *context,
                     VkAccessFlags readAccessType,
                     const gl::ShaderBitSet &readShaderStages,
-                    BufferHelper *buffer);
+                    BufferHelper *buffer,
+                    const GLbitfield memoryBarrierBits);
 
     bool usesBuffer(const BufferHelper &buffer) const
     {
@@ -1546,13 +1547,15 @@ class CommandBufferHelperCommon : angle::NonCopyable
                          VkAccessFlags writeAccessType,
                          VkPipelineStageFlags writePipelineStageFlags,
                          PipelineStage writeStage,
-                         BufferHelper *buffer);
+                         BufferHelper *buffer,
+                         const GLbitfield memoryBarrierBits);
 
     void bufferReadImpl(Context *context,
                         VkAccessFlags readAccessType,
                         VkPipelineStageFlags readPipelineStageFlags,
                         PipelineStage readStage,
-                        BufferHelper *buffer);
+                        BufferHelper *buffer,
+                        const GLbitfield memoryBarrierBits);
 
     void imageReadImpl(Context *context,
                        VkImageAspectFlags aspectFlags,
@@ -1658,7 +1661,8 @@ class OutsideRenderPassCommandBufferHelper final : public CommandBufferHelperCom
                     uint32_t layerCount,
                     VkImageAspectFlags aspectFlags,
                     ImageAccess imageAccess,
-                    ImageHelper *image);
+                    ImageHelper *image,
+                    const GLbitfield memoryBarrierBits);
 
     // Update image with this command buffer's queueSerial.
     void retainImage(Renderer *renderer, ImageHelper *image);
@@ -1912,7 +1916,8 @@ class RenderPassCommandBufferHelper final : public CommandBufferHelperCommon
                     uint32_t layerCount,
                     VkImageAspectFlags aspectFlags,
                     ImageAccess imageAccess,
-                    ImageHelper *image);
+                    ImageHelper *image,
+                    const GLbitfield memoryBarrierBits);
 
     void colorImagesDraw(gl::OwnerLevel level,
                          gl::OwnerLayer layerStart,
@@ -2287,7 +2292,11 @@ class ImageViewHelper;
 class ImageHelper final : public Resource, public angle::Subject
 {
   public:
-    ImageHelper();
+    ImageHelper(VkImageType imageType);
+    // In some cases, a deeply embedded ImageHelper cannot be given the image type.  In all such
+    // cases in the codebase, the image type is 2D.  When initializing the image, the correctness of
+    // mImageType is asserted.
+    ImageHelper() : ImageHelper(VK_IMAGE_TYPE_2D) {}
     ~ImageHelper() override;
 
     angle::Result init(ErrorContext *context,
@@ -2420,7 +2429,6 @@ class ImageHelper final : public Resource, public angle::Subject
     //
     angle::Result initStaging(ErrorContext *context,
                               bool hasProtectedContent,
-                              VkImageType imageType,
                               const VkExtent3D &extents,
                               angle::FormatID intendedFormatID,
                               angle::FormatID actualFormatID,
@@ -3793,14 +3801,15 @@ class ImageViewHelper final : angle::NonCopyable
     // Creates a fragment shading rate view.
     angle::Result initFragmentShadingRateView(ContextVk *contextVk, ImageHelper *image);
 
-    // Return unique Serial for an imageView.
-    ImageOrBufferViewSubresourceSerial getSubresourceSerial(gl::OwnerLevel levelGL,
-                                                            uint32_t levelCount,
-                                                            gl::OwnerLayer layer,
-                                                            LayerMode layerMode) const;
+    // Return unique Serial for a write imageView. Used for framebuffer draw attachments,
+    // storage image views, and fragment shading rate attachments.
+    ImageOrBufferViewSubresourceSerial getSubresourceWriteSerial(gl::OwnerLevel levelGL,
+                                                                 uint32_t levelCount,
+                                                                 gl::OwnerLayer layer,
+                                                                 LayerMode layerMode) const;
 
-    // Return unique Serial for an imageView for a specific colorspace.
-    ImageOrBufferViewSubresourceSerial getSubresourceSerialForColorspace(
+    // Return unique Serial for a read imageView for a specific colorspace.
+    ImageOrBufferViewSubresourceSerial getSubresourceReadSerialForColorspace(
         gl::OwnerLevel levelGL,
         uint32_t levelCount,
         gl::OwnerLayer layer,
@@ -3814,6 +3823,7 @@ class ImageViewHelper final : angle::NonCopyable
     bool isImageViewGarbageEmpty() const;
 
     void release(Renderer *renderer, const ResourceUse &use);
+    void releaseReadImageViews(Renderer *renderer, const ResourceUse &use);
 
     // Helpers for colorspace state
     ImageViewColorspace getColorspaceForRead() const { return mReadColorspace; }
@@ -4011,8 +4021,13 @@ class ImageViewHelper final : angle::NonCopyable
     // Fragment shading rate view
     ImageView mFragmentShadingRateImageView;
 
-    // Serial for the image view set. getSubresourceSerial combines it with subresource info.
-    ImageOrBufferViewSerial mImageViewSerial;
+    // Serial for write image views (used for framebuffer attachments, storage images, and FSR).
+    // It remains stable as long as the underlying VkImage does not change.
+    ImageOrBufferViewSerial mWriteImageViewSerial;
+
+    // Serial for the read (sampled) image views (used by TextureVk for descriptor set caching).
+    // It is updated whenever read image views are released/recreated (e.g., on swizzle changes).
+    ImageOrBufferViewSerial mReadImageViewSerial;
 };
 
 class BufferViewHelper final : public Resource
@@ -4275,6 +4290,7 @@ class CommandResources : angle::NonCopyable
     }
     void onExternalAcquireRelease(ImageHelper *image) { onResourceAccess(image); }
     void onQueryAccess(QueryHelper *query) { onResourceAccess(query); }
+    void onResourceManualBarrier(Resource *resource) { onResourceAccess(resource); }
     void onBufferExternalAcquireRelease(BufferHelper *buffer);
 
     // The limits reflect the current maximum concurrent usage of each resource type.  ASSERTs will

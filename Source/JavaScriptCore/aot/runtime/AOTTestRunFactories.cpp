@@ -198,7 +198,7 @@ bool Modules::wasLinkedAheadOfFailure(ModuleID root, ModuleID module) const
         uint32_t place;
         uint32_t earliestPlaceReached;
     };
-    UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> places;
+    HashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> places;
     BitVector waitsForHeadOfRing(m_table.size());
     Vector<ModuleID, 16> filesThatWait { root };
     Vector<Step, 16> way { { root, 0, 0, 0 } };
@@ -427,7 +427,7 @@ void Modules::forgetFailuresOfExportsThatBuildFoundAbsent()
     JSObject* kept = std::exchange(m_errorsOfExportsThatBuildFoundAbsent, nullptr);
     if (!kept)
         return;
-    UncheckedKeyHashSet<JSCell*> errorsOfAbsentExports;
+    HashSet<JSCell*> errorsOfAbsentExports;
     for (unsigned index = std::exchange(m_failuresByExportsThatBuildFoundAbsent, { }).size(); index--;)
         errorsOfAbsentExports.add(kept->getDirectIndex(m_instance.globalObject, index).asCell());
     startLoadingModulesIndividually();
@@ -1036,7 +1036,7 @@ bool Modules::runPendingMockSlow(ModuleID module)
 
 void Modules::keepErrorOfLoad(ModuleID root, JSValue error, const ScopedLambda<bool(ModuleID)>& endedLoad)
 {
-    UncheckedKeyHashMap<ModuleID, Vector<ModuleID, 2>> importers;
+    HashMap<ModuleID, Vector<ModuleID, 2>> importers;
     BitVector seen(m_table.size());
     BitVector ended(m_table.size());
     seen.quickSet(root.index());

@@ -30,6 +30,10 @@
 
 namespace WebCore {
 
+namespace Layout {
+class PlacedFloats;
+}
+
 class RenderBlockFlow;
 class RenderBox;
 class FloatingObjects;
@@ -50,11 +54,11 @@ public:
     static constexpr FloatingObjectType FloatLeftRight = WebCore::FloatLeftRight;
 
     static std::unique_ptr<FloatingObject> create(RenderBox&);
-    std::unique_ptr<FloatingObject> copyToNewContainer(LayoutSize, bool shouldPaint = false, bool isDescendant = false, bool overflowClipped = false) const;
+    std::unique_ptr<FloatingObject> copyToNewContainer(LayoutSize, bool isDescendant = false) const;
     std::unique_ptr<FloatingObject> cloneForNewParent() const;
 
     explicit FloatingObject(RenderBox&);
-    FloatingObject(RenderBox&, Type, const LayoutRect&, const LayoutSize&, bool shouldPaint, bool isDescendant, bool overflowClipped);
+    FloatingObject(RenderBox&, Type, const LayoutRect&, const LayoutSize&, bool isDescendant);
 
     Type type() const { return static_cast<Type>(m_type); }
     RenderBox* renderer() const { ASSERT(m_renderer); return m_renderer.get(); }
@@ -82,20 +86,10 @@ public:
     const LayoutRect& frameRect() const LIFETIME_BOUND { ASSERT(isPlaced()); return m_frameRect; }
     void setFrameRect(const LayoutRect& frameRect) { ASSERT(!isInPlacedTree()); m_frameRect = frameRect; }
 
-    LayoutUnit paginationStrut() const { return m_paginationStrut; }
-    void setPaginationStrut(LayoutUnit strut) { m_paginationStrut = strut; }
-
 #if ASSERT_ENABLED
     bool isInPlacedTree() const { return m_isInPlacedTree; }
     void setIsInPlacedTree(bool value) { m_isInPlacedTree = value; }
 #endif
-
-    NODELETE bool shouldPaint() const;
-
-    bool paintsFloat() const { return m_paintsFloat; }
-    void setPaintsFloat(bool paintsFloat) { m_paintsFloat = paintsFloat; }
-
-    bool hasAncestorWithOverflowClip() const { return m_hasAncestorWithOverflowClip; }
 
     bool isDescendant() const { return m_isDescendant; }
     void setIsDescendant(bool isDescendant) { m_isDescendant = isDescendant; }
@@ -106,20 +100,16 @@ public:
         return LayoutSize(m_frameRect.location().x() + m_marginOffset.width(), m_frameRect.location().y() + m_marginOffset.height());
     }
     LayoutSize marginOffset() const { ASSERT(isPlaced()); return m_marginOffset; }
-    NODELETE LayoutSize translationOffsetToAncestor() const;
 
 private:
     friend FloatingObjects;
 
     SingleThreadWeakPtr<RenderBox> m_renderer;
     LayoutRect m_frameRect;
-    LayoutUnit m_paginationStrut;
     LayoutSize m_marginOffset;
     unsigned m_type : 2; // Type (left or right aligned)
-    unsigned m_paintsFloat : 1 { true };
     unsigned m_isDescendant : 1 { false };
     unsigned m_isPlaced : 1 { false };
-    unsigned m_hasAncestorWithOverflowClip : 1 { false };
 #if ASSERT_ENABLED
     unsigned m_isInPlacedTree : 1 { false };
 #endif
@@ -163,7 +153,7 @@ public:
     void clear();
     FloatingObject* add(std::unique_ptr<FloatingObject>);
     void remove(FloatingObject*);
-    NODELETE void addPlacedObject(FloatingObject*);
+    void addPlacedObject(FloatingObject*);
     void removePlacedObject(FloatingObject*);
     void place(FloatingObject&, const LayoutRect& frameRect, LayoutSize marginOffset);
     void setHorizontalWritingMode(bool b = true) { m_horizontalWritingMode = b; }
@@ -171,6 +161,10 @@ public:
     bool hasLeftObjects() const { return m_leftObjectsCount > 0; }
     bool hasRightObjects() const { return m_rightObjectsCount > 0; }
     const FloatingObjectSet& set() const LIFETIME_BOUND { return m_set; }
+    const Layout::PlacedFloats& placedFloats() LIFETIME_BOUND;
+    // The list refers to the layout boxes of the floats, and a float's renderer can be destroyed without being removed from the set
+    // (when the whole render tree is), so the list is only kept while the block lays out its children.
+    void clearPlacedFloats();
 
     LayoutUnit logicalLeftOffset(LayoutUnit fixedOffset, LayoutUnit logicalTop, LayoutUnit logicalHeight);
     LayoutUnit logicalRightOffset(LayoutUnit fixedOffset, LayoutUnit logicalTop, LayoutUnit logicalHeight);
@@ -178,7 +172,6 @@ public:
     LayoutUnit logicalLeftOffsetForPositioningFloat(LayoutUnit fixedOffset, LayoutUnit logicalTop, LayoutUnit* heightRemaining);
     LayoutUnit logicalRightOffsetForPositioningFloat(LayoutUnit fixedOffset, LayoutUnit logicalTop, LayoutUnit* heightRemaining);
 
-    LayoutUnit findNextFloatLogicalBottomBelow(LayoutUnit logicalHeight);
     LayoutUnit findNextFloatLogicalBottomBelowForBlock(LayoutUnit logicalHeight);
 
     void shiftFloatsBy(LayoutUnit blockShift);
@@ -193,6 +186,7 @@ private:
 
     FloatingObjectSet m_set;
     std::unique_ptr<FloatingObjectTree> m_placedFloatsTree;
+    std::unique_ptr<Layout::PlacedFloats> m_placedFloats;
     unsigned m_leftObjectsCount { 0 };
     unsigned m_rightObjectsCount { 0 };
     bool m_horizontalWritingMode { false };

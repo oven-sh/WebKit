@@ -1019,6 +1019,7 @@ verso
 
 // CSS Shapes
 margin-box
+half-border-box
 
 // clip-path
 stroke-box
@@ -1386,6 +1387,7 @@ filter
 -webkit-filter
 paint
 mesh-gradient
+freeform-gradient
 
 // image-set's MIME type
 type
@@ -1768,6 +1770,7 @@ fullscreen enable-if=ENABLE_APPLICATION_MANIFEST
 standalone enable-if=ENABLE_APPLICATION_MANIFEST
 minimal-ui enable-if=ENABLE_APPLICATION_MANIFEST
 browser enable-if=ENABLE_APPLICATION_MANIFEST
+picture-in-picture enable-if=ENABLE_DOCUMENT_PIP
 
 // text-decoration-line
 grammar-error
@@ -1869,6 +1872,10 @@ layout
 // size
 inline-size
 scroll-state
+
+// -internal-border-radius-percentage-basis
+// normal
+block-size
 
 // offset-path
 // https://drafts.fxtf.org/motion-1/#offset-path-property

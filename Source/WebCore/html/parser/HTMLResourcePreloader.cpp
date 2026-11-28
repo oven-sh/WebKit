@@ -50,7 +50,7 @@ URL PreloadRequest::completeURL(Document& document)
 
 CachedResourceRequest PreloadRequest::resourceRequest(Document& document)
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
 
     bool skipContentSecurityPolicyCheck = false;
     if (!m_nonceAttribute.isEmpty()) {
@@ -69,8 +69,7 @@ CachedResourceRequest PreloadRequest::resourceRequest(Document& document)
         if (crossOriginMode.isNull())
             crossOriginMode = CachedScriptFetcher::defaultCrossOriginModeForModule;
     }
-    if (m_resourceType == CachedResource::Type::Script || m_resourceType == CachedResource::Type::JSON || m_resourceType == CachedResource::Type::Text || m_resourceType == CachedResource::Type::ImageResource)
-        options.referrerPolicy = m_referrerPolicy;
+    options.referrerPolicy = m_referrerPolicy;
     options.fetchPriority = m_fetchPriority;
     options.nonce = m_nonceAttribute;
     options.integrity = m_integrityAttribute;

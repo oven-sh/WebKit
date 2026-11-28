@@ -31,8 +31,7 @@
 #include "LineLayoutResult.h"
 #include <WebCore/InlineLineTypes.h>
 
-namespace WebCore {
-namespace Layout {
+namespace WebCore::Layout {
 
 class InlineFormattingContext;
 class InlineLevelBox;
@@ -75,7 +74,9 @@ public:
 
     NODELETE bool shouldDiscardRemainingContentInBlockDirection() const;
 
-    std::optional<BlockOverflowEllipsis> blockEllipsisForLine() const;
+    // numberOfPrecedingLines: the lines before this one in a layout that does not go through the layout state's line count
+    // (the content constrainer lays out the whole content on its own). By default the lines laid out so far are used.
+    std::optional<BlockOverflowEllipsis> blockEllipsisForLine(std::optional<size_t> numberOfPrecedingLines = { }) const;
 
 private:
     bool isAtSoftWrapOpportunity(const InlineItem& previous, const InlineItem& next, std::optional<IntrinsicWidthMode>) const;
@@ -87,5 +88,3 @@ private:
 };
 
 }
-}
-

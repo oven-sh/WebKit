@@ -56,10 +56,10 @@ inline SVGFilterElement::SVGFilterElement(const QualifiedName& tagName, Document
         didRegistration = true;
         PropertyRegistry::registerProperty<SVGNames::filterUnitsAttr, SVGUnitTypes::SVGUnitType, &SVGFilterElement::m_filterUnits>();
         PropertyRegistry::registerProperty<SVGNames::primitiveUnitsAttr, SVGUnitTypes::SVGUnitType, &SVGFilterElement::m_primitiveUnits>();
-        PropertyRegistry::registerProperty<SVGNames::xAttr, &SVGFilterElement::m_x>();
-        PropertyRegistry::registerProperty<SVGNames::yAttr, &SVGFilterElement::m_y>();
-        PropertyRegistry::registerProperty<SVGNames::widthAttr, &SVGFilterElement::m_width>();
-        PropertyRegistry::registerProperty<SVGNames::heightAttr, &SVGFilterElement::m_height>();
+        PropertyRegistry::registerProperty<SVGNames::xAttr, &SVGFilterElement::m_x>(SVGLengthMode::Width);
+        PropertyRegistry::registerProperty<SVGNames::yAttr, &SVGFilterElement::m_y>(SVGLengthMode::Height);
+        PropertyRegistry::registerProperty<SVGNames::widthAttr, &SVGFilterElement::m_width>(SVGLengthMode::Width);
+        PropertyRegistry::registerProperty<SVGNames::heightAttr, &SVGFilterElement::m_height>(SVGLengthMode::Height);
     }
 }
 
@@ -132,7 +132,7 @@ void SVGFilterElement::childrenChanged(const ChildChange& change)
     updateSVGRendererForElementChange();
 }
 
-RenderPtr<RenderElement> SVGFilterElement::createElementRenderer(Style::ComputedStyle&& style, const RenderTreePosition&)
+RenderPtr<RenderElement> SVGFilterElement::createElementRenderer(UniqueRef<Style::ComputedStyle>&& style, const RenderTreePosition&)
 {
     if (document().settings().layerBasedSVGEngineEnabled())
         return createRenderer<RenderSVGResourceFilter>(*this, WTF::move(style));

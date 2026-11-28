@@ -620,8 +620,8 @@ private:
     FieldsOfNumbers m_fieldsStoredNullish;
     FieldsOfNumbers m_fieldsStoredBooleans;
     FieldsOfNumbers m_fieldsStoredNonBooleans;
-    UncheckedKeyHashMap<uint64_t, uint8_t> m_kindsOfStoresNoted;
-    UncheckedKeyHashMap<uint64_t, uint8_t> m_kindsOfStoresInFamilies;
+    HashMap<uint64_t, uint8_t> m_kindsOfStoresNoted;
+    HashMap<uint64_t, uint8_t> m_kindsOfStoresInFamilies;
     Vector<FieldCopiedInProgramFacts> m_fieldsCopied;
 };
 
@@ -2838,7 +2838,7 @@ BitVector functionsCalledInLoopsIn(const LooksAtBodies& looks, const Program& pr
         functions.quickSet(callback.index());
     const BitVector iterationCallbacks = functions;
     calledInLoopsOfOwnFile = functions;
-    UncheckedKeyHashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> methodsCalledInFiles;
+    HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> methodsCalledInFiles;
     BitVector keysCalledInFiles;
     auto methodOfFile = [](ModuleID file, PropertyKeyID key) {
         return static_cast<uint64_t>(file.index()) << 32 | key.bits();
@@ -2946,7 +2946,7 @@ BitVector constructorsCalledInNestedIterationsIn(const Program& program, const T
 
 BitVector mixedClassesConstructedIn(const Program& program, const ThinSummaries& summaries, const LinkTables& linked, const LinkTables& held)
 {
-    UncheckedKeyHashMap<uint32_t, Vector<FunctionID, 2>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> methodsByKey;
+    HashMap<uint32_t, Vector<FunctionID, 2>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> methodsByKey;
     BitVector isReached(program.functions.size());
     for (uint32_t index = 0; index < program.functions.size(); ++index)
         isReached.quickSet(index, linked.function(FunctionID(index)).isReached);
@@ -3236,7 +3236,7 @@ FieldsOfNumbers fieldsUsedInProductsIn(const LooksAtBodies& looks, const BitVect
     }
     std::ranges::sort(uses);
     uses.shrink(std::ranges::unique(uses).begin() - uses.begin());
-    UncheckedKeyHashMap<uint32_t, unsigned, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> fieldsOfDeclarers;
+    HashMap<uint32_t, unsigned, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> fieldsOfDeclarers;
     all.forEachDeclarer([&](LayoutID declarer) {
         ++fieldsOfDeclarers.add(declarer.index(), 0).iterator->value;
     });
@@ -3288,7 +3288,7 @@ const FieldsOfNumbers& fieldsStoredNullishIn(const LooksAtBodies& looks)
 FieldsOfNumbers fieldsOfPositionsIn(const LooksAtBodies& looks)
 {
     RELEASE_ASSERT(looks.isFilled);
-    UncheckedKeyHashSet<uint64_t> others;
+    HashSet<uint64_t> others;
     auto isOther = [&](uint64_t field) {
         return others.contains(field) || looks.fieldsStoredOtherValues.containsWord(field) || looks.fieldsStoredWhatIsNoInt32.containsWord(field) || looks.fieldsUsedInProducts.containsWord(field);
     };
@@ -3297,8 +3297,8 @@ FieldsOfNumbers fieldsOfPositionsIn(const LooksAtBodies& looks)
         for (auto [from, to] : looks.fieldsCopied)
             isChanged |= isOther(from) && !isOther(to) && others.add(to).isNewEntry;
     }
-    UncheckedKeyHashSet<uint64_t> positions;
-    UncheckedKeyHashSet<uint64_t> readAsIntegers;
+    HashSet<uint64_t> positions;
+    HashSet<uint64_t> readAsIntegers;
     auto add = [&](uint64_t field) {
         return !isOther(field) && positions.add(field).isNewEntry;
     };

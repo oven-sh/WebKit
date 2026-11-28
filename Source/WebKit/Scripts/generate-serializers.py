@@ -124,6 +124,8 @@ def matches_bundle(item, bundle_filter):
 # Alias - this type is not a struct or class, but a typedef.
 # Nested - this type is only serialized as a member of its parent, so work around the need for http://wg21.link/P0289 and don't forward declare it in the header.
 # RefCounted - deserializer returns a std::optional<Ref<T>> instead of a std::optional<T>.
+# RefCounted=Const - like RefCounted, but the deserializer returns a std::optional<Ref<const T>>, for types whose create() returns a Ref<const T>.
+# UniqueRef - deserializer returns a std::optional<UniqueRef<T>> instead of a std::optional<T>, for types that must be heap allocated.
 # LegacyPopulateFromEmptyConstructor - instead of calling a constructor with the members, call the empty constructor then insert the members one at a time.
 # OptionSet - for enum classes, instead of only allowing deserialization of the exact values, allow deserialization of any bit combination of the values.
 # RValue - serializer takes an rvalue reference, instead of an lvalue.
@@ -136,6 +138,7 @@ def matches_bundle(item, bundle_filter):
 # Supported member attributes:
 #
 # BitField - work around the need for http://wg21.link/P0572 and don't check that the serialization order matches the memory layout.
+# Const - decode into a const local and pass it to the constructor or create function as a const lvalue instead of moving it. Use this when the decoded value is only read during construction (e.g. a Vector passed to a std::span parameter), so that the borrow checker can see that the loan on it is guarded by const.
 # EncodeRequestBody - Include the body of the WebCore::ResourceRequest when encoding (by default, it is omitted).
 # Validator - additional C++ to validate the value when decoding
 # NotSerialized - member is present in structure but intentionally not serialized.
@@ -178,6 +181,8 @@ class SerializedType(object):
         self.condition = condition
         self.encoders = ['Encoder']
         self.return_ref = False
+        self.return_const_ref = False
+        self.return_unique_ref = False
         self.construct_subclass = None
         self.create_using = False
         self.populate_from_empty_constructor = False
@@ -217,6 +222,9 @@ class SerializedType(object):
                         self.custom_secure_coding_class = value
                     elif key == 'Wrapper':
                         self.generic_wrapper = value
+                    elif key == 'RefCounted' and value == 'Const':
+                        self.return_ref = True
+                        self.return_const_ref = True
                     elif key == 'GRefPtrWrapped':
                         self.gref_type = value
                         self.generic_wrapper = f'{self.namespace}::{self.name}'
@@ -228,6 +236,8 @@ class SerializedType(object):
                         self.nested = True
                     elif attribute == 'RefCounted':
                         self.return_ref = True
+                    elif attribute == 'UniqueRef':
+                        self.return_unique_ref = True
                     elif attribute == 'DisableMissingMemberCheck':
                         self.disableMissingMemberCheck = True
                     elif attribute == 'RValue':
@@ -436,6 +446,9 @@ class MemberVariable(object):
             if attribute == 'OptionalTupleBits':
                 return True
         return False
+
+    def is_const(self):
+        return 'Const' in self.attributes
 
     def value_without_question_mark(self):
         value = self.name
@@ -685,7 +698,9 @@ def one_argument_coder_declaration(type, template_argument):
         else:
             result.append(f'    static void encode({encoder}&, const {name_with_template}&);')
     if type.return_ref:
-        result.append(f'    static std::optional<Ref<{name_with_template}>> decode(Decoder&);')
+        result.append(f'    static std::optional<Ref<{"const " if type.return_const_ref else ""}{name_with_template}>> decode(Decoder&);')
+    elif type.return_unique_ref:
+        result.append(f'    static std::optional<UniqueRef<{name_with_template}>> decode(Decoder&);')
     else:
         result.append(f'    static std::optional<{name_with_template}> decode(Decoder&);')
     result.append('};')
@@ -1051,6 +1066,8 @@ def decode_type(type, serialized_types):
         result.append('')
 
     if type.has_optional_tuple_bits() and type.populate_from_empty_constructor:
+        if type.return_unique_ref:
+            raise Exception(f'UniqueRef is not supported together with OptionalTupleBits and LegacyPopulateFromEmptyConstructor: {type.namespace_and_name()}')
         result.append(f'    {type.namespace_and_name()} result;')
 
     if type.debug_decoding_failure:
@@ -1061,6 +1078,11 @@ def decode_type(type, serialized_types):
         if member.condition is not None:
             result.append(f'#if {member.condition}')
         sanitized_variable_name = sanitize_string_for_variable_name(member.name)
+        if member.is_const():
+            if member.is_subclass or member.optional_tuple_bits() or member.optional_tuple_bit() is not None or 'EncodeRequestBody' in member.attributes:
+                raise Exception(f'{type.namespace_and_name()}: member {member.name}: Const is not supported together with OptionalTupleBits, OptionalTupleBit, or EncodeRequestBody')
+            if type.populate_from_empty_constructor:
+                raise Exception(f'{type.namespace_and_name()}: member {member.name}: Const is not supported on types with LegacyPopulateFromEmptyConstructor')
         for attribute in member.attributes:
             precondition = re.search(r'Precondition=\'(.*)\'', attribute)
             if precondition:
@@ -1104,10 +1126,11 @@ def decode_type(type, serialized_types):
                 result.append('            return std::nullopt;')
                 result.append('    }')
         else:
+            const_qualifier = 'const ' if member.is_const() else ''
             if should_decode_ref(member, serialized_types):
-                result.append(f'    auto {sanitized_variable_name} = decoder.decode<Ref<{member.type}>>();')
+                result.append(f'    {const_qualifier}auto {sanitized_variable_name} = decoder.decode<Ref<{member.type}>>();')
             else:
-                result.append(f'    auto {sanitized_variable_name} = decoder.decode<{member.type}>();')
+                result.append(f'    {const_qualifier}auto {sanitized_variable_name} = decoder.decode<{member.type}>();')
             if 'EncodeRequestBody' in member.attributes:
                 result.append(f'    if ({sanitized_variable_name}) {{')
                 result.append(f'        if (auto {sanitized_variable_name}Body = decoder.decode<IPC::FormDataReference>())')
@@ -1162,6 +1185,8 @@ def construct_type(type, specialization, indentation):
         result.append(f'{indent(indentation)}{fulltype}::{type.create_using}(')
     elif type.return_ref:
         result.append(f'{indent(indentation)}{fulltype}::create(')
+    elif type.return_unique_ref:
+        result.append(f'{indent(indentation)}makeUniqueRef<{fulltype}>(')
     else:
         result.append(f'{indent(indentation)}{fulltype} {{')
     if type.parent_class is not None:
@@ -1173,13 +1198,18 @@ def construct_type(type, specialization, indentation):
         member = serialized_members[i]
         if member.condition is not None:
             result.append(f'#if {member.condition}')
-        result.append(f'{indent(indentation + 1)}WTF::move({"" if member.optional_tuple_bit() else "*"}{sanitize_string_for_variable_name(member.name)}){"" if i == len(serialized_members) - 1 else ","}')
+        separator = '' if i == len(serialized_members) - 1 else ','
+        variable_name = sanitize_string_for_variable_name(member.name)
+        if member.is_const():
+            result.append(f'{indent(indentation + 1)}*{variable_name}{separator}')
+        else:
+            result.append(f'{indent(indentation + 1)}WTF::move({"" if member.optional_tuple_bit() else "*"}{variable_name}){separator}')
         if member.condition is not None:
             result.append('#endif')
     for i in range(len(type.dictionary_members)):
         member = type.dictionary_members[i]
         result.append(f'{indent(indentation + 1)}WTF::move(*{member.type}){"," if i < len(type.dictionary_members) - 1 else ""}')
-    if type.create_using or type.return_ref:
+    if type.create_using or type.return_ref or type.return_unique_ref:
         result.append(indent(indentation) + ')')
     else:
         result.append(indent(indentation) + '}')
@@ -1256,7 +1286,9 @@ def generate_one_impl(type, template_argument, serialized_types):
     if type.cf_type is not None:
         result.append(f'std::optional<RetainPtr<{name_with_template}>> ArgumentCoder<RetainPtr<{name_with_template}>>::decode(Decoder& decoder)')
     elif type.return_ref:
-        result.append(f'std::optional<Ref<{name_with_template}>> ArgumentCoder<{name_with_template}>::decode(Decoder& decoder)')
+        result.append(f'std::optional<Ref<{"const " if type.return_const_ref else ""}{name_with_template}>> ArgumentCoder<{name_with_template}>::decode(Decoder& decoder)')
+    elif type.return_unique_ref:
+        result.append(f'std::optional<UniqueRef<{name_with_template}>> ArgumentCoder<{name_with_template}>::decode(Decoder& decoder)')
     else:
         result.append(f'std::optional<{name_with_template}> ArgumentCoder<{name_with_template}>::decode(Decoder& decoder)')
     result.append('{')
@@ -1272,11 +1304,14 @@ def generate_one_impl(type, template_argument, serialized_types):
             result.append('    if (!decoder.isValid()) [[unlikely]]')
             result.append('        return std::nullopt;')
             if type.populate_from_empty_constructor and not type.has_optional_tuple_bits():
-                result.append(f'    {name_with_template} result;')
+                if type.return_unique_ref:
+                    result.append(f'    auto result = makeUniqueRef<{name_with_template}>();')
+                else:
+                    result.append(f'    {name_with_template} result;')
                 for member in type.serialized_members():
                     if member.condition is not None:
                         result.append(f'#if {member.condition}')
-                    result.append(f'    result.{member.name} = WTF::move(*{member.name});')
+                    result.append(f'    result{"->" if type.return_unique_ref else "."}{member.name} = WTF::move(*{member.name});')
                     if member.condition is not None:
                         result.append('#endif')
                 result.append('    return { WTF::move(result) };')
@@ -1304,6 +1339,14 @@ def generate_impl(serialized_types, serialized_enums, headers, generating_webkit
     result = []
     result.append(_license_header)
     result.append('#include "config.h"')
+    if bundle_filter is not None:
+        # Bundles only get their own inputs' headers, so include what the generated code uses directly.
+        result.append('#include "ArgumentCoders.h"')
+        if any('StreamConnectionEncoder' in type.encoders for type in serialized_types if matches_bundle(type, bundle_filter)):
+            result.append('#include "StreamConnectionEncoder.h"')
+        if any('EncodeRequestBody' in member.attributes for type in serialized_types if matches_bundle(type, bundle_filter) for member in type.members):
+            result.append('#include "FormDataReference.h"')
+        result.append('#include <wtf/RuntimeApplicationChecks.h>')
     result.append('#include "GeneratedSerializers.h"')
     result.append('#include "GeneratedWebKitSecureCoding.h"')
     result.append('#include <wtf/IsIncreasing.h>')
@@ -2033,8 +2076,7 @@ def generate_webkit_secure_coding_impl(serialized_types, headers):
             '    if (![array isKindOfClass:NSArray.class])',
             '        return { };',
             '    Vector<RetainPtr<T>> result;',
-            # FIXME: Remove SUPPRESS_UNRETAINED_LOCAL once the static analyzer false positive is fixed (rdar://189710680).
-            '    for (SUPPRESS_UNRETAINED_LOCAL id element in array) {',
+            '    for (id element in array) {',
             # FIXME: isKindOfClass call can cause a static analysis false positive (https://github.com/llvm/llvm-project/issues/162979).
             '        SUPPRESS_UNRETAINED_ARG if ([element isKindOfClass:retainPtr(IPC::getClass<T>()).get()])',
             '            result.append((T *)element);',
@@ -2252,7 +2294,7 @@ _SWIFT_COMPATIBLE_TYPE_ATTRIBUTES = frozenset([
     'LegacyPopulateFromEmptyConstructor', 'Nested', 'RValue', 'RefCounted', 'Swift', 'WebKitPlatform', 'Wrapper',
 ])
 _SWIFT_COMPATIBLE_ENUM_ATTRIBUTES = frozenset(['AdditionalEncoder', 'CustomHeader', 'Nested', 'OptionSet', 'Swift', 'WebKitPlatform'])
-_SWIFT_COMPATIBLE_MEMBER_ATTRIBUTES = frozenset(['BitField', 'NotSerialized'])
+_SWIFT_COMPATIBLE_MEMBER_ATTRIBUTES = frozenset(['BitField', 'Const', 'NotSerialized'])
 
 # Types that generated Swift names without qualification, so must not be shadowed by a type in IPCTypes.
 _SWIFT_RESERVED_TYPE_NAMES = frozenset([
@@ -2794,6 +2836,7 @@ def main(argv):
     headers = []
     header_set = set()
     header_set.add(ConditionalHeader('"FormDataReference.h"', None))
+    bundle_header_sets = {}
     additional_forward_declarations_list = []
     file_extension = args.file_extension
     output_dir = args.output_dir
@@ -2817,6 +2860,7 @@ def main(argv):
                 using_statements.append(using_statement)
             for header in new_headers:
                 header_set.add(header)
+                bundle_header_sets.setdefault(bundle, set()).add(header)
             for declaration in new_additional_forward_declarations:
                 additional_forward_declarations_list.append(declaration)
             for objc_wrapped_type in new_objc_wrapped_types:
@@ -2842,8 +2886,10 @@ def main(argv):
         # Common bundle catches inputs that don't match any prefix
         # (e.g. WebCore-generated inputs that aren't under Source/WebKit/).
         for bundle in ALL_BUNDLES:
+            # Only include this bundle's own headers, so other bundles' headers don't slow it down or rebuild it.
+            bundle_headers = sorted(bundle_header_sets.get(bundle, set()))
             with open(output_path(f'GeneratedSerializers{bundle}.{file_extension}'), "w+") as output:
-                output.write(generate_impl(serialized_types, serialized_enums, headers, False, [], bundle_filter=bundle))
+                output.write(generate_impl(serialized_types, serialized_enums, bundle_headers, False, [], bundle_filter=bundle))
     else:
         with open(output_path('GeneratedSerializers.%s' % file_extension), "w+") as output:
             output.write(generate_impl(serialized_types, serialized_enums, headers, False, []))

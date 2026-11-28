@@ -36,7 +36,7 @@ struct ShapeTestsKeptAcrossUnits {
 
     const ShapeTable* table { nullptr };
     std::array<Entry, 1 << numberOfBits> entries;
-    UncheckedKeyHashMap<LayoutSetID, bool> setsThatMayBearMark;
+    HashMap<LayoutSetID, bool> setsThatMayBearMark;
     LayoutSetID setListedLast;
     ShapeTable::ShapeList shapesOfSetListedLast;
 };
@@ -104,10 +104,10 @@ private:
     bool m_lastTestRejectsMarks { false };
     bool m_lastTestIsHeldAgainstEveryShape { false };
     bool m_wordIsAskedForMark { true };
-    UncheckedKeyHashMap<LayoutSetID, bool> m_setsThatMayBearMark;
-    UncheckedKeyHashMap<LayoutSetID, BitSetConstant> m_bitSetConstants;
-    UncheckedKeyHashMap<uint64_t, uint32_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_bitSetsThatHoldEveryKnownShape;
-    UncheckedKeyHashMap<uint64_t, ShapeTest, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_testsAmongKnownShapes;
+    HashMap<LayoutSetID, bool> m_setsThatMayBearMark;
+    HashMap<LayoutSetID, BitSetConstant> m_bitSetConstants;
+    HashMap<uint64_t, uint32_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_bitSetsThatHoldEveryKnownShape;
+    HashMap<uint64_t, ShapeTest, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_testsAmongKnownShapes;
     ShapeTestsKeptAcrossUnits* m_testsKeptAcrossUnits { nullptr };
     mutable LayoutSetID m_setTestedLast;
     mutable ShapeTest m_testOfSetTestedLast;

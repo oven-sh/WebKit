@@ -110,7 +110,7 @@ public:
         }
     }
 
-    using ObjectsByBuiltin = UncheckedKeyHashMap<uint32_t, JSObject*, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+    using ObjectsByBuiltin = HashMap<uint32_t, JSObject*, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
     const ObjectsByBuiltin& lockedObjects() const { return m_lockedObjects; }
 
 private:
@@ -163,7 +163,7 @@ private:
     Vector<CellAwaitingModule> m_cellsAwaitingModules;
     ObjectsByBuiltin m_lockedObjects;
     BitVector m_lockedBuiltins;
-    UncheckedKeyHashMap<JSObject*, uint32_t> m_builtinsOfLockedObjects;
+    HashMap<JSObject*, uint32_t> m_builtinsOfLockedObjects;
     BitVector m_builtinsToLock;
     BitVector m_holdersThatTellOfWrites;
     BitVector m_writtenMembers;

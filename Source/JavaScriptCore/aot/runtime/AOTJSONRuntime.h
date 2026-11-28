@@ -99,7 +99,7 @@ private:
     static constexpr size_t recordPlanCacheSize = 128;
     static constexpr uint32_t fewestRecordPlansLookedThrough = 256;
     using RecordPlanCache = std::array<CachedRecordPlan, recordPlanCacheSize>;
-    static constexpr size_t recordPlanCacheIndex(uint32_t structureID) { return (structureID >> 4) % recordPlanCacheSize; }
+    static constexpr size_t recordPlanCacheIndex(uint32_t structureID) { return (structureID >> structureIDPlaceShift) % recordPlanCacheSize; }
 
     RecordPlan findRecordPlan(VM&, Structure*);
     struct RecordPlanFound {

@@ -29,6 +29,7 @@
 #if ENABLE(WEB_RTC) && USE(LIBWEBRTC)
 
 #include <LibWebRTCMacros.h>
+#include <wtf/Borrow.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/ParsingUtilities.h>
 
@@ -36,8 +37,7 @@ WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 #include <webrtc/rtc_base/byte_order.h>
 WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 
-namespace WebCore {
-namespace WebRTC {
+namespace WebCore::WebRTC {
 
 NODELETE static inline bool isStunMessage(uint16_t messageType)
 {
@@ -68,48 +68,62 @@ std::optional<STUNMessageLengths> getSTUNOrTURNMessageLengths(std::span<const ui
 
 static inline Vector<uint8_t> extractSTUNOrTURNMessages(Vector<uint8_t>&& buffered, NOESCAPE const Function<void(std::span<const uint8_t> data)>& processMessage)
 {
-    auto data = buffered.span();
+    size_t remainingSize = 0;
+    {
+        Borrow borrowedBuffered { buffered };
+        auto data = borrowedBuffered->span();
 
-    while (true) {
-        auto lengths = getSTUNOrTURNMessageLengths(data);
+        while (true) {
+            auto lengths = getSTUNOrTURNMessageLengths(data);
 
-        if (!lengths || lengths->messageLengthWithPadding > data.size()) {
-            if (!data.size())
-                return { };
+            if (!lengths || lengths->messageLengthWithPadding > data.size()) {
+                remainingSize = data.size();
+                break;
+            }
 
-            memcpySpan(buffered.mutableSpan(), data);
-            buffered.shrink(data.size());
-            return WTF::move(buffered);
+            processMessage(data.first(lengths->messageLength));
+
+            skip(data, lengths->messageLengthWithPadding);
         }
-
-        processMessage(data.first(lengths->messageLength));
-
-        skip(data, lengths->messageLengthWithPadding);
     }
+
+    if (!remainingSize)
+        return { };
+
+    memcpySpan(borrow(buffered)->mutableSpan(), borrow(buffered)->span().last(remainingSize));
+    buffered.shrink(remainingSize);
+    return WTF::move(buffered);
 }
 
 static inline Vector<uint8_t> extractDataMessages(Vector<uint8_t>&& buffered, NOESCAPE const Function<void(std::span<const uint8_t> data)>& processMessage)
 {
     constexpr size_t lengthFieldSize = sizeof(uint16_t); // number of bytes read by be16toh.
 
-    auto data = buffered.span();
+    size_t remainingSize = 0;
+    {
+        Borrow borrowedBuffered { buffered };
+        auto data = borrowedBuffered->span();
 
-    while (true) {
-        bool canReadLength = data.size() >= lengthFieldSize;
-        size_t length = canReadLength ? be16toh(reinterpretCastSpanStartTo<const uint16_t>(data)) : 0;
-        if (!canReadLength || length > data.size() - lengthFieldSize) {
-            if (data.empty())
-                return { };
+        while (true) {
+            bool canReadLength = data.size() >= lengthFieldSize;
+            size_t length = canReadLength ? be16toh(reinterpretCastSpanStartTo<const uint16_t>(data)) : 0;
+            if (!canReadLength || length > data.size() - lengthFieldSize) {
+                remainingSize = data.size();
+                break;
+            }
 
-            memcpySpan(buffered.mutableSpan(), data);
-            buffered.shrink(data.size());
-            return WTF::move(buffered);
+            skip(data, lengthFieldSize);
+
+            processMessage(consumeSpan(data, length));
         }
-
-        skip(data, lengthFieldSize);
-
-        processMessage(consumeSpan(data, length));
     }
+
+    if (!remainingSize)
+        return { };
+
+    memcpySpan(borrow(buffered)->mutableSpan(), borrow(buffered)->span().last(remainingSize));
+    buffered.shrink(remainingSize);
+    return WTF::move(buffered);
 }
 
 Vector<uint8_t> extractMessages(Vector<uint8_t>&& buffer, MessageType type, NOESCAPE const Function<void(std::span<const uint8_t> data)>& processMessage)
@@ -117,7 +131,6 @@ Vector<uint8_t> extractMessages(Vector<uint8_t>&& buffer, MessageType type, NOES
     return type == MessageType::STUN ? extractSTUNOrTURNMessages(WTF::move(buffer), processMessage) : extractDataMessages(WTF::move(buffer), processMessage);
 }
 
-} // namespace WebRTC
-} // namespace WebCore
+} // namespace WebCore::WebRTC
 
 #endif // ENABLE(WEB_RTC) && USE(LIBWEBRTC)

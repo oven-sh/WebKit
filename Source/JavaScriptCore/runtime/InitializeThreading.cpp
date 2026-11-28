@@ -33,6 +33,7 @@
 #include "AssemblyComments.h"
 #include "AssertInvariants.h"
 #include "ExecutableAllocator.h"
+#include "FastMallocAlignedMemoryAllocator.h"
 #include "IntlCache.h"
 #include "JITOperationList.h"
 #include "JSCConfig.h"
@@ -103,19 +104,22 @@ void initializeWithOptionsCustomization(NOESCAPE const ScopedLambda<void()>& opt
             JITOperationList::initialize();
             ExecutableAllocator::initialize();
             VM::computeCanUseJIT();
+#if CPU(ARM64E)
+            isARM64E_FPAC();
+#endif
             if (!g_jscConfig.vm.canUseJIT) {
                 Options::useJIT() = false;
                 Options::notifyOptionsChanged();
             } else {
 #if CPU(ARM64E) && ENABLE(JIT)
                 g_jscConfig.arm64eHashPins.initializeAtStartup();
-                isARM64E_FPAC(); // Call this to initialize g_jscConfig.canUseFPAC.
 #endif
             }
             StructureAlignedMemoryAllocator::initializeStructureAddressSpace();
             static_cast<void>(MarkedBlockCage::initialize());
         }
         Options::finalize();
+        configurePrefaultSupply();
 
 #if BUSE(LIBPAS)
         if (Options::libpasScavengeContinuously())

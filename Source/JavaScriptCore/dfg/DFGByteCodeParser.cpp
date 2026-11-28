@@ -537,7 +537,7 @@ private:
     DecimalWords decimalWordsOfTuple(Node*);
     DecimalWords checkDecimal(Node*);
     Node* addDecimalNode(NodeType, OpInfo, OpInfo, std::initializer_list<DecimalWords>);
-    // Of the realm of the code, which is that of the callee. Without useDecimal, where cached bytecode can have literals, null until one ran.
+    // Of the realm of the code, which is that of the callee. Without useDecimal, null until code that was compiled with it asks.
     Structure* decimalStructure() { return m_inlineStackTop->m_codeBlock->globalObject()->decimalStructureConcurrently(); }
     Node* newDecimal(DecimalWords);
     Node* emitDecimalOperation(DecimalOperation, DecimalWords, std::optional<DecimalWords>, SpeculatedType prediction);
@@ -1584,7 +1584,7 @@ private:
     FrozenValue* const m_constantOne;
     Vector<Node*, 16> m_constants;
 
-    UncheckedKeyHashMap<InlineCallFrame*, Vector<ArgumentPosition*>, WTF::DefaultHash<InlineCallFrame*>, WTF::NullableHashTraits<InlineCallFrame*>> m_inlineCallFrameToArgumentPositions;
+    HashMap<InlineCallFrame*, Vector<ArgumentPosition*>> m_inlineCallFrameToArgumentPositions;
 
     InliningPlan m_inliningPlan;
 
@@ -1643,7 +1643,7 @@ private:
         // code block had gathered.
         LazyOperandValueProfileParser m_lazyOperands;
 
-        UncheckedKeyHashMap<BytecodeIndex, JSValue*> m_specFailValueProfileBuckets;
+        HashMap<BytecodeIndex, JSValue*> m_specFailValueProfileBuckets;
         
         // The plan node this frame was inlined for, so that call sites inside it can be found
         // by descending the plan in step with the parse. Null when planning is off, or when the
@@ -2483,7 +2483,9 @@ ByteCodeParser::CallOptimizationResult ByteCodeParser::handleCallVariant(Node* c
     }
 
     Intrinsic intrinsic = callee.intrinsicFor(specializationKind);
-    if (intrinsic != NoIntrinsic) {
+    // Intrinsic has no value left for the functions of Decimal, which their address tells.
+    bool mayBeOfDecimal = decimalStructure() && specializationKind == CodeSpecializationKind::CodeForCall && callee.nativeExecutable();
+    if (intrinsic != NoIntrinsic || mayBeOfDecimal) {
         CallOptimizationResult optimizationResult = handleIntrinsicCall(callTargetNode, result, callee, intrinsic, registerOffset, argumentCountIncludingThis, osrExitIndex, callOp, kind, specializationKind, prediction, insertChecksWithAccounting);
         if (optimizationResult != CallOptimizationResult::DidNothing) {
             endSpecialCase();
@@ -3117,6 +3119,16 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, Overflow))
                 node->mergeFlags(NodeMayOverflowInt32InDFG);
             setResult(node);
+            return CallOptimizationResult::Inlined;
+        }
+
+        case SignIntrinsic: {
+            insertChecks();
+            if (argumentCountIncludingThis == 1) {
+                setResult(addToGraph(JSConstant, OpInfo(m_constantNaN)));
+                return CallOptimizationResult::Inlined;
+            }
+            setResult(addToGraph(ArithSign, get(virtualRegisterForArgumentIncludingThis(1, registerOffset))));
             return CallOptimizationResult::Inlined;
         }
 
@@ -4122,9 +4134,9 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             return CallOptimizationResult::Inlined;
         }
 
-        case DecimalIntrinsic: {
-            // Not where only the executable is known: code that sees Decimals of two realms would fail the check of the realm at one call after
-            // the other.
+        case NoIntrinsic: {
+            // The functions of Decimal. Not where only the executable is known: code that sees Decimals of two realms would fail the check of
+            // the realm at one call after the other.
             if (realmToCheck || m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType) || m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadDecimalArgument))
                 return CallOptimizationResult::DidNothing;
             auto function = variant.nativeExecutable()->function();
@@ -6396,6 +6408,13 @@ bool ByteCodeParser::handleIntrinsicGetter(Operand result, SpeculatedType predic
         return true;
     }
 
+    case TypedArrayBufferIntrinsic: {
+        insertChecks();
+        addToGraph(CheckStructure, OpInfo(m_graph.addStructureSet(variant.structureSet())), thisNode);
+        set(result, addToGraph(GetTypedArrayBuffer, Edge(thisNode, KnownCellUse)));
+        return true;
+    }
+
     case UnderscoreProtoIntrinsic: {
         insertChecks();
 
@@ -7049,7 +7068,7 @@ Node* ByteCodeParser::handleDecimalLiteral(int registerOffset, NOESCAPE const Ch
 {
     // Null if it is very long.
     String text = get(virtualRegisterForArgumentIncludingThis(1, registerOffset))->tryGetString(m_graph);
-    if (text.isNull() || !decimalStructure())
+    if (text.isNull())
         return nullptr;
 
     insertChecks();
@@ -10709,7 +10728,7 @@ void ByteCodeParser::parseBlock(unsigned limit)
 
             Vector<SpeculatedType> argumentPredictions(m_numArguments);
             Vector<SpeculatedType> localPredictions;
-            UncheckedKeyHashSet<unsigned, WTF::IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> seenArguments;
+            HashSet<unsigned> seenArguments;
             bool everyOperandIsSampled = true;
 
             {
@@ -11761,7 +11780,8 @@ void ByteCodeParser::parseBlock(unsigned limit)
             Node* property = get(bytecode.m_property);
             bool compiledAsMatchStructure = false;
 
-            if (!m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadIdent)
+            if (!m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadCache)
+                && !m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadIdent)
                 && !m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType)
                 && !m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadConstantValue)) {
 
@@ -11905,7 +11925,8 @@ void ByteCodeParser::parseBlock(unsigned limit)
             }
 
             // FIXME: Checking for a BadConstantValue causes us to always use the Generic variant if we switched from IndexedMode -> IndexedMode + OwnStructureMode even though that might be fine.
-            if (!seenModes.containsAny({ JSPropertyNameEnumerator::GenericMode, JSPropertyNameEnumerator::HasSeenOwnStructureModeStructureMismatch })
+            if (seenModes.contains(JSPropertyNameEnumerator::IndexedMode)
+                && !seenModes.containsAny({ JSPropertyNameEnumerator::GenericMode, JSPropertyNameEnumerator::HasSeenOwnStructureModeStructureMismatch })
                 && !m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadConstantValue)) {
                 Node* modeTest = addToGraph(SameValue, mode, jsConstant(jsNumber(static_cast<uint8_t>(JSPropertyNameEnumerator::GenericMode))));
                 addToGraph(CheckIsConstant, OpInfo(m_graph.freezeStrong(jsBoolean(false))), modeTest);
@@ -12039,7 +12060,8 @@ void ByteCodeParser::parseBlock(unsigned limit)
                 }
             }
 
-            if (!seenModes.containsAny({ JSPropertyNameEnumerator::GenericMode, JSPropertyNameEnumerator::HasSeenOwnStructureModeStructureMismatch })
+            if (seenModes.contains(JSPropertyNameEnumerator::IndexedMode)
+                && !seenModes.containsAny({ JSPropertyNameEnumerator::GenericMode, JSPropertyNameEnumerator::HasSeenOwnStructureModeStructureMismatch })
                 && !m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadConstantValue)) {
                 Node* modeTest = addToGraph(SameValue, mode, jsConstant(jsNumber(static_cast<uint8_t>(JSPropertyNameEnumerator::GenericMode))));
                 addToGraph(CheckIsConstant, OpInfo(m_graph.freezeStrong(jsBoolean(false))), modeTest);

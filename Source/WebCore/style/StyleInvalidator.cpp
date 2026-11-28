@@ -44,8 +44,7 @@
 #include <ranges>
 #include <wtf/SetForScope.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 NODELETE static bool shouldDirtyAllStyle(const Vector<Ref<StyleRuleBase>>& rules)
 {
@@ -453,7 +452,7 @@ void Invalidator::invalidateStyleWithMatchElement(Element& element, MatchElement
         }();
         if (someRuleSetIsScopeBreaking) {
             SelectorMatchingState selectorMatchingState;
-            invalidateStyleForDescendants(*element.document().documentElement(), &selectorMatchingState);
+            invalidateStyleForDescendants(protect(*element.document().documentElement()), &selectorMatchingState);
             return;
         }
 
@@ -646,7 +645,7 @@ void Invalidator::invalidateWithMatchElementRuleSets(Element& element, const Mat
 
     for (auto& matchElementAndRuleSet : matchElementRuleSets) {
         Invalidator invalidator(matchElementAndRuleSet.value);
-        invalidator.invalidateStyleWithMatchElement(element, matchElementAndRuleSet.key.key());
+        invalidator.invalidateStyleWithMatchElement(element, matchElementAndRuleSet.key);
         element.document().incrementStyleInvalidationTraversalCountForTesting(invalidator.m_elementTraversalCount);
     }
 }
@@ -677,5 +676,4 @@ void Invalidator::invalidateHostAndSlottedStyleIfNeeded(ShadowRoot& shadowRoot)
     }
 }
 
-}
 }

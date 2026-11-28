@@ -527,7 +527,7 @@ void FunctionTablesByRange::listCountsOf(uint32_t closureNumber)
 void FunctionTablesByRange::numberClosureFacts()
 {
     static constexpr size_t mostRowsWithCounts = 1 << 15;
-    UncheckedKeyHashMap<uint32_t, uint16_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> numbers;
+    HashMap<uint32_t, uint16_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> numbers;
     auto numberOf = [&](ClosureFacts facts) {
         auto result = numbers.ensure(std::bit_cast<uint32_t>(facts), [&] {
             RELEASE_ASSERT(m_closureFacts.size() <= UINT16_MAX);

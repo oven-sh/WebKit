@@ -32,8 +32,7 @@
 #include "StyleComputedStyle+SettersInlines.h"
 #include "StyleUpdate.h"
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 std::unique_ptr<Relations> commitRelationsToRenderStyle(Style::ComputedStyle& style, const Element& element, const Relations& relations)
 {
@@ -80,7 +79,7 @@ std::unique_ptr<Relations> commitRelationsToRenderStyle(Style::ComputedStyle& st
     return remainingRelations;
 }
 
-void commitRelations(std::unique_ptr<Relations> relations, Update& update)
+void commitRelations(std::unique_ptr<Relations> relations, Update* update)
 {
     if (!relations)
         return;
@@ -130,11 +129,11 @@ void commitRelations(std::unique_ptr<Relations> relations, Update& update)
             element->setAffectedByHasWithAdjacentSiblingRelationship();
             break;
         case Relation::FirstChild:
-            if (auto* style = update.elementStyle(element))
+            if (auto* style = update ? update->elementStyle(element) : nullptr)
                 style->setFirstChildState();
             break;
         case Relation::LastChild:
-            if (auto* style = update.elementStyle(element))
+            if (auto* style = update ? update->elementStyle(element) : nullptr)
                 style->setLastChildState();
             break;
         case Relation::NthChildIndex:
@@ -152,5 +151,4 @@ void copyRelations(Style::ComputedStyle& to, const Style::ComputedStyle& from)
         to.setLastChildState();
 }
 
-}
 }

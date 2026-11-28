@@ -40,7 +40,7 @@ namespace JSC::AOT {
 
 std::span<const NativeTest> compiledStructureTests();
 
-static_assert(sizeof(Structure) == 112);
+static_assert(sizeof(Structure) == 120);
 
 static constexpr ASCIILiteral programText = R"IR(layout L0 name="Circle" fields=[{key="radius" declared={type=number} flags=[IsRequired]}]
 layout L1 name="Tagged" fields=[{key="name" declared={type=anything} flags=[IsRequired]}, {key=symbol("tag")@m0:120 declared={type=anything} flags=[IsRequired]}]

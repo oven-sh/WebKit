@@ -27,8 +27,7 @@
 
 #include "LayoutDescendantIterator.h"
 
-namespace WebCore {
-namespace Layout {
+namespace WebCore::Layout {
 
 class FormattingContextBoxIterator : public LayoutDescendantIterator<Box> {
 public:
@@ -48,7 +47,7 @@ public:
     FormattingContextBoxIterator& operator++()
     {
         // Inline formatting context content is reachable through inline boxes only. Other boxes are leaves, including block-level boxes that do not establish a formatting context.
-        auto skipsChildren = m_isInlineFormattingContext ? !get().isInlineBox() : get().establishesFormattingContext();
+        auto skipsChildren = m_isInlineFormattingContext ? !get().isInlineBox() : protect(get())->establishesFormattingContext();
         if (skipsChildren)
             traverseNextSkippingChildren();
         else
@@ -79,6 +78,4 @@ inline FormattingContextBoxIteratorAdapter formattingContextBoxes(const ElementB
     return { root };
 }
 
-
-}
 }

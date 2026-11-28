@@ -29,10 +29,15 @@
 #import "Helpers/Test.h"
 #import "Helpers/Utilities.h"
 #import "Helpers/cocoa/HTTPServer.h"
+#import "Helpers/cocoa/HTTPServer/TestCertificates.h"
+#import "Helpers/cocoa/SiteIsolationTestUtilities.h"
 #import "Helpers/cocoa/TestNavigationDelegate.h"
 #import "Helpers/cocoa/TestUIDelegate.h"
+#import "Helpers/cocoa/TestWKWebView.h"
+#import <WebKit/WKFrameInfoPrivate.h>
 #import <WebKit/WKWebViewPrivate.h>
 #import <WebKit/WKWebsiteDataStorePrivate.h>
+#import <WebKit/_WKFrameTreeNode.h>
 #import <WebKit/_WKWebsiteDataStoreConfiguration.h>
 #import <wtf/RetainPtr.h>
 #import <wtf/text/MakeString.h>
@@ -169,7 +174,7 @@ TEST(WKWebView, ServerTrustAfterTwoProcessSwaps)
 
     [webView loadURL:[NSURL URLWithString:@"https://webkit.org/source"]];
     [navigationDelegate waitForDidFinishNavigation];
-    verifyCertificateAndPublicKey([webView serverTrust]);
+    EXPECT_TRUE([TestCertificates verifyCertificateAndPublicKeyOfTrust:[webView serverTrust]]);
 
     __block pid_t firstProvisionalProcessIdentifier = 0;
     navigationDelegate.get().didStartProvisionalNavigation = ^(WKWebView *view, WKNavigation *) {
@@ -184,7 +189,7 @@ TEST(WKWebView, ServerTrustAfterTwoProcessSwaps)
     EXPECT_EQ(firstProvisionalProcessIdentifier, [webView _webProcessIdentifier]);
 
     EXPECT_NOT_NULL([webView serverTrust]);
-    verifyCertificateAndPublicKey([webView serverTrust]);
+    EXPECT_TRUE([TestCertificates verifyCertificateAndPublicKeyOfTrust:[webView serverTrust]]);
 }
 
 TEST(WKWebView, QualifiedServerTrustKVC)
@@ -221,7 +226,7 @@ TEST(WKWebView, QualifiedServerTrustKVC)
 
     [webView loadURL:[NSURL URLWithString:@"https://webkit.org/binding-link"]];
     [observer waitUntilQualifiedServerTrustChanged];
-    verifyCertificateAndPublicKey([webView qualifiedServerTrust]);
+    EXPECT_TRUE([TestCertificates verifyCertificateAndPublicKeyOfTrust:[webView qualifiedServerTrust]]);
 
     // Committing a response without a tls-certificate-binding link clears the 2QWAC.
     [webView loadURL:[NSURL URLWithString:@"https://webkit.org/no-link"]];
@@ -231,7 +236,7 @@ TEST(WKWebView, QualifiedServerTrustKVC)
     // The tls-certificate-binding link is found even when it isn't the only link.
     [webView loadURL:[NSURL URLWithString:@"https://webkit.org/many-links"]];
     [observer waitUntilQualifiedServerTrustChanged];
-    verifyCertificateAndPublicKey([webView qualifiedServerTrust]);
+    EXPECT_TRUE([TestCertificates verifyCertificateAndPublicKeyOfTrust:[webView qualifiedServerTrust]]);
 
     // A link with a different rel is not a 2QWAC.
     [webView loadURL:[NSURL URLWithString:@"https://webkit.org/other-rel"]];
@@ -249,7 +254,7 @@ TEST(WKWebView, QualifiedServerTrustKVC)
     // which is resolved against the URL of the response.
     [webView loadURL:[NSURL URLWithString:@"https://webkit.org/relative-link"]];
     [observer waitUntilQualifiedServerTrustChanged];
-    verifyCertificateAndPublicKey([webView qualifiedServerTrust]);
+    EXPECT_TRUE([TestCertificates verifyCertificateAndPublicKeyOfTrust:[webView qualifiedServerTrust]]);
 
     // A scheme-relative reference to another origin is still cross-origin, and is ignored.
     [webView loadURL:[NSURL URLWithString:@"https://webkit.org/scheme-relative-cross-origin-link"]];
@@ -259,7 +264,7 @@ TEST(WKWebView, QualifiedServerTrustKVC)
     // A path-relative reference is resolved against the directory of the response URL.
     [webView loadURL:[NSURL URLWithString:@"https://webkit.org/path/relative-link"]];
     [observer waitUntilQualifiedServerTrustChanged];
-    verifyCertificateAndPublicKey([webView qualifiedServerTrust]);
+    EXPECT_TRUE([TestCertificates verifyCertificateAndPublicKeyOfTrust:[webView qualifiedServerTrust]]);
 
     [webView loadURL:[NSURL URLWithString:@"https://webkit.org/no-link"]];
     [observer waitUntilQualifiedServerTrustChanged];
@@ -268,7 +273,86 @@ TEST(WKWebView, QualifiedServerTrustKVC)
     // Load a valid 2QWAC again to verify the checks above didn't just break the fetch entirely.
     [webView loadURL:[NSURL URLWithString:@"https://webkit.org/binding-link"]];
     [observer waitUntilQualifiedServerTrustChanged];
-    verifyCertificateAndPublicKey([webView qualifiedServerTrust]);
+    EXPECT_TRUE([TestCertificates verifyCertificateAndPublicKeyOfTrust:[webView qualifiedServerTrust]]);
 
     [webView removeObserver:observer.get() forKeyPath:@"qualifiedServerTrust"];
+}
+
+TEST(WKWebView, ServerTrustForSubframeLoadedFromMemoryCache)
+{
+    using namespace TestWebKitAPI;
+
+    // The second iframe has the same URL as the first, so its main resource is served from the
+    // WebContent process's memory cache without a network process request. The network process
+    // therefore never sends a certificate for the second frame, but the UI process still needs
+    // to report one because the cached response had one.
+    HTTPServer server({
+        { "/"_s, { "<script>"
+            "let loadedCount = 0;"
+            "addEventListener('message', () => {"
+            "    if (++loadedCount == 1) {"
+            "        let iframe = document.createElement('iframe');"
+            "        iframe.src = '/frame';"
+            "        document.body.appendChild(iframe);"
+            "    } else"
+            "        alert('both frames loaded');"
+            "});"
+            "</script>"
+            "<iframe src='/frame'></iframe>"_s } },
+        { "/frame"_s, { { { "Cache-Control"_s, "max-age=3600"_s } }, "<script>addEventListener('load', () => parent.postMessage('loaded', '*'))</script>"_s } }
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    RetainPtr webView = adoptNS([[WKWebView alloc] initWithFrame:CGRectZero configuration:server.httpsProxyConfiguration()]);
+    RetainPtr uiDelegate = adoptNS([TestUIDelegate new]);
+    webView.get().UIDelegate = uiDelegate.get();
+    RetainPtr navigationDelegate = adoptNS([TestNavigationDelegate new]);
+    [navigationDelegate allowAnyTLSCertificate];
+    webView.get().navigationDelegate = navigationDelegate.get();
+
+    [webView loadURL:[NSURL URLWithString:@"https://webkit.org/"]];
+    EXPECT_WK_STREQ([uiDelegate waitForAlert], "both frames loaded");
+
+    __block bool done { false };
+    [webView _frames:^(_WKFrameTreeNode *mainFrame) {
+        EXPECT_EQ(mainFrame.childFrames.count, 2u);
+        for (_WKFrameTreeNode *child in mainFrame.childFrames) {
+            EXPECT_WK_STREQ(child.info.request.URL.absoluteString, "https://webkit.org/frame");
+            EXPECT_NOT_NULL(child.info._serverTrust);
+            EXPECT_TRUE([TestCertificates verifyCertificateAndPublicKeyOfTrust:child.info._serverTrust]);
+        }
+        done = true;
+    }];
+    Util::run(&done);
+}
+
+TEST(WKWebView, ServerTrustForCrossSiteSubframeWithSiteIsolation)
+{
+    using namespace TestWebKitAPI;
+
+    HTTPServer server({
+        { "/"_s, { "<script>"
+            "addEventListener('message', () => alert('subframe loaded'));"
+            "</script>"
+            "<iframe src='https://example.com/frame'></iframe>"_s } },
+        { "/frame"_s, { "<script>addEventListener('load', () => parent.postMessage('loaded', '*'))</script>"_s } }
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto [webView, navigationDelegate] = siteIsolatedViewAndDelegate(server, CGRectZero);
+    RetainPtr uiDelegate = adoptNS([TestUIDelegate new]);
+    [webView setUIDelegate:uiDelegate.get()];
+
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://webkit.org/"]]];
+    EXPECT_WK_STREQ([uiDelegate waitForAlert], "subframe loaded");
+
+    __block bool done { false };
+    [webView _frames:^(_WKFrameTreeNode *mainFrame) {
+        EXPECT_EQ(mainFrame.childFrames.count, 1u);
+        for (_WKFrameTreeNode *child in mainFrame.childFrames) {
+            EXPECT_WK_STREQ(child.info.request.URL.absoluteString, "https://example.com/frame");
+            EXPECT_NOT_NULL(child.info._serverTrust);
+            EXPECT_TRUE([TestCertificates verifyCertificateAndPublicKeyOfTrust:child.info._serverTrust]);
+        }
+        done = true;
+    }];
+    Util::run(&done);
 }

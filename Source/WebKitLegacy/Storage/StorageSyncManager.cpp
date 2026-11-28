@@ -57,7 +57,7 @@ StorageSyncManager::~StorageSyncManager()
 String StorageSyncManager::fullDatabaseFilename(const String& databaseIdentifier)
 {
     if (!FileSystem::makeAllDirectories(m_path)) {
-        LOG_ERROR("Unabled to create LocalStorage database path %s", m_path.utf8());
+        LOG_ERROR("Unabled to create LocalStorage database path %s", makeUTF8CString(m_path));
         return String();
     }
 
@@ -71,6 +71,12 @@ void StorageSyncManager::dispatch(Function<void ()>&& function)
 
     if (CheckedPtr thread = m_thread.get())
         thread->dispatch(WTF::move(function));
+}
+
+void StorageSyncManager::assertIsCurrent() const
+{
+    ASSERT(m_thread);
+    m_thread->assertIsCurrent();
 }
 
 void StorageSyncManager::close()

@@ -262,8 +262,8 @@ void openGuessAtOperandTakenAsMade(Walker& walker, const BodyValue& call, Refere
         Reference shaped;
     };
     Vector<HolderShaped, 2> holdersShaped;
-    UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> placesOfHolders;
-    UncheckedKeyHashSet<uint64_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> slotsRead;
+    HashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> placesOfHolders;
+    HashSet<uint64_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> slotsRead;
     for (ValueID readOffHolder : readsOffHolders) {
         if (walker.isUnreachable() || walker.hasFailed())
             break;

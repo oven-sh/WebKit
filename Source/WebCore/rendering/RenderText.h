@@ -45,6 +45,7 @@ class RenderText : public RenderObject, private Layout::InlineTextBox {
 public:
     RenderText(Type, Text&, const String&);
     RenderText(Type, Document&, const String&);
+    RenderText(Document&, SynthesizedGlyph);
 
     virtual ~RenderText();
 
@@ -95,7 +96,7 @@ public:
     // On attach and parent style change.
     void inheritStyleFromParent();
     bool inheritsStyleFromDisplayContentsParent() const { return Layout::InlineTextBox::inheritsStyleFromDisplayContentsParent(); }
-    void setStyleInheritedFromDisplayContentsParent(Style::ComputedStyle&&);
+    void setStyleInheritedFromDisplayContentsParent(UniqueRef<Style::ComputedStyle>&&);
     void clearStyleInheritedFromDisplayContentsParent();
     const Style::ComputedStyle* lazyPseudoElementStyle(const Style::PseudoElementIdentifier&, const Style::ComputedStyle* parentStyle = nullptr) const LIFETIME_BOUND;
 
@@ -137,7 +138,7 @@ public:
     void setText(const String&, bool force = false);
     virtual void setTextWithOffset(const String&, unsigned offset);
 
-    bool canBeSelectionLeaf() const override { return true; }
+    bool canBeSelectionLeaf() const override { return !layoutBox().contentGlyph(); }
 
     LayoutRect collectSelectionGeometriesForLineBoxes(const RenderLayerModelObject* repaintContainer, bool clipToVisibleContent, Vector<FloatQuad>&);
 
@@ -160,7 +161,7 @@ public:
 
     NODELETE bool containsOnlyCollapsibleWhitespace() const;
 
-    FontCascade::CodePath fontCodePath() const { return m_fontCodePath; }
+    FontCascade::CodePath fontCodePath() const { return static_cast<FontCascade::CodePath>(m_fontCodePath); }
     bool canUseSimpleFontCodePath() const { return fontCodePath() == FontCascade::CodePath::Simple; }
     bool shouldUseSimpleGlyphOverflowCodePath() const { return fontCodePath() == FontCascade::CodePath::SimpleWithGlyphOverflow; }
 
@@ -202,7 +203,7 @@ private:
     void updateRenderedText();
     void updateRenderedText(const String&);
 
-    RenderText(Type, Node&, const String&);
+    RenderText(Type, Node&, const String&, std::optional<SynthesizedGlyph> = { });
 
     ASCIILiteral renderName() const override;
 
@@ -226,9 +227,6 @@ private:
     void container() const = delete; // Use parent() instead.
     void container(const RenderLayerModelObject&, bool&) const = delete; // Use parent() instead.
 
-    // FIXME: This should probably be part of the text sizing structures in Document instead. That would save some memory.
-    float m_candidateComputedTextSize { 0 };
-
     String m_text;
 
     unsigned m_needsVisualReordering : 1 { false };
@@ -237,7 +235,10 @@ private:
     unsigned m_originalTextDiffersFromRendered : 1 { false };
     unsigned m_layoutBoxContentNeedsUpdate : 1 { false };
     unsigned m_hasSecureTextTimer : 1 { false };
-    FontCascade::CodePath m_fontCodePath : 2;
+    unsigned m_fontCodePath : 2; // FontCascade::CodePath. Same type as the other bits so MSVC packs them together.
+
+    // FIXME: This should probably be part of the text sizing structures in Document instead. That would save some memory.
+    float m_candidateComputedTextSize { 0 };
 };
 
 String applyTextTransform(const Style::ComputedStyle&, const String&, char32_t previousCharacter);
@@ -261,21 +262,21 @@ inline const Style::ComputedStyle* RenderText::lazyPseudoElementStyle(const Styl
 
 inline Color RenderText::selectionBackgroundColor() const
 {
-    if (auto* ancestor = firstNonAnonymousAncestor())
+    if (CheckedPtr ancestor = firstNonAnonymousAncestor())
         return ancestor->selectionBackgroundColor();
     return Color();
 }
 
 inline Color RenderText::selectionForegroundColor() const
 {
-    if (auto* ancestor = firstNonAnonymousAncestor())
+    if (CheckedPtr ancestor = firstNonAnonymousAncestor())
         return ancestor->selectionForegroundColor();
     return Color();
 }
 
 inline Color RenderText::selectionEmphasisMarkColor() const
 {
-    if (auto* ancestor = firstNonAnonymousAncestor())
+    if (CheckedPtr ancestor = firstNonAnonymousAncestor())
         return ancestor->selectionEmphasisMarkColor();
     return Color();
 }

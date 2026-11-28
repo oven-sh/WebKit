@@ -32,7 +32,6 @@
 
 namespace WebCore {
 
-class CSSPrimitiveValue;
 class CSSStyleDeclaration;
 class CSSValue;
 class CSSValuePool;
@@ -109,10 +108,10 @@ private:
     const RenderElement* computeRenderer() const;
 
     // The ComputedStyle we should use for resolving non-layout-dependent properties.
-    const Style::ComputedStyle* computeStyle(CSSPropertyID, UpdateLayout, std::unique_ptr<Style::ComputedStyle>&) const;
+    CheckedPtr<const Style::ComputedStyle> computeStyle(CSSPropertyID, UpdateLayout, std::unique_ptr<Style::ComputedStyle>&) const;
 
     // The ComputedStyle we should use for resolving custom properties.
-    const Style::ComputedStyle* computeStyleForCustomProperty(std::unique_ptr<Style::ComputedStyle>&) const;
+    CheckedPtr<const Style::ComputedStyle> computeStyleForCustomProperty(std::unique_ptr<Style::ComputedStyle>&) const;
 
     const RefPtr<Element> m_element;
     std::optional<Style::PseudoElementIdentifier> m_pseudoElementIdentifier;

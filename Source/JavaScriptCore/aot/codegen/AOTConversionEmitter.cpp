@@ -716,7 +716,7 @@ static bool isArithmeticThatMakesNumber(LValue number)
 }
 
 template<typename Answer>
-static void answerOperandsFirst(LValue number, UncheckedKeyHashMap<LValue, Answer>& answers, NOESCAPE const Invocable<Answer(LValue)> auto& answerFor)
+static void answerOperandsFirst(LValue number, HashMap<LValue, Answer>& answers, NOESCAPE const Invocable<Answer(LValue)> auto& answerFor)
 {
     Vector<LValue, 16> pending { number };
     while (!pending.isEmpty()) {
@@ -821,7 +821,7 @@ bool ConversionEmitter::comesRoundToIntegerBehind(LValue number)
         return false;
     if (std::exchange(m_integerThatComesRound, joined) != joined)
         m_holdsIntegerThatComesRound.clear();
-    UncheckedKeyHashMap<LValue, bool>& holdsJoinedInteger = m_holdsIntegerThatComesRound;
+    HashMap<LValue, bool>& holdsJoinedInteger = m_holdsIntegerThatComesRound;
     answerOperandsFirst<bool>(number, holdsJoinedInteger, [&](LValue value) {
         if (value->opcode() == Machine::IToD)
             return value->child(0) == joined;

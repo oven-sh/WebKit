@@ -32,9 +32,7 @@
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 
-namespace WebCore {
-
-namespace ContentExtensions {
+namespace WebCore::ContentExtensions {
 
 class DFAMerger {
     typedef MutableRangeList<signed char, uint64_t, 128> CombinedTransitionsMutableRangeList;
@@ -151,7 +149,7 @@ private:
         uint32_t indexA = extractIndexA(newNodeSignature);
         uint32_t indexB = extractIndexB(newNodeSignature);
 
-        HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> actions;
+        HashSet<uint64_t> actions;
         if (indexA != invalidNodeIndex) {
             const DFANode& node = m_dfaA.nodes[indexA];
             uint32_t actionsStart = node.actionsStart();
@@ -180,7 +178,7 @@ private:
     const DFA& m_dfaA;
     const DFA& m_dfaB;
     DFA m_output;
-    HashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_nodeMapping;
+    HashMap<uint64_t, uint32_t> m_nodeMapping;
     Vector<uint64_t, 0, ContentExtensionsOverflowHandler> m_unprocessedNodes;
 };
 
@@ -220,8 +218,6 @@ void DFACombiner::combineDFAs(unsigned minimumSize, NOESCAPE const Function<void
     }
 }
 
-}
-
-} // namespace WebCore
+} // namespace WebCore::ContentExtensions
 
 #endif

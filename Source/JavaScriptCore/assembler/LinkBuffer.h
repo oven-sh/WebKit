@@ -181,17 +181,12 @@ public:
     }
 
     template<PtrTag tag>
-    LinkBuffer(MacroAssembler& macroAssembler, CodePtr<tag> code, size_t size, Profile profile = Profile::Uncategorized, JITCompilationEffort effort = JITCompilationMustSucceed, bool shouldPerformBranchCompaction = true)
+    LinkBuffer(MacroAssembler& macroAssembler, CodePtr<tag> code, size_t size, Profile profile = Profile::Uncategorized, JITCompilationEffort effort = JITCompilationMustSucceed)
         : m_size(size)
         , m_isRewriting(true)
         , m_profile(profile)
         , m_code(code.template retagged<LinkBufferPtrTag>())
     {
-#if ENABLE(BRANCH_COMPACTION)
-        m_shouldPerformBranchCompaction = shouldPerformBranchCompaction;
-#else
-        UNUSED_PARAM(shouldPerformBranchCompaction);
-#endif
         linkCode(macroAssembler, effort);
     }
 
@@ -558,7 +553,6 @@ private:
 #if ENABLE(JIT_SIGN_ASSEMBLER_BUFFER)
     AssemblerHashes m_assemblerHashesStorage;
 #endif
-    bool m_shouldPerformBranchCompaction { true };
 #endif
     bool m_didAllocate { false };
     bool m_didFinalize { false };

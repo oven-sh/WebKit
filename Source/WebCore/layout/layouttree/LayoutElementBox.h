@@ -39,7 +39,7 @@ namespace Layout {
 
 class ElementBox : public Box {
 public:
-    // The render tree children, without excluded list markers. RenderView's box is the only child of the initial containing block.
+    // The render tree children, without outside list markers. RenderView's box is the only child of the initial containing block.
     // Defined in RenderElement.h.
     inline const Box* firstChild() const;
     NODELETE const Box* firstInFlowChild() const;
@@ -55,16 +55,11 @@ public:
     bool hasInFlowOrFloatingChild() const { return firstInFlowOrFloatingChild(); }
     NODELETE bool hasOutOfFlowChild() const;
 
-    // From the renderer.
-    bool isListMarkerImage() const;
-    // FIXME: This is temporary until after list marker content is accessible by IFC (webkit.org/b/294342)
-    std::pair<float, float> layoutBoundsForListMarker() const;
-
     // Null only for the initial containing block. Defined in RenderElement.h.
     inline RenderElement* rendererForIntegration() const;
 
 protected:
-    ElementBox(Style::ComputedStyle&&, ElementAttributes, EnumSet<BaseTypeFlag> = { });
+    ElementBox(UniqueRef<Style::ComputedStyle>&&, ElementAttributes, EnumSet<BaseTypeFlag> = { });
     ~ElementBox();
 
 private:

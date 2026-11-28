@@ -89,9 +89,21 @@ function(WEBKIT_RAISE_SWIFT_NINJA_PRIORITY _target)
     if (ARGC GREATER 1)
         set(_dispatch_edges ${ARGV1})
     endif ()
-    set(_dispatch_dep "$<FILTER:$<TARGET_OBJECTS:${_target}>,INCLUDE,\\.swift\\.o>")
+    _WEBKIT_ADD_NINJA_PRIORITY_CHAIN(${_target}_Dispatch ${_target}-dispatch
+        "$<FILTER:$<TARGET_OBJECTS:${_target}>,INCLUDE,\\.swift\\.o>" ${_dispatch_edges})
+endfunction()
+
+# WEBKIT_RAISE_CXX_NINJA_PRIORITY(<target> <edges>)
+#
+# Like WEBKIT_RAISE_SWIFT_NINJA_PRIORITY, for <target>'s non-Swift objects.
+function(WEBKIT_RAISE_CXX_NINJA_PRIORITY _target _edges)
+    _WEBKIT_ADD_NINJA_PRIORITY_CHAIN(${_target}_CxxDispatch ${_target}-cxx-dispatch
+        "$<FILTER:$<TARGET_OBJECTS:${_target}>,EXCLUDE,\\.swift\\.o>" ${_edges})
+endfunction()
+
+function(_WEBKIT_ADD_NINJA_PRIORITY_CHAIN _name _stamp_prefix _dispatch_dep _dispatch_edges)
     foreach (_i RANGE 1 ${_dispatch_edges})
-        set(_stamp "${CMAKE_CURRENT_BINARY_DIR}/${_target}-dispatch-${_i}.stamp")
+        set(_stamp "${CMAKE_CURRENT_BINARY_DIR}/${_stamp_prefix}-${_i}.stamp")
         add_custom_command(
             OUTPUT "${_stamp}"
             COMMAND ${CMAKE_COMMAND} -E touch "${_stamp}"
@@ -100,5 +112,28 @@ function(WEBKIT_RAISE_SWIFT_NINJA_PRIORITY _target)
         )
         set(_dispatch_dep "${_stamp}")
     endforeach ()
-    add_custom_target(${_target}_Dispatch ALL DEPENDS "${_dispatch_dep}")
+    add_custom_target(${_name} ALL DEPENDS "${_dispatch_dep}")
+endfunction()
+
+# WEBKIT_ORDER_SWIFT_COMPILE_AFTER(<target> <predecessor>)
+# Compile <target>'s Swift after <predecessor>'s. All Swift targets share one module cache, and an SDK
+# module that two compile steps build at once can end up rebuilt by every later build.
+function(WEBKIT_ORDER_SWIFT_COMPILE_AFTER _target _predecessor)
+    set(_order_source "${CMAKE_CURRENT_BINARY_DIR}/${_target}_SwiftCompileAfter${_predecessor}.swift")
+    target_sources(${_target} PRIVATE "${_order_source}")
+    set_source_files_properties("${_order_source}" PROPERTIES GENERATED ON)
+    target_compile_options(${_target} PRIVATE "$<$<COMPILE_LANGUAGE:Swift>:--ninja-depfile-exclude=${_order_source}>")
+    cmake_language(EVAL CODE "cmake_language(DEFER DIRECTORY [[${CMAKE_SOURCE_DIR}]] CALL _webkit_add_swift_compile_order_rule [[${_order_source}]] ${_predecessor})")
+endfunction()
+
+function(_webkit_add_swift_compile_order_rule _order_source _predecessor)
+    file(WRITE "${_order_source}.in" "// Auto-generated; orders this module's compile after ${_predecessor}'s.\n")
+    add_custom_command(
+        OUTPUT "${_order_source}"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${_order_source}.in" "${_order_source}"
+        DEPENDS "$<FILTER:$<TARGET_OBJECTS:${_predecessor}>,INCLUDE,\\.swift\\.o>"
+        VERBATIM
+    )
+    cmake_path(GET _order_source STEM _name)
+    add_custom_target(${_name} DEPENDS "${_order_source}")
 endfunction()

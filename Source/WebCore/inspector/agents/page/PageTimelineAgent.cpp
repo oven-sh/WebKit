@@ -28,18 +28,26 @@
 #include "config.h"
 #include "PageTimelineAgent.h"
 
+#include "Document.h"
 #include "DocumentView.h"
+#include "Element.h"
+#include "FloatQuad.h"
 #include "FrameSnapshotting.h"
 #include "ImageBuffer.h"
 #include "ImageUtilities.h"
 #include "InspectorBackendClient.h"
 #include "InspectorDOMAgent.h"
 #include "InstrumentingAgents.h"
+#include "LayoutRect.h"
+#include "LocalFrameInlines.h"
+#include "LocalFrameView.h"
 #include "Page.h"
 #include "PageInspectorController.h"
+#include "RemoteFrame.h"
 #include "RenderElementInlines.h"
 #include "RenderObjectInlines.h"
 #include "RenderView.h"
+#include "Settings.h"
 #include "TimelineRecordFactory.h"
 #include "WebDebuggerAgent.h"
 #include <wtf/SetForScope.h>
@@ -170,6 +178,7 @@ void PageTimelineAgent::internalStop()
     Ref { m_instrumentingAgents.get() }->setTrackingPageTimelineAgent(nullptr);
 
     m_autoCapturePhase = AutoCapturePhase::None;
+    m_pendingClientScreenshotTime = std::nullopt;
 
 #if PLATFORM(COCOA)
     m_frameStartObserver = nullptr;
@@ -179,10 +188,12 @@ void PageTimelineAgent::internalStop()
 #endif
     m_startedComposite = false;
 
-    InspectorTimelineAgent::internalStop();
-
+    // Tell the client before the frontend learns that recording stopped, so that the client drops
+    // a screenshot that it is still taking.
     if (auto* client = m_inspectedPage->inspectorController().inspectorBackendClient())
         client->timelineRecordingChanged(false);
+
+    InspectorTimelineAgent::internalStop();
 }
 
 Inspector::Protocol::ErrorStringOr<void> PageTimelineAgent::setAutoCaptureEnabled(bool enabled)
@@ -225,16 +236,20 @@ void PageTimelineAgent::willLayout()
 
 void PageTimelineAgent::didLayout(const RenderElement& layoutRoot, const Vector<FloatQuad>& layoutAreas)
 {
-    auto* entry = lastRecordEntry();
-    if (!entry)
+    if (!lastRecordEntry())
         return;
 
+    // Get the node ID first: it calls into the DOM agent, and a record pushed meanwhile would invalidate a
+    // pointer into the record stack.
+    auto nodeId = nodeIdForRenderer(layoutRoot);
+
+    auto* entry = lastRecordEntry();
     ASSERT(entry->type == TimelineRecordType::Layout);
 
     if (!layoutAreas.isEmpty())
         TimelineRecordFactory::appendLayoutRoot(entry->data.get(), layoutAreas[0]);
 
-    if (auto nodeId = nodeIdForRenderer(layoutRoot))
+    if (nodeId)
         TimelineRecordFactory::appendNodeId(entry->data.get(), nodeId);
 
     didCompleteCurrentRecord(TimelineRecordType::Layout);
@@ -257,13 +272,16 @@ void PageTimelineAgent::willRecalculateStyle()
 
 void PageTimelineAgent::didRecalculateStyle(Document& document)
 {
-    auto* entry = lastRecordEntry();
-    if (!entry)
+    if (!lastRecordEntry())
         return;
 
+    // Get the node ID before taking a pointer into the record stack (see didLayout).
+    auto nodeId = nodeIdForDocument(document);
+
+    auto* entry = lastRecordEntry();
     ASSERT(entry->type == TimelineRecordType::RecalculateStyles);
 
-    if (auto nodeId = nodeIdForDocument(document))
+    if (nodeId)
         TimelineRecordFactory::appendNodeId(entry->data.get(), nodeId);
 
     didCompleteCurrentRecord(TimelineRecordType::RecalculateStyles);
@@ -300,30 +318,37 @@ void PageTimelineAgent::didComposite(const LocalFrame& frame)
 
 void PageTimelineAgent::willPaint()
 {
-    if (m_isCapturingScreenshot)
-        return;
-
     pushCurrentRecord(JSON::Object::create(), TimelineRecordType::Paint, true);
 }
 
 void PageTimelineAgent::didPaint(RenderObject& renderer, const LayoutRect& clipRect)
 {
-    if (m_isCapturingScreenshot)
+    if (!lastRecordEntry())
         return;
+
+    // Get the node ID before taking a pointer into the record stack (see didLayout).
+    auto nodeId = nodeIdForRenderer(renderer);
 
     auto* entry = lastRecordEntry();
-    if (!entry)
-        return;
-
     ASSERT(entry->type == TimelineRecordType::Paint);
 
     auto clipQuadInMainFrameView = protect(renderer.view().frameView())->contentsToMainFrameView(renderer.localToAbsoluteQuad({ clipRect }));
     entry->data = TimelineRecordFactory::createPaintData(clipQuadInMainFrameView);
 
-    if (auto nodeId = nodeIdForRenderer(renderer))
+    if (nodeId)
         TimelineRecordFactory::appendNodeId(entry->data.get(), nodeId);
 
     didCompleteCurrentRecord(TimelineRecordType::Paint);
+}
+
+void PageTimelineAgent::didEnqueueFirstContentfulPaint()
+{
+    appendRecord(JSON::Object::create(), TimelineRecordType::FirstContentfulPaint, false);
+}
+
+void PageTimelineAgent::didEnqueueLargestContentfulPaint(Element* element, unsigned area)
+{
+    appendRecord(TimelineRecordFactory::createLargestContentfulPaintData(nodeIdForNode(element), area), TimelineRecordType::LargestContentfulPaint, false);
 }
 
 void PageTimelineAgent::mainFrameStartedLoading()
@@ -385,6 +410,17 @@ bool PageTimelineAgent::shouldStartHeapInstrument() const
     return InspectorTimelineAgent::shouldStartHeapInstrument();
 }
 
+#if PLATFORM(COCOA)
+static bool hasFramesInOtherProcesses(const LocalFrame& localMainFrame)
+{
+    for (RefPtr frame = localMainFrame.tree().traverseNext(); frame; frame = frame->tree().traverseNext()) {
+        if (is<RemoteFrame>(*frame))
+            return true;
+    }
+    return false;
+}
+#endif
+
 void PageTimelineAgent::captureScreenshot()
 {
     SetForScope isTakingScreenshot(m_isCapturingScreenshot, true);
@@ -400,11 +436,69 @@ void PageTimelineAgent::captureScreenshot()
     if (!localMainFrameView)
         return;
 
+#if PLATFORM(COCOA)
+    // This process cannot paint the frames that other processes host. Under Site Isolation the client
+    // takes the screenshot instead, so that no WebContent process receives another site's pixels.
+    // Only the Cocoa UI process can take it.
+    Ref settings = inspectedPage->settings();
+    if (settings->siteIsolationEnabled() && settings->remoteSnapshottingEnabled() && hasFramesInOtherProcesses(*localMainFrame)) {
+        takeScreenshotInClient(snapshotStartTime);
+        return;
+    }
+#endif
+
     if (RefPtr snapshot = snapshotFrameRect(*localMainFrame, localMainFrameView->unobscuredContentRect(), { { }, PixelFormat::BGRA8, ColorSpace::SRGB() })) {
         Ref snapshotRecord = TimelineRecordFactory::createScreenshotData(encodeDataURL(WTF::move(snapshot), "image/png"_s));
         pushCurrentRecord(WTF::move(snapshotRecord), TimelineRecordType::Screenshot, false, snapshotStartTime);
         didCompleteCurrentRecord(TimelineRecordType::Screenshot);
     }
+}
+
+Inspector::Protocol::DOM::NodeId PageTimelineAgent::nodeIdForNode(Node* node) const
+{
+    if (CheckedPtr domAgent = protect(m_instrumentingAgents)->persistentDOMAgent())
+        return domAgent->pushNodeToFrontend(node);
+    return 0;
+}
+
+void PageTimelineAgent::takeScreenshotInClient(double snapshotStartTime)
+{
+    // Take one screenshot at a time. If rendering updates meanwhile, take one more when it is done.
+    if (m_isWaitingForClientScreenshot) {
+        m_pendingClientScreenshotTime = snapshotStartTime;
+        return;
+    }
+
+    Ref inspectedPage = m_inspectedPage;
+    auto* client = inspectedPage->inspectorController().inspectorBackendClient();
+    RefPtr localMainFrame = inspectedPage->localMainFrame();
+    RefPtr localMainFrameView = localMainFrame ? localMainFrame->view() : nullptr;
+    if (!client || !localMainFrameView)
+        return;
+
+    m_isWaitingForClientScreenshot = true;
+    client->takeTimelineScreenshot(localMainFrameView->unobscuredContentRect(), snapshotStartTime, [weakThis = WeakPtr { *this }] {
+        CheckedPtr checkedThis = weakThis;
+        if (!checkedThis)
+            return;
+
+        checkedThis->m_isWaitingForClientScreenshot = false;
+        if (auto pendingTime = std::exchange(checkedThis->m_pendingClientScreenshotTime, std::nullopt); pendingTime && checkedThis->tracking())
+            checkedThis->takeScreenshotInClient(*pendingTime);
+    });
+}
+
+bool PageTimelineAgent::isCapturingScreenshot() const
+{
+    if (m_isCapturingScreenshot)
+        return true;
+
+    // The client's screenshot makes this process paint its frames into a snapshot.
+    if (!m_isWaitingForClientScreenshot)
+        return false;
+    RefPtr localMainFrame = m_inspectedPage->localMainFrame();
+    RefPtr localMainFrameView = localMainFrame ? localMainFrame->view() : nullptr;
+    return localMainFrameView && localMainFrameView->paintBehavior().contains(PaintBehavior::Snapshotting);
 }
 
 Inspector::Protocol::DOM::NodeId PageTimelineAgent::nodeIdForDocument(Document& document) const
@@ -421,21 +515,13 @@ Inspector::Protocol::DOM::NodeId PageTimelineAgent::nodeIdForDocument(Document& 
 
 Inspector::Protocol::DOM::NodeId PageTimelineAgent::nodeIdForRenderer(const RenderObject& renderer) const
 {
-    CheckedPtr domAgent = Ref { m_instrumentingAgents.get() }->persistentDOMAgent();
-    if (!domAgent)
-        return 0;
-
-    if (renderer.isRenderView()) {
-        RefPtr document = renderer.document();
-        if (document->isTopDocument())
-            return domAgent->boundNodeId(document);
-        return domAgent->pushNodePathToFrontend(document);
-    }
+    if (renderer.isRenderView())
+        return nodeIdForDocument(protect(renderer.document()).get());
 
     if (renderer.isAnonymous()) {
         for (CheckedPtr ancestor = renderer.parent(); ancestor; ancestor = ancestor->parent()) {
             if (RefPtr element = ancestor->element())
-                return domAgent->pushNodeToFrontend(element);
+                return nodeIdForNode(element.get());
         }
         ASSERT_NOT_REACHED();
         return 0;
@@ -444,15 +530,15 @@ Inspector::Protocol::DOM::NodeId PageTimelineAgent::nodeIdForRenderer(const Rend
     if (CheckedPtr renderElement = dynamicDowncast<RenderElement>(renderer)) {
         if (renderElement->isPseudoElement()) {
             RefPtr generatingElement = renderElement->generatingElement();
-            return domAgent->pushNodeToFrontend(generatingElement);
+            return nodeIdForNode(generatingElement.get());
         }
 
         RefPtr element = renderElement->element();
-        return domAgent->pushNodeToFrontend(element);
+        return nodeIdForNode(element.get());
     }
 
     RefPtr node = renderer.node();
-    return domAgent->pushNodeToFrontend(node);
+    return nodeIdForNode(node.get());
 }
 
 } // namespace WebCore

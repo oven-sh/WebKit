@@ -337,7 +337,7 @@ float FontCascade::width(const TextRun& run, SingleThreadWeakHashSet<const Font>
         fallbackFonts = &localFallbackFonts;
 
     float result = width(codePathToUse, run, fallbackFonts, glyphOverflow);
-    bool hasFallbackFonts = !fallbackFonts->isEmptyIgnoringNullReferences();
+    bool hasFallbackFonts = !fallbackFonts->computeIsEmpty();
 
     if (cacheEntry) {
         if (!hasFallbackFonts || canUseFallbackFontCacheEntry) {
@@ -1870,7 +1870,7 @@ public:
 
 private:
     unsigned m_index { 0 };
-    CheckedRef<const TextRun> m_textRun;
+    const TextRun m_textRun;
     const GlyphBuffer& m_glyphBuffer;
     Ref<const Font> m_fontData;
     AffineTransform m_translation;

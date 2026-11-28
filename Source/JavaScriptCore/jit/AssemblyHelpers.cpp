@@ -44,6 +44,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "SuperSampler.h"
 #include "ThunkGenerators.h"
 #include "UnlinkedCodeBlock.h"
+#include "WeakImpl.h"
 
 #if ENABLE(WEBASSEMBLY)
 #include "JSWebAssemblyInstance.h"
@@ -562,6 +563,21 @@ AssemblyHelpers::JumpList AssemblyHelpers::loadMegamorphicProperty(VM& vm, GPRRe
     moveTrustedValue(jsUndefined(), resultGPR);
 
     done.link(this);
+
+    return slowCases;
+}
+
+AssemblyHelpers::JumpList AssemblyHelpers::loadMegamorphicPrivateProperty(VM& vm, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl* uid, GPRReg resultGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR)
+{
+    using Entry = MegamorphicCache::LoadEntry;
+    JumpList slowCases = findMegamorphicCacheEntry<
+        MegamorphicCache::loadCachePrimaryMask, MegamorphicCache::offsetOfLoadCachePrimaryEntries(),
+        MegamorphicCache::loadCacheSecondaryMask, MegamorphicCache::offsetOfLoadCacheSecondaryEntries()>(
+            vm, baseGPR, uidGPR, uid, scratch1GPR, scratch2GPR, scratch3GPR);
+
+    slowCases.append(branchPtr(NotEqual, Address(scratch3GPR, Entry::offsetOfHolder()), TrustedImmPtr(JSCell::seenMultipleCalleeObjects())));
+    load16(Address(scratch3GPR, Entry::offsetOfOffset()), scratch2GPR);
+    loadProperty(baseGPR, scratch2GPR, resultGPR);
 
     return slowCases;
 }
@@ -1927,6 +1943,21 @@ void AssemblyHelpers::getArityPadding(VM& vm, unsigned numberOfParameters, GPRRe
     lshiftPtr(TrustedImm32(3), scratchGPR0);
     subPtr(stackPointerRegister, scratchGPR0, scratchGPR1);
     stackOverflow.append(branchPtr(GreaterThan, AbsoluteAddress(vm.addressOfSoftStackLimit()), scratchGPR1));
+}
+
+AssemblyHelpers::JumpList AssemblyHelpers::loadTypedArrayBufferWrapper(GPRReg baseGPR, GPRReg resultGPR)
+{
+    JumpList slowCases;
+
+    slowCases.append(branchTest8(Zero, Address(baseGPR, JSArrayBufferView::offsetOfMode()), TrustedImm32(isWastefulTypedArrayMode)));
+    loadPtr(Address(baseGPR, JSObject::butterflyOffset()), resultGPR);
+    loadPtr(Address(resultGPR, Butterfly::offsetOfArrayBuffer()), resultGPR);
+    loadPtr(Address(resultGPR, ArrayBuffer::offsetOfWrapper()), resultGPR);
+    slowCases.append(branchTestPtr(Zero, resultGPR));
+    slowCases.append(branchTestPtr(NonZero, Address(resultGPR, WeakImpl::offsetOfWeakHandleOwner()), TrustedImm32(WeakImpl::StateMask)));
+    loadPtr(Address(resultGPR, WeakImpl::offsetOfJSValue()), resultGPR);
+
+    return slowCases;
 }
 
 AssemblyHelpers::JumpList AssemblyHelpers::branchIfResizableOrGrowableSharedTypedArrayIsOutOfBounds(GPRReg baseGPR, GPRReg scratchGPR, GPRReg scratch2GPR, std::optional<TypedArrayType> typedArrayType)

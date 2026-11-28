@@ -40,7 +40,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(LegacyRenderSVGResourceContainer);
 
-LegacyRenderSVGResourceContainer::LegacyRenderSVGResourceContainer(Type type, SVGElement& element, Style::ComputedStyle&& style)
+LegacyRenderSVGResourceContainer::LegacyRenderSVGResourceContainer(Type type, SVGElement& element, UniqueRef<Style::ComputedStyle>&& style)
     : LegacyRenderSVGHiddenContainer(type, element, WTF::move(style), SVGModelObjectFlag::IsResourceContainer)
     , m_id(element.getIdAttribute())
 {
@@ -119,16 +119,16 @@ void LegacyRenderSVGResourceContainer::markAllClientsForInvalidationIfNeeded(Inv
 {
     // FIXME: Style invalidation should either be a pre-layout task or this function
     // should never get called while in layout. See webkit.org/b/208903.
-    if ((m_clients.isEmptyIgnoringNullReferences() && m_clientLayers.isEmptyIgnoringNullReferences()) || m_isInvalidating)
+    if ((m_clients.computeIsEmpty() && m_clientLayers.computeIsEmpty()) || m_isInvalidating)
         return;
 
     SetForScope isInvalidating(m_isInvalidating, true);
 
     bool needsLayout = mode == LayoutAndBoundariesInvalidation;
     bool markForInvalidation = mode != ParentOnlyInvalidation;
-    auto* root = SVGRenderSupport::findTreeRootObject(*this);
+    CheckedPtr root = SVGRenderSupport::findTreeRootObject(*this);
 
-    for (auto& client : m_clients | dereferenceView) {
+    for (CheckedRef client : m_clients | dereferenceView) {
         // We should not mark any client outside the current root for invalidation
         if (root != SVGRenderSupport::findTreeRootObject(client))
             continue;
@@ -149,7 +149,7 @@ void LegacyRenderSVGResourceContainer::markAllClientsForInvalidationIfNeeded(Inv
 
 void LegacyRenderSVGResourceContainer::markAllClientLayersForInvalidation()
 {
-    if (m_clientLayers.isEmptyIgnoringNullReferences())
+    if (m_clientLayers.computeIsEmpty())
         return;
 
     Ref document = (*m_clientLayers.begin())->renderer().document();
@@ -172,7 +172,7 @@ void LegacyRenderSVGResourceContainer::markAllClientLayersForInvalidation()
 
 void LegacyRenderSVGResourceContainer::markClientForInvalidation(RenderObject& client, InvalidationMode mode)
 {
-    ASSERT(!m_clients.isEmptyIgnoringNullReferences() || !client.style().clipPath().isNone());
+    ASSERT(!m_clients.computeIsEmpty() || !client.style().clipPath().isNone());
 
     switch (mode) {
     case LayoutAndBoundariesInvalidation:
@@ -225,10 +225,10 @@ void LegacyRenderSVGResourceContainer::registerResource()
     for (auto& client : elements) {
         ASSERT(client->hasPendingResources());
         treeScope->clearHasPendingSVGResourcesIfPossible(client);
-        auto* renderer = client->renderer();
+        CheckedPtr renderer = client->renderer();
         if (!renderer)
             continue;
-        SVGResourcesCache::clientStyleChanged(*renderer, Style::DifferenceResult::Layout, nullptr, renderer->style());
+        SVGResourcesCache::clientStyleChanged(*renderer, Style::DifferenceResult::Layout, nullptr, protect(renderer->style()));
         renderer->setNeedsLayout();
     }
 }

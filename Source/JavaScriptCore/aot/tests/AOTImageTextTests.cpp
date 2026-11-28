@@ -379,7 +379,7 @@ static Vector<uint8_t> stringsByReaderOfRuntime()
     auto append = [&](ImageStringWord word) {
         if (!bitsOfWords.add(word.bits).isNewEntry || text.view(word).isEmpty())
             return;
-        strings.append(byteCast<uint8_t>(text.view(word).utf8().span()));
+        strings.append(byteCast<uint8_t>(makeUTF8CString(text.view(word)).span()));
         strings.append(0);
     };
     uint32_t numberOfWords = text.endOfStringsWithWords();
@@ -424,7 +424,7 @@ static void testStoredStringsAreReadOutOfFile()
     AOT_TEST_CHECK(numberOfBytesBesideStringsOfTextImage());
     AOT_TEST_CHECK(equalSpans(stored.strings.span(), stringsByReaderOfRuntime().span()));
     auto holds = [&](StringView text) {
-        CString wanted = text.utf8();
+        CString wanted = makeUTF8CString(text);
         Vector<uint8_t> record;
         record.append(0);
         record.append(byteCast<uint8_t>(wanted.span()));
@@ -494,7 +494,7 @@ static void testStoredStringsAsJSONLines()
         if (type == "string"_s) {
             String text = object->getString("text"_s);
             String encoding = object->getString("encoding"_s);
-            strings.append(byteCast<uint8_t>(text.utf8().span()));
+            strings.append(byteCast<uint8_t>(makeUTF8CString(text).span()));
             strings.append(0);
             if (encoding == "latin1"_s)
                 AOT_TEST_CHECK(text == StringView(byteCast<Latin1Character>(bytes)));

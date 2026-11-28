@@ -24,9 +24,9 @@ class Program;
 using FamilyID = ID<struct FamilyIDTag>;
 
 enum class SetsThatNoFamilyHolds : bool { Stay, BecomeAnyObject };
-using ContentsWidenedToFamilies = UncheckedKeyHashMap<uint32_t, TypeID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+using ContentsWidenedToFamilies = HashMap<uint32_t, TypeID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
 
-using SetsOfLayoutsWritten = UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+using SetsOfLayoutsWritten = HashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
 
 enum class SourceOfSetForFamilies : uint8_t {
     Class,

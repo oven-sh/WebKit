@@ -34,6 +34,7 @@
 #include "StyleGridTrackSize.h"
 #include "StyleGridTrackSizingDirection.h"
 #include "StyleZoomResolvable.h"
+#include <wtf/CheckedPtr.h>
 #include <wtf/StdMap.h>
 #include <wtf/TZoneMalloc.h>
 
@@ -244,7 +245,7 @@ private:
     void computeGridContainerIntrinsicSizes();
 
     // Helper methods for step 4. Stretch flexible tracks.
-    typedef HashSet<unsigned, DefaultHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> TrackIndexSet;
+    using TrackIndexSet = HashSet<unsigned>;
     double computeFlexFactorUnitSize(const Vector<UniqueRef<GridTrack>>& tracks, double flexFactorSum, LayoutUnit& leftOverSpace, const Vector<unsigned, 8>& flexibleTracksIndexes, std::unique_ptr<TrackIndexSet> tracksToTreatAsInflexible = nullptr) const;
     NODELETE void computeFlexSizedTracksGrowth(double flexFraction, Vector<LayoutUnit>& increments, LayoutUnit& totalGrowth) const;
     double findFrUnitSize(const GridSpan& tracksSpan, LayoutUnit leftOverSpace) const;
@@ -255,6 +256,8 @@ private:
     // Build up a map of min/max sizes for each span length for use during resolving intrinsic track sizes.
     // We also need to keep track of definite items separately, since they do not contribute to every track like indefinite items do.
     void computeDefiniteAndIndefiniteItemsForGridLanes(StdMap<SpanLength, GridLanesMinMaxTrackSize>&, StdMap<SpanLength, Vector<GridLanesMinMaxTrackSizeWithGridSpan>>&, Vector<GridLanesMinMaxTrackSizeWithGridSpan>&, RenderGridLayoutState&);
+    bool includesContentSizedTrack(const GridSpan& tracks) const;
+    void addGridLanesItemAtEveryStartLine(RenderBox& gridItem, unsigned spanLength, const GridSpan& placementRange, StdMap<SpanLength, Vector<GridLanesMinMaxTrackSizeWithGridSpan>>& definiteItemSizes, Vector<GridLanesMinMaxTrackSizeWithGridSpan>& definiteItemSizesSpanFlexTrack, RenderGridLayoutState&);
 
     // Track sizing algorithm steps. Note that the "Maximize Tracks" step is done
     // entirely inside the strategies, that's why we don't need an additional
@@ -314,7 +317,7 @@ private:
 
     Grid& m_grid;
 
-    const RenderGrid* m_renderGrid;
+    const CheckedPtr<const RenderGrid> m_renderGrid;
     std::unique_ptr<GridTrackSizingAlgorithmStrategy> m_strategy;
 
     // The track sizing algorithm is used for both layout and intrinsic size

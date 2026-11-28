@@ -158,9 +158,9 @@ private:
 
     Code& m_code;
     std::optional<FrameStates> m_frameStates;
-    UncheckedKeyHashMap<unsigned, Vector<BasicBlock*, 2>, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_candidates;
+    HashMap<unsigned, Vector<BasicBlock*, 2>, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_candidates;
     Vector<BasicBlock*> m_fallThroughPredecessors;
-    UncheckedKeyHashMap<BasicBlock*, BasicBlock*> m_replacements;
+    HashMap<BasicBlock*, BasicBlock*> m_replacements;
     Vector<BasicBlock*, 4> m_branchesToInvert;
 };
 

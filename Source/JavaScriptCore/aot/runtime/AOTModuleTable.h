@@ -193,7 +193,7 @@ private:
     PiecesOfPath piecesOfPath(ModuleID) const;
     std::strong_ordering comparePath(ModuleID, StringView) const;
     ModuleNumbers modulesByPath() const { return { m_tables->modulesByPath(), m_modules.size() }; }
-    using PlacesOfExports = UncheckedKeyHashMap<String, unsigned>;
+    using PlacesOfExports = HashMap<String, unsigned>;
     struct SearchedExports {
         size_t decodedNames { 0 };
         PlacesOfExports places;
@@ -208,7 +208,7 @@ private:
 
     const ProgramTables* m_tables;
     std::span<const ModuleData> m_modules;
-    mutable UncheckedKeyHashMap<uint32_t, SearchedExports, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_searchedExports;
+    mutable HashMap<uint32_t, SearchedExports, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_searchedExports;
 };
 
 struct CyclesOfImports {
@@ -276,7 +276,7 @@ private:
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Stars);
 
         Vector<ModuleID, 4> reexporters;
-        UncheckedKeyHashMap<uint32_t, const ModuleExportData*, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> bindings;
+        HashMap<uint32_t, const ModuleExportData*, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> bindings;
         bool listsEveryName { true };
     };
 
@@ -288,8 +288,8 @@ private:
     Vector<uint32_t> m_reexporters;
     Vector<uint32_t> m_firstReexporterOf;
     Vector<std::optional<Answer>> m_answers;
-    UncheckedKeyHashMap<uint32_t, std::unique_ptr<Stars>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_stars;
-    UncheckedKeyHashMap<uint64_t, Resolution, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_resolutions;
+    HashMap<uint32_t, std::unique_ptr<Stars>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_stars;
+    HashMap<uint64_t, Resolution, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_resolutions;
     BitVector m_seen;
     Vector<ModuleID, 16> m_visited;
     bool m_isOnCycle { false };

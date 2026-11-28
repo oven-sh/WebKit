@@ -89,6 +89,7 @@
 #include "RenderMultiColumnSpannerPlaceholder.h"
 #include "RenderObjectInlines.h"
 #include "RenderSVGResourceContainer.h"
+#include "RenderSVGText.h"
 #include "RenderSVGViewportContainer.h"
 #include "RenderTableCaption.h"
 #include "RenderTableCell.h"
@@ -149,7 +150,7 @@ NODELETE static Visibility visibilityIncludingForceHidden(const Style::ComputedS
     return style.isForceHidden() ? Visibility::Hidden : style.visibility();
 }
 
-inline RenderElement::RenderElement(Type type, ContainerNode& elementOrDocument, Style::ComputedStyle&& style, OptionSet<TypeFlag> flags, TypeSpecificFlags typeSpecificFlags)
+inline RenderElement::RenderElement(Type type, ContainerNode& elementOrDocument, UniqueRef<Style::ComputedStyle>&& style, OptionSet<TypeFlag> flags, TypeSpecificFlags typeSpecificFlags)
     : RenderObject(type, elementOrDocument, flags, typeSpecificFlags)
     , Layout::ElementBox(WTF::move(style), LayoutIntegration::BoxTreeUpdater::elementAttributes(*this))
     , m_firstChild(nullptr)
@@ -159,12 +160,12 @@ inline RenderElement::RenderElement(Type type, ContainerNode& elementOrDocument,
     ASSERT(&RenderObject::layoutBox() == &layoutBox());
 }
 
-RenderElement::RenderElement(Type type, Element& element, Style::ComputedStyle&& style, OptionSet<TypeFlag> baseTypeFlags, TypeSpecificFlags typeSpecificFlags)
+RenderElement::RenderElement(Type type, Element& element, UniqueRef<Style::ComputedStyle>&& style, OptionSet<TypeFlag> baseTypeFlags, TypeSpecificFlags typeSpecificFlags)
     : RenderElement(type, static_cast<ContainerNode&>(element), WTF::move(style), baseTypeFlags, typeSpecificFlags)
 {
 }
 
-RenderElement::RenderElement(Type type, Document& document, Style::ComputedStyle&& style, OptionSet<TypeFlag> baseTypeFlags, TypeSpecificFlags typeSpecificFlags)
+RenderElement::RenderElement(Type type, Document& document, UniqueRef<Style::ComputedStyle>&& style, OptionSet<TypeFlag> baseTypeFlags, TypeSpecificFlags typeSpecificFlags)
     : RenderElement(type, static_cast<ContainerNode&>(document), WTF::move(style), baseTypeFlags, typeSpecificFlags)
 {
 }
@@ -196,10 +197,10 @@ bool RenderElement::isContentDataSupported(const Style::Content& content)
     return minimallySupportedContentDataImage(content) != nullptr;
 }
 
-RenderPtr<RenderElement> RenderElement::createFor(Element& element, Style::ComputedStyle&& style, OptionSet<ConstructBlockLevelRendererFor> rendererTypeOverride)
+RenderPtr<RenderElement> RenderElement::createFor(Element& element, UniqueRef<Style::ComputedStyle>&& style, OptionSet<ConstructBlockLevelRendererFor> rendererTypeOverride)
 {
     if (!rendererTypeOverride) {
-        if (RefPtr styleImage = minimallySupportedContentDataImage(style.content()); styleImage && !element.isPseudoElement()) {
+        if (RefPtr styleImage = minimallySupportedContentDataImage(style->content()); styleImage && !element.isPseudoElement()) {
             Style::loadPendingResources(style, protect(element.document()), &element);
             auto image = createRenderer<RenderImage>(RenderObject::Type::Image, element, WTF::move(style), styleImage.get());
             image->setIsGeneratedContent();
@@ -208,7 +209,7 @@ RenderPtr<RenderElement> RenderElement::createFor(Element& element, Style::Compu
         }
     }
 
-    switch (style.display().value) {
+    switch (style->display().value) {
     case Style::DisplayType::None:
     case Style::DisplayType::Contents:
         return nullptr;
@@ -247,10 +248,10 @@ RenderPtr<RenderElement> RenderElement::createFor(Element& element, Style::Compu
         return createRenderer<RenderBlockFlow>(RenderObject::Type::BlockFlow, element, WTF::move(style));
 
     default: {
-        if (style.display().isTableOrTablePart() && rendererTypeOverride.contains(ConstructBlockLevelRendererFor::TableOrTablePart))
+        if (style->display().isTableOrTablePart() && rendererTypeOverride.contains(ConstructBlockLevelRendererFor::TableOrTablePart))
             return createRenderer<RenderBlockFlow>(RenderObject::Type::BlockFlow, element, WTF::move(style));
 
-        switch (style.display().value) {
+        switch (style->display().value) {
         case Style::DisplayType::BlockTable:
         case Style::DisplayType::InlineTable:
             return createRenderer<RenderTable>(RenderObject::Type::Table, element, WTF::move(style));
@@ -316,9 +317,9 @@ Style::Difference RenderElement::adjustStyleDifference(Style::Difference diff) c
     if (diff.result == Style::DifferenceResult::Overflow && !canRecomputeOverflowWithoutLayout())
         diff.result = Style::DifferenceResult::Layout;
 
-    // If transform changed, and we are not composited, need to do a layout.
+    // If transform changed, and we are not composited, need to do a layout. A composited layer only
+    // needs its ancestors' overflow updated (see setNeedsLayoutForStyleDifference()).
     if (diff.contextSensitiveProperties & Style::DifferenceContextSensitiveProperty::Transform) {
-        // FIXME: when transforms are taken into account for overflow, we will need to do a layout.
         if (!hasLayer() || !downcast<RenderLayerModelObject>(*this).layer()->isComposited()) {
             if (!hasLayer())
                 diff.result = std::max(diff.result, Style::DifferenceResult::Layout);
@@ -605,7 +606,7 @@ bool RenderElement::repaintBeforeStyleChange(Style::Difference diff, const Style
 
 void RenderElement::initializeStyle()
 {
-    Style::loadPendingResources(mutableStyle(), protect(document()), protect(element()).get());
+    Style::loadPendingResources(style(), protect(document()), protect(element()).get());
 
     styleWillChange(Style::DifferenceResult::NewStyle, style());
     m_hasInitializedStyle = true;
@@ -636,7 +637,7 @@ static void logStyleDifference(const RenderElement& renderer, const Style::Compu
 }
 #endif
 
-void RenderElement::setStyle(Style::ComputedStyle&& style, Style::DifferenceResult minimalStyleDifference)
+UniqueRef<Style::ComputedStyle> RenderElement::setStyle(UniqueRef<Style::ComputedStyle>&& style, Style::DifferenceResult minimalStyleDifference)
 {
     // FIXME: Should change RenderView so it can use initializeStyle too.
     // If we do that, we can assert m_hasInitializedStyle unconditionally,
@@ -687,7 +688,7 @@ void RenderElement::setStyle(Style::ComputedStyle&& style, Style::DifferenceResu
     // we will safely bail out with the detachedFromParent flag. We might want to broaden this condition
     // in the future as we move renderer changes out of layout and into style changes.
     if (detachedFromParent)
-        return;
+        return oldStyle;
 
     // Now that the layer (if any) has been updated, we need to adjust the diff again,
     // check whether we should layout now, and decide if we need to repaint.
@@ -701,6 +702,8 @@ void RenderElement::setStyle(Style::ComputedStyle&& style, Style::DifferenceResu
         // not having an outline to having an outline.
         repaint();
     }
+
+    return oldStyle;
 }
 
 void RenderElement::didAttachChild(RenderObject& child, RenderObject*)
@@ -970,9 +973,9 @@ void RenderElement::propagateStyleToAnonymousChildren(StylePropagationType propa
 
         if (style().specifiesColumns()) {
             if (elementChild->style().specifiesColumns())
-                newStyle.inheritColumnPropertiesFrom(style());
+                newStyle->inheritColumnPropertiesFrom(style());
             if (elementChild->style().columnSpan() == ColumnSpan::All)
-                newStyle.setColumnSpan(ColumnSpan::All);
+                newStyle->setColumnSpan(ColumnSpan::All);
         }
 
         updateAnonymousChildStyle(newStyle);
@@ -1118,6 +1121,15 @@ void RenderElement::styleWillChange(Style::Difference diff, const Style::Compute
             view().decrementRendersWithOutline();
     }
 
+    bool hadNamedPage = oldStyle && oldStyle->pageName().isCustomIdent();
+    bool hasNamedPage = newStyle.pageName().isCustomIdent();
+    if (hadNamedPage != hasNamedPage) {
+        if (hasNamedPage)
+            view().frameView().layoutContext().incrementRenderersWithNamedPage();
+        else
+            view().frameView().layoutContext().decrementRenderersWithNamedPage();
+    }
+
     bool hadPixelMovingFilter = oldStyle && oldStyle->filter().hasFilterThatMovesPixels();
     bool hasPixelMovingFilter = newStyle.filter().hasFilterThatMovesPixels();
     if (hadPixelMovingFilter != hasPixelMovingFilter) {
@@ -1213,6 +1225,12 @@ void RenderElement::styleDidChange(Style::Difference diff, const Style::Computed
     }
 
     setNeedsLayoutForStyleDifference(diff, oldStyle);
+
+    // In paginated layout, descendants with page auto use this page value, and their break points are checked when their parent lays out.
+    if (oldStyle && oldStyle->pageName() != style().pageName() && document().paginated()) {
+        for (CheckedRef descendant : descendantsOfType<RenderBox>(*this))
+            descendant->setNeedsLayout(MarkingBehavior::OnlyThis);
+    }
 
     if (isOutOfFlowPositioned() && oldStyle && oldStyle->originalDisplay().isBlockType() != style().originalDisplay().isBlockType()) {
         if (CheckedPtr ancestor = RenderObject::containingBlockForPositionType(PositionType::Static, *this)) {
@@ -1400,6 +1418,9 @@ void RenderElement::willBeDestroyed()
         if (style().filter().hasFilterThatMovesPixels())
             view().decrementRenderersWithPixelMovingFilter();
 
+        if (style().pageName().isCustomIdent())
+            view().frameView().layoutContext().decrementRenderersWithNamedPage();
+
         if (auto* firstLineStyle = style().pseudoElementStyle({ PseudoElementType::FirstLine }))
             unregisterImages(*firstLineStyle);
     }
@@ -1447,6 +1468,32 @@ void RenderElement::setNeedsLayoutForStyleDifference(Style::Difference diff, con
         setNeedsLayoutForOverflowChange();
     } else if (diff == Style::DifferenceResult::Overflow)
         setNeedsLayoutForOverflowChange();
+    else if (diff < Style::DifferenceResult::LayoutOutOfFlowMovementOnly && diff.contextSensitiveProperties.contains(Style::DifferenceContextSensitiveProperty::Transform))
+        setContainingBlockNeedsLayoutForOverflowChange();
+}
+
+// Recomputes the scrollable overflow this box contributes to, without laying out or repainting the box itself.
+void RenderElement::setContainingBlockNeedsLayoutForOverflowChange()
+{
+    if (!is<RenderBox>(*this) || isRenderSVGBlock())
+        return;
+    // The main thread does not follow an accelerated animation frame by frame, so the overflow would snapshot
+    // an arbitrary point of it. The style change that ends the animation updates the overflow.
+    if (auto styleable = Styleable::fromRenderer(*this); styleable && styleable->isRunningOrAboutToRunAcceleratedTransformRelatedAnimation())
+        return;
+    CheckedPtr<RenderElement> containingBlock = this->containingBlock();
+    if (!containingBlock || containingBlock->isRenderSVGBlock())
+        return;
+    ASSERT(!containingBlock->isSetNeedsLayoutForbidden());
+    if (containingBlock->overflowChangesMayAffectLayout()) {
+        containingBlock->setNeedsLayout();
+        return;
+    }
+    if (containingBlock->needsSimplifiedNormalFlowLayout())
+        return;
+    InspectorInstrumentation::willInvalidateLayout(*containingBlock);
+    containingBlock->setNeedsSimplifiedNormalFlowLayoutBit(true);
+    scheduleLayout(containingBlock->markContainingBlocksForLayout());
 }
 
 void RenderElement::setNeedsLayoutForOverflowChange()
@@ -1593,7 +1640,7 @@ bool RenderElement::repaintAfterLayoutIfNeeded(SingleThreadWeakPtr<const RenderL
         if (hasFilter() && !computeFilterOutsets().isZero())
             return true;
 
-        if (style().border().hasBorderRadius()) {
+        if (usedStyle().hasBorderRadius()) {
             // If the border radius changed, repaints at style change time will take care of that.
             // This code is attempting to detect whether border-radius constraining based on box size
             // affects the radii, using the outlineBoundsRect as a proxy for the border box.
@@ -1711,11 +1758,11 @@ bool RenderElement::repaintAfterLayoutIfNeeded(SingleThreadWeakPtr<const RenderL
                 auto* renderBox = dynamicDowncast<RenderBox>(*this);
                 if (!renderBox)
                     return { };
-                auto borderBoxWidth = renderBox->borderBoxWidth();
+                auto borderBoxSize = renderBox->borderBoxSize();
                 return std::max({
                     renderBox->borderRight(),
-                    Style::evaluate<LayoutUnit>(style->borderTopRightRadius().width(), borderBoxWidth, zoom),
-                    Style::evaluate<LayoutUnit>(style->borderBottomRightRadius().width(), borderBoxWidth, zoom),
+                    renderBox->usedStyle().borderTopRightRadius(borderBoxSize).width(),
+                    renderBox->usedStyle().borderBottomRightRadius(borderBoxSize).width(),
                 });
             };
             auto outlineRightInsetExtent = [&] -> LayoutUnit {
@@ -1755,11 +1802,11 @@ bool RenderElement::repaintAfterLayoutIfNeeded(SingleThreadWeakPtr<const RenderL
                 auto* renderBox = dynamicDowncast<RenderBox>(*this);
                 if (!renderBox)
                     return { };
-                auto borderBoxHeight = renderBox->borderBoxHeight();
+                auto borderBoxSize = renderBox->borderBoxSize();
                 return std::max({
                     renderBox->borderBottom(),
-                    Style::evaluate<LayoutUnit>(style->borderBottomLeftRadius().height(), borderBoxHeight, zoom),
-                    Style::evaluate<LayoutUnit>(style->borderBottomRightRadius().height(), borderBoxHeight, zoom),
+                    renderBox->usedStyle().borderBottomLeftRadius(borderBoxSize).height(),
+                    renderBox->usedStyle().borderBottomRightRadius(borderBoxSize).height(),
                 });
             };
             auto outlineBottomInsetExtent = [&] -> LayoutUnit {
@@ -2130,7 +2177,7 @@ Color RenderElement::selectionBackgroundColor() const
     auto styleColorOptions = this->styleColorOptions(StyleColorOptionsPurpose::Rendering);
 
     if (frame().selection().shouldShowBlockCursor() && frame().selection().isCaret())
-        return theme().transformSelectionBackgroundColor(style().visitedDependentColorApplyingColorFilter(), styleColorOptions);
+        return theme().transformSelectionBackgroundColor(protect(style())->visitedDependentColorApplyingColorFilter(), styleColorOptions);
 
     auto pseudoStyleCandidate = this;
     if (pseudoStyleCandidate->isAnonymous())
@@ -2162,10 +2209,25 @@ const Style::ComputedStyle* RenderElement::targetTextPseudoStyle() const
     return textSegmentPseudoStyle(PseudoElementType::TargetText);
 }
 
+FloatRect RenderElement::strokeBoundingBoxInLocalCoordinates() const
+{
+    // Map from SVG user space to the LBSE local coordinate system, anchored at nominalSVGLayoutLocation().
+    // FIXME: RenderSVGInline returns the bounding box of its <text>, not that of the <tspan> itself.
+    auto boundingBox = strokeBoundingBox();
+    if (!document().settings().layerBasedSVGEngineEnabled() || !isSVGLayerAwareDescendantRenderer())
+        return boundingBox;
+
+    if (auto* text = RenderSVGText::locateRenderSVGTextAncestor(*this))
+        boundingBox.moveBy(-text->nominalSVGLayoutLocation());
+    else
+        boundingBox.moveBy(-downcast<RenderLayerModelObject>(*this).nominalSVGLayoutLocation());
+    return boundingBox;
+}
+
 bool RenderElement::getLeadingCorner(FloatPoint& point, bool& insideFixed) const
 {
     if (isSVGRenderer()) {
-        point = localToAbsoluteQuad(strokeBoundingBox(), MapCoordinatesMode::UseTransforms).boundingBox().minXMinYCorner();
+        point = localToAbsoluteQuad(strokeBoundingBoxInLocalCoordinates(), MapCoordinatesMode::UseTransforms).boundingBox().minXMinYCorner();
         return true;
     }
 
@@ -2177,7 +2239,7 @@ bool RenderElement::getLeadingCorner(FloatPoint& point, bool& insideFixed) const
     // find the next text/image child, to get a position
     const RenderObject* o = this;
     while (o) {
-        const RenderObject* p = o;
+        CheckedPtr p = o;
         if (RenderObject* child = o->firstChildSlow())
             o = child;
         else if (o->nextSibling())
@@ -2212,7 +2274,7 @@ bool RenderElement::getLeadingCorner(FloatPoint& point, bool& insideFixed) const
                     point.moveBy(textRenderer->linesBoundingBox().location());
             } else if (auto* box = dynamicDowncast<RenderBox>(*o))
                 point.moveBy(box->location());
-            point = o->container()->localToAbsolute(point, MapCoordinatesMode::UseTransforms, &insideFixed);
+            point = protect(o->container())->localToAbsolute(point, MapCoordinatesMode::UseTransforms, &insideFixed);
             return true;
         }
     }
@@ -2220,7 +2282,7 @@ bool RenderElement::getLeadingCorner(FloatPoint& point, bool& insideFixed) const
     // If the target doesn't have any children or siblings that could be used to calculate the scroll position, we must be
     // at the end of the document. Scroll to the bottom. FIXME: who said anything about scrolling?
     if (!o && document().view()) {
-        point = FloatPoint(0, document().view()->contentsHeight());
+        point = FloatPoint(0, protect(document().view())->contentsHeight());
         return true;
     }
     return false;
@@ -2229,7 +2291,7 @@ bool RenderElement::getLeadingCorner(FloatPoint& point, bool& insideFixed) const
 bool RenderElement::getTrailingCorner(FloatPoint& point, bool& insideFixed) const
 {
     if (isSVGRenderer()) {
-        point = localToAbsoluteQuad(strokeBoundingBox(), MapCoordinatesMode::UseTransforms).boundingBox().maxXMaxYCorner();
+        point = localToAbsoluteQuad(strokeBoundingBoxInLocalCoordinates(), MapCoordinatesMode::UseTransforms).boundingBox().maxXMaxYCorner();
         return true;
     }
 
@@ -2258,14 +2320,17 @@ bool RenderElement::getTrailingCorner(FloatPoint& point, bool& insideFixed) cons
         ASSERT(o);
         if (is<RenderText>(*o) || o->isBlockLevelReplacedOrAtomicInline()) {
             point = FloatPoint();
-            if (auto* textRenderer = dynamicDowncast<RenderText>(*o)) {
+            if (CheckedPtr textRenderer = dynamicDowncast<RenderText>(*o)) {
                 LayoutRect linesBox = textRenderer->linesBoundingBox();
                 if (!linesBox.maxX() && !linesBox.maxY())
                     continue;
                 point.moveBy(linesBox.maxXMaxYCorner());
-            } else
-                point.moveBy(downcast<RenderBox>(*o).borderBoxRectInContainer().maxXMaxYCorner());
-            point = o->container()->localToAbsolute(point, MapCoordinatesMode::UseTransforms, &insideFixed);
+                point = protect(o->container())->localToAbsolute(point, MapCoordinatesMode::UseTransforms, &insideFixed);
+                return true;
+            }
+            // Like the leading corner, map from the box itself, whose location may not be in the coordinate space of its container (e.g. an
+            // out-of-flow box positioned relative to an inline box).
+            point = o->localToAbsolute(LayoutPoint(downcast<RenderBox>(*o).borderBoxSize()), MapCoordinatesMode::UseTransforms, &insideFixed);
             return true;
         }
     }
@@ -2322,12 +2387,12 @@ void RenderElement::paintOutline(PaintInfo& paintInfo, const LayoutRect& paintRe
     if (!hasOutline())
         return;
 
-    OutlinePainter { paintInfo }.paintOutline(*this, paintRect);
+    Paint::OutlinePainter { paintInfo }.paintOutline(*this, paintRect);
 }
 
 void RenderElement::issueRepaintForOutlineAuto(float outlineSize)
 {
-    auto focusRingRects = OutlinePainter::collectFocusRingRects(*this, LayoutPoint(), containerForRepaint().renderer.get());
+    auto focusRingRects = Paint::OutlinePainter::collectFocusRingRects(*this, LayoutPoint(), containerForRepaint().renderer.get());
 
     LayoutRect repaintRect;
     for (auto rect : focusRingRects) {
@@ -2872,6 +2937,7 @@ FloatRect RenderElement::referenceBoxRect(CSSBoxType boxType) const
         return alignReferenceBox(objectBoundingBox());
     case CSSBoxType::BoxMissing:
     case CSSBoxType::BorderBox:
+    case CSSBoxType::HalfBorderBox:
     case CSSBoxType::MarginBox:
     case CSSBoxType::StrokeBox:
         return alignReferenceBox(strokeBoundingBox());
@@ -2911,9 +2977,9 @@ void RenderElement::markRendererDirtyAfterTopLayerChange(RenderElement* renderer
     auto* renderBox = dynamicDowncast<RenderBox>(renderer);
     if (!renderBox || !renderBox->parent() || !containingBlockBeforeStyleResolution)
         return;
-    auto* newContainingBlock = renderBox->containingBlock();
+    CheckedPtr newContainingBlock = renderBox->containingBlock();
     ASSERT(newContainingBlock);
-    if (containingBlockBeforeStyleResolution == newContainingBlock)
+    if (containingBlockBeforeStyleResolution == newContainingBlock.get())
         return;
 
     // Let's carry out the same set of tasks we would normally do when containing block changes for out-of-flow content in RenderBox::styleWillChange.
@@ -2922,7 +2988,7 @@ void RenderElement::markRendererDirtyAfterTopLayerChange(RenderElement* renderer
 
     RenderBoxModelObject::removeOutOfFlowBox(*renderBox);
     // This is to make sure we insert the box to the correct containing block list during static position computation.
-    renderBox->parent()->setChildNeedsLayout();
+    protect(renderBox->parent())->setChildNeedsLayout();
     newContainingBlock->setChildNeedsLayout();
     renderBox->setNeedsLayout();
 }

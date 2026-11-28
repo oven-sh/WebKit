@@ -196,8 +196,7 @@ static void buildRendererHighlight(RenderObject* renderer, const InspectorOverla
                 borderBox.width() + inlineBox.horizontalMarginExtent(), borderBox.height());
         }
 
-        // FIXME: Remove suppression once rdar://189998444 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST FloatQuad absContentQuad = renderer->localToAbsoluteQuad(FloatRect(contentBox));
+        FloatQuad absContentQuad = renderer->localToAbsoluteQuad(FloatRect(contentBox));
         SUPPRESS_MEMORY_UNSAFE_CAST FloatQuad absPaddingQuad = renderer->localToAbsoluteQuad(FloatRect(paddingBox));
         SUPPRESS_MEMORY_UNSAFE_CAST FloatQuad absBorderQuad = renderer->localToAbsoluteQuad(FloatRect(borderBox));
         SUPPRESS_MEMORY_UNSAFE_CAST FloatQuad absMarginQuad = renderer->localToAbsoluteQuad(FloatRect(marginBox));
@@ -343,8 +342,7 @@ static void drawShapeHighlight(GraphicsContext& context, Node& node, InspectorOv
 
     if (paths.shape.isEmpty()) {
         LayoutRect shapeBounds = shapeOutsideInfo->computedShapePhysicalBoundingBox();
-        // FIXME: Remove suppression once rdar://189998444 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST FloatQuad shapeQuad = renderer->localToAbsoluteQuad(FloatRect(shapeBounds));
+        FloatQuad shapeQuad = renderer->localToAbsoluteQuad(FloatRect(shapeBounds));
         contentsQuadToCoordinateSystem(mainView, *containingView, shapeQuad, InspectorOverlay::CoordinateSystem::Document);
         drawOutlinedQuad(context, shapeQuad, shapeHighlightColor, Color::transparentBlack, bounds);
         return;
@@ -2374,7 +2372,7 @@ std::optional<InspectorOverlay::Highlight::FlexHighlightOverlay> InspectorOverla
         // Build bounds for each child and collect children on the same logical line.
         {
             auto childRect = renderChild->borderBoxRectInContainer();
-            renderFlex->flipForWritingMode(childRect);
+            renderFlex->blockStartRelativeToPhysical(childRect);
             childRect.expand(renderChild->marginBox());
 
             auto itemBounds = childQuadToRootQuad({ childRect });

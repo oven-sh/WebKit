@@ -24,6 +24,7 @@
  */
 
 #include "config.h"
+#include "Logging.h"
 #include <wtf/FileSystem.h>
 #include <wtf/SoftLinking.h>
 #include <wtf/posix/POSIXExtras.h>
@@ -47,12 +48,14 @@ void* WebKitSwiftLibrary(bool isOptional)
                 return library;
             auto webkitFrameworkDirectory = WTF::FileSystemImpl::parentPath(dliPath);
             auto dylibPath = WTF::FileSystemImpl::pathByAppendingComponent(webkitFrameworkDirectory, "Frameworks/libWebKitSwift.dylib"_s);
-            if ((library = posixDlopen(dylibPath.utf8(), RTLD_NOW)))
+            if ((library = posixDlopen(makeUTF8CString(dylibPath), RTLD_NOW)))
                 return library;
         }
 
         if (!isOptional)
             RELEASE_ASSERT_WITH_MESSAGE(library, "%s", dlerror());
+        else
+            RELEASE_LOG_ERROR(Process, "Failed to load libWebKitSwift.dylib: %s", dlerror());
         return library;
     }();
     return library;
@@ -75,6 +78,9 @@ SOFT_LINK_CLASS_FOR_SOURCE_OPTIONAL(WebKit, WebKitSwift, WKSLinearMediaSpatialVi
 SOFT_LINK_CLASS_FOR_SOURCE_OPTIONAL(WebKit, WebKitSwift, WKStageModeInteractionDriver)
 #endif
 SOFT_LINK_CLASS_FOR_SOURCE_OPTIONAL(WebKit, WebKitSwift, CredentialUpdaterShim)
+#if ENABLE(PHONE_NUMBER_POSSESSION)
+SOFT_LINK_CLASS_FOR_SOURCE_OPTIONAL(WebKit, WebKitSwift, WKPhoneNumberPossessionPlatformManager)
+#endif
 SOFT_LINK_CLASS_FOR_SOURCE_OPTIONAL(WebKit, WebKitSwift, WKMarketplaceKit)
 SOFT_LINK_CLASS_FOR_SOURCE_OPTIONAL(WebKit, WebKitSwift, WKIdentityDocumentRawRequestValidator);
 SOFT_LINK_CLASS_FOR_SOURCE_OPTIONAL(WebKit, WebKitSwift, WKISO18013Request);
@@ -95,7 +101,7 @@ SOFT_LINK_CLASS_FOR_SOURCE_OPTIONAL(WebKit, WebKitSwift, WKIdentityDocumentPrese
 SOFT_LINK_CLASS_FOR_SOURCE_OPTIONAL(WebKit, WebKitSwift, WKIdentityDocumentPresentmentRequest);
 SOFT_LINK_CLASS_FOR_SOURCE_OPTIONAL(WebKit, WebKitSwift, WKIdentityDocumentPresentmentRequestAuthenticationCertificate);
 SOFT_LINK_CLASS_FOR_SOURCE_OPTIONAL(WebKit, WebKitSwift, WKTextAnimationManager)
-#if ENABLE(WEBXR) && PLATFORM(MAC) && USE(APPLE_INTERNAL_SDK)
+#if ENABLE(WEBXR) && (PLATFORM(MAC) || PLATFORM(VISION))
 SOFT_LINK_CLASS_FOR_SOURCE_OPTIONAL(WebKit, WebKitSwift, WKWebXRImmersiveSpaceHost)
 #endif
 

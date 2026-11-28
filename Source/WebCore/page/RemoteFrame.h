@@ -64,6 +64,7 @@ public:
 
     RemoteFrameView* view() const { return m_view.get(); }
     WEBCORE_EXPORT void setView(RefPtr<RemoteFrameView>&&);
+    void updateViewScrollPositionFromFrameTreeSyncData();
 
     Markable<LayerHostingContextIdentifier> layerHostingContextIdentifier() const { return m_layerHostingContextIdentifier; }
 
@@ -128,7 +129,7 @@ private:
     NODELETE std::optional<DocumentSecurityPolicy> frameDocumentSecurityPolicy() const final;
     NODELETE std::optional<AgentClusterIdentifier> frameAgentClusterIdentifier() const final;
     NODELETE String frameURLProtocol() const final;
-    float frameScaleFactorForChild(const Frame&) const final;
+    float frameOwnerZoomFactorForChild(const Frame&) const final;
 
     NODELETE FrameView* virtualView() const final;
     void disconnectView() final;

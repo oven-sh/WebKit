@@ -27,12 +27,15 @@
 #include "IntegrityPolicy.h"
 
 #include "Document.h"
+#include "FormData.h"
 #include "IntegrityPolicyViolationReportBody.h"
 #include "RFC8941.h"
 #include "Report.h"
+#include "ResourceLoaderOptions.h"
 #include "ResourceResponse.h"
 #include "SecurityContext.h"
 #include "SubresourceIntegrity.h"
+#include <wtf/Borrow.h>
 #include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
@@ -41,7 +44,7 @@ namespace WebCore {
 static void reportViolation(const URL& requestURL, Document& document, bool block, bool reportBlock, const IntegrityPolicy* integrityPolicy, const IntegrityPolicy* integrityPolicyReportOnly)
 {
     auto sendReport = [&document, &requestURL](bool reportOnly, const Vector<String>& endpoints) {
-        for (const auto& endpoint : endpoints) {
+        for (const auto& endpoint : borrow(endpoints)) {
             const URL& documentURL = document.url();
 
             auto reportBody = IntegrityPolicyViolationReportBody::create(documentURL.string(), requestURL.string(), "script"_s, reportOnly);
@@ -65,7 +68,7 @@ static void reportViolation(const URL& requestURL, Document& document, bool bloc
 std::unique_ptr<IntegrityPolicy> processIntegrityPolicy(const ResourceResponse& response, HTTPHeaderName headerName)
 {
     auto parseInnerList = [](auto& innerList, auto& vector, std::optional<String> match) {
-        for (auto& itemAndParameters : innerList) {
+        for (auto& itemAndParameters : borrow(innerList)) {
             auto& item = itemAndParameters.first;
             auto* token = std::get_if<RFC8941::Token>(&item);
             if (!token)
@@ -113,8 +116,10 @@ bool shouldRequestBeBlockedByIntegrityPolicy(ScriptExecutionContext& context, co
     // 2. Let parsedMetadata be the result of calling parse metadata with request’s integrity metadata.
     auto parsedMetadata = parseIntegrityMetadata(options.integrity);
     // 3. If parsedMetadata is not the empty set and request’s mode is either "cors" or "same-origin", return "Allowed".
+    if (!parsedMetadata.isEmpty() && (options.mode == FetchOptions::Mode::Cors || options.mode == FetchOptions::Mode::SameOrigin))
+        return false;
     // 4. If request’s url is local, return "Allowed".
-    if ((parsedMetadata && parsedMetadata->size() && options.mode != FetchOptions::Mode::NoCors) || url.hasLocalScheme())
+    if (url.hasLocalScheme())
         return false;
     // 7. If both policy and reportPolicy are empty integrity policy structs, return "Allowed".
     if (!integrityPolicy && !integrityPolicyReportOnly)

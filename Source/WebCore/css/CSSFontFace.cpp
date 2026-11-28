@@ -148,6 +148,24 @@ MutableStyleProperties& CSSFontFace::mutableProperties()
     );
 }
 
+FontFaceLoadStatus CSSFontFace::fontFaceLoadStatus() const
+{
+    switch (m_status) {
+    case Status::Pending:
+        return FontFaceLoadStatus::Unloaded;
+    case Status::Loading:
+        return FontFaceLoadStatus::Loading;
+    case Status::TimedOut:
+        return FontFaceLoadStatus::Error;
+    case Status::Success:
+        return FontFaceLoadStatus::Loaded;
+    case Status::Failure:
+        return FontFaceLoadStatus::Error;
+    }
+    ASSERT_NOT_REACHED();
+    return FontFaceLoadStatus::Error;
+}
+
 StyleRuleFontFace* CSSFontFace::cssConnection() const
 {
     return WTF::switchOn(m_propertiesOrCSSConnection,
@@ -835,13 +853,6 @@ void CSSFontFace::updateStyleIfNeeded()
 {
     iterateClients(m_clients, [&](CSSFontFaceClient& client) {
         client.updateStyleIfNeeded(*this);
-    });
-}
-
-bool CSSFontFace::hasSVGFontFaceSource() const
-{
-    return m_sources.containsIf([](auto& source) {
-        return protect(*source)->isSVGFontFaceSource();
     });
 }
 

@@ -96,10 +96,10 @@ void RenderBundle::setLabel(String&& label)
     m_renderBundlesResources.firstObject.indirectCommandBuffer.label = label.createNSString().get();
 }
 
-void RenderBundle::replayCommands(RenderPassEncoder& renderPassEncoder) const
+void RenderBundle::replayCommands(RenderPassEncoder& renderPassEncoder, float minDepth, float maxDepth) const
 {
     if (RefPtr renderBundleEncoder = m_renderBundleEncoder)
-        renderBundleEncoder->replayCommands(renderPassEncoder);
+        renderBundleEncoder->replayCommands(renderPassEncoder, minDepth, maxDepth);
 }
 
 bool RenderBundle::requiresCommandReplay() const
@@ -212,24 +212,3 @@ void RenderBundle::releaseDestroyedResources()
 }
 
 } // namespace WebGPU::Metal
-
-#pragma mark WGPU Stubs
-
-NODELETE void wgpuRenderBundleAddRef(WGPURenderBundle renderBundle)
-{
-    WebGPU::Metal::fromAPI(renderBundle).ref();
-}
-
-void wgpuRenderBundleRelease(WGPURenderBundle renderBundle)
-{
-    @autoreleasepool {
-        WebGPU::Metal::fromAPI(renderBundle).deref();
-    }
-}
-
-void wgpuRenderBundleSetLabel(WGPURenderBundle renderBundle, WGPUStringView label)
-{
-    @autoreleasepool {
-        protect(WebGPU::Metal::fromAPI(renderBundle))->setLabel(WebGPU::Metal::fromAPI(label));
-    }
-}

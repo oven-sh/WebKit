@@ -28,7 +28,6 @@
 #if ENABLE(GPU_PROCESS)
 
 #include "RemoteGPUProxy.h"
-#include "RemotePresentationContextProxy.h"
 #include "WebGPUIdentifier.h"
 #include <WebCore/WebGPUCompositorIntegration.h>
 #include <WebCore/WebGPUDevice.h>
@@ -41,34 +40,25 @@ class NativeImage;
 
 namespace WebKit::WebGPU {
 
-class ConvertToBackingContext;
-
 class RemoteCompositorIntegrationProxy final : public WebCore::WebGPUCompositorIntegration {
     WTF_MAKE_TZONE_ALLOCATED(RemoteCompositorIntegrationProxy);
 public:
-    static Ref<RemoteCompositorIntegrationProxy> create(RemoteGPUProxy& parent, ConvertToBackingContext& convertToBackingContext, WebGPUIdentifier identifier)
+    static Ref<RemoteCompositorIntegrationProxy> create(RemoteGPUProxy& parent, WebGPUCompositorIntegrationIdentifier identifier)
     {
-        return adoptRef(*new RemoteCompositorIntegrationProxy(parent, convertToBackingContext, identifier));
+        return adoptRef(*new RemoteCompositorIntegrationProxy(parent, identifier));
     }
 
     virtual ~RemoteCompositorIntegrationProxy();
 
     RemoteGPUProxy& parent() const { return m_parent; }
     RemoteGPUProxy& root() const { return m_parent; }
-
-    void setPresentationContext(RemotePresentationContextProxy& presentationContext)
-    {
-        ASSERT(!m_presentationContext);
-        m_presentationContext = presentationContext;
-    }
+    WebGPUCompositorIntegrationIdentifier backing() const { return m_backing; }
 
     void paintCompositedResultsToCanvas(WebCore::ImageBuffer&, uint32_t) final;
     void withDisplayBufferAsNativeImage(uint32_t, Function<void(WebCore::NativeImage*)>) final;
 
 private:
-    friend class DowncastConvertToBackingContext;
-
-    RemoteCompositorIntegrationProxy(RemoteGPUProxy&, ConvertToBackingContext&, WebGPUIdentifier);
+    RemoteCompositorIntegrationProxy(RemoteGPUProxy&, WebGPUCompositorIntegrationIdentifier);
 
     RemoteCompositorIntegrationProxy(const RemoteCompositorIntegrationProxy&) = delete;
     RemoteCompositorIntegrationProxy(RemoteCompositorIntegrationProxy&&) = delete;
@@ -77,8 +67,6 @@ private:
 
     bool isRemoteCompositorIntegrationProxy() const final { return true; }
 
-    WebGPUIdentifier backing() const { return m_backing; }
-    
     template<typename T>
     [[nodiscard]] IPC::Error send(T&& message)
     {
@@ -91,19 +79,17 @@ private:
     }
 
 #if PLATFORM(COCOA)
-    Vector<MachSendRight> recreateRenderBuffers(int width, int height, WebCore::ColorSpace&&, WebCore::AlphaPremultiplication, ::WebGPU::TextureFormat, unsigned bufferCount, ::WebGPU::Device&) override;
+    uint32_t recreateRenderBuffers(int width, int height, WebCore::ColorSpace&&, WebCore::AlphaPremultiplication, ::WebGPU::TextureFormat, ::WebGPU::Device&) override;
+    void prepareForDisplay(uint32_t frameIndex, CompletionHandler<void(MachSendRight&&, std::optional<uint32_t>)>&&) override;
 #endif
 
-    void prepareForDisplay(uint32_t frameIndex, CompletionHandler<void()>&&) override;
     void updateContentsHeadroom(float) override;
 
     Seconds lastFrameGPUCost() const final { return m_lastFrameGPUCost; }
     Seconds lastFramePresentStall() const final { return m_lastFramePresentStall; }
 
-    WebGPUIdentifier m_backing;
-    const Ref<ConvertToBackingContext> m_convertToBackingContext;
+    WebGPUCompositorIntegrationIdentifier m_backing;
     const Ref<RemoteGPUProxy> m_parent;
-    RefPtr<RemotePresentationContextProxy> m_presentationContext;
     Seconds m_lastFrameGPUCost { 0_s };
     Seconds m_lastFramePresentStall { 0_s };
 };

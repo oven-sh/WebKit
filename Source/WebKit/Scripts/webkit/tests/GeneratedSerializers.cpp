@@ -52,6 +52,8 @@
 #endif
 #include "SwiftTypes.h"
 #include "TemplateTest.h"
+#include <Namespace/ConstMemberClass.h>
+#include <Namespace/CreateUsingUniqueRefClass.h>
 #include <Namespace/EmptyConstructorStruct.h>
 #include <Namespace/EmptyConstructorWithIf.h>
 #if !(ENABLE(OUTER_CONDITION))
@@ -60,7 +62,9 @@
 #if ENABLE(OUTER_CONDITION)
 #include <Namespace/OuterClass.h>
 #endif
+#include <Namespace/ReturnConstRefClass.h>
 #include <Namespace/ReturnRefClass.h>
+#include <Namespace/ReturnUniqueRefClass.h>
 #if USE(APPKIT)
 #include <WebCore/AppKitControlSystemImage.h>
 #endif
@@ -304,6 +308,120 @@ std::optional<Ref<Namespace::ReturnRefClass>> ArgumentCoder<Namespace::ReturnRef
             WTF::move(*functionCallmember1),
             WTF::move(*functionCallmember2),
             WTF::move(*uniqueMember)
+        )
+    };
+}
+
+void ArgumentCoder<Namespace::ConstMemberClass>::encode(Encoder& encoder, const Namespace::ConstMemberClass& instance)
+{
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(instance.values())>, Vector<int>>);
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(instance.segments)>, Vector<double>>);
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(instance.uniqueMember)>, std::unique_ptr<int>>);
+
+    encoder << instance.values();
+    encoder << instance.segments;
+    encoder << instance.uniqueMember;
+}
+
+std::optional<Ref<Namespace::ConstMemberClass>> ArgumentCoder<Namespace::ConstMemberClass>::decode(Decoder& decoder)
+{
+    const auto values = decoder.decode<Vector<int>>();
+    const auto segments = decoder.decode<Vector<double>>();
+    if (!decoder.isValid()) [[unlikely]]
+        return std::nullopt;
+
+    if (!(!segments->isEmpty())) {
+#if ENABLE(IPC_TESTING_API)
+        decoder.setErrorString("Validation failed: !segments->isEmpty()"_s);
+#endif
+        return std::nullopt;
+    }
+    auto uniqueMember = decoder.decode<std::unique_ptr<int>>();
+    if (!decoder.isValid()) [[unlikely]]
+        return std::nullopt;
+    return {
+        Namespace::ConstMemberClass::create(
+            *values,
+            *segments,
+            WTF::move(*uniqueMember)
+        )
+    };
+}
+
+void ArgumentCoder<Namespace::ReturnConstRefClass>::encode(Encoder& encoder, const Namespace::ReturnConstRefClass& instance)
+{
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(instance.member)>, double>);
+    struct ShouldBeSameSizeAsReturnConstRefClass : public VirtualTableAndRefCountOverhead<std::is_polymorphic_v<Namespace::ReturnConstRefClass>, true> {
+        double member;
+    };
+    static_assert(sizeof(ShouldBeSameSizeAsReturnConstRefClass) == sizeof(Namespace::ReturnConstRefClass));
+    static_assert(IsIncreasing < 0
+        , offsetof(Namespace::ReturnConstRefClass, member)
+    >);
+
+    encoder << instance.member;
+}
+
+std::optional<Ref<const Namespace::ReturnConstRefClass>> ArgumentCoder<Namespace::ReturnConstRefClass>::decode(Decoder& decoder)
+{
+    auto member = decoder.decode<double>();
+    if (!decoder.isValid()) [[unlikely]]
+        return std::nullopt;
+    return {
+        Namespace::ReturnConstRefClass::create(
+            WTF::move(*member)
+        )
+    };
+}
+
+void ArgumentCoder<Namespace::ReturnUniqueRefClass>::encode(Encoder& encoder, const Namespace::ReturnUniqueRefClass& instance)
+{
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(instance.member)>, int>);
+    struct ShouldBeSameSizeAsReturnUniqueRefClass : public VirtualTableAndRefCountOverhead<std::is_polymorphic_v<Namespace::ReturnUniqueRefClass>, false> {
+        int member;
+    };
+    static_assert(sizeof(ShouldBeSameSizeAsReturnUniqueRefClass) == sizeof(Namespace::ReturnUniqueRefClass));
+    static_assert(IsIncreasing < 0
+        , offsetof(Namespace::ReturnUniqueRefClass, member)
+    >);
+
+    encoder << instance.member;
+}
+
+std::optional<UniqueRef<Namespace::ReturnUniqueRefClass>> ArgumentCoder<Namespace::ReturnUniqueRefClass>::decode(Decoder& decoder)
+{
+    auto member = decoder.decode<int>();
+    if (!decoder.isValid()) [[unlikely]]
+        return std::nullopt;
+    return {
+        makeUniqueRef<Namespace::ReturnUniqueRefClass>(
+            WTF::move(*member)
+        )
+    };
+}
+
+void ArgumentCoder<Namespace::CreateUsingUniqueRefClass>::encode(Encoder& encoder, const Namespace::CreateUsingUniqueRefClass& instance)
+{
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(instance.member)>, int>);
+    struct ShouldBeSameSizeAsCreateUsingUniqueRefClass : public VirtualTableAndRefCountOverhead<std::is_polymorphic_v<Namespace::CreateUsingUniqueRefClass>, false> {
+        int member;
+    };
+    static_assert(sizeof(ShouldBeSameSizeAsCreateUsingUniqueRefClass) == sizeof(Namespace::CreateUsingUniqueRefClass));
+    static_assert(IsIncreasing < 0
+        , offsetof(Namespace::CreateUsingUniqueRefClass, member)
+    >);
+
+    encoder << instance.member;
+}
+
+std::optional<UniqueRef<Namespace::CreateUsingUniqueRefClass>> ArgumentCoder<Namespace::CreateUsingUniqueRefClass>::decode(Decoder& decoder)
+{
+    auto member = decoder.decode<int>();
+    if (!decoder.isValid()) [[unlikely]]
+        return std::nullopt;
+    return {
+        Namespace::CreateUsingUniqueRefClass::create(
+            WTF::move(*member)
         )
     };
 }

@@ -54,7 +54,7 @@ PendingDownload::PendingDownload(IPC::Connection* parentProcessConnection, Netwo
     , m_webProcessID(webProcessID)
 {
 #if ENABLE(CONTENT_FILTERING)
-#if HAVE(BROWSERENGINEKIT_WEBCONTENTFILTER) && !HAVE(WEBCONTENTRESTRICTIONS_PATH_SPI)
+#if HAVE(BROWSERENGINEKIT_WEBCONTENTFILTER) && !HAVE(WEBCONTENTRESTRICTIONS_PATH_SPI) && PLATFORM(IOS)
     WebParentalControlsURLFilter::setSharedParentalControlsURLFilterIfNecessary();
 #endif
 #endif
@@ -129,7 +129,7 @@ void PendingDownload::willSendRedirectedRequest(WebCore::ResourceRequest&&, WebC
         completionHandler(WebCore::ResourceRequest());
         m_networkLoad->cancel();
         if (m_webProcessID && !redirectRequest.url().protocolIsJavaScript() && m_networkLoad->webFrameID() && m_networkLoad->webPageID()) {
-            if (RefPtr webProcessConnection = m_networkLoad->networkProcess()->webProcessConnection(*m_webProcessID))
+            if (RefPtr webProcessConnection = NetworkProcess::singleton().webProcessConnection(*m_webProcessID))
                 webProcessConnection->loadCancelledDownloadRedirectRequestInFrame(redirectRequest, *m_networkLoad->webFrameID(), *m_networkLoad->webPageID());
         }
         return;
@@ -201,6 +201,11 @@ void PendingDownload::didFailLoading(const WebCore::ResourceError& error)
 IPC::Connection* PendingDownload::messageSenderConnection() const
 {
     return m_parentProcessConnection.get();
+}
+
+void PendingDownload::setPendingDownloadLocation(const String& path, SandboxExtension::Handle&& sandboxExtensionHandle, bool allowOverwrite)
+{
+    m_networkLoad->setPendingDownloadLocation(path, WTF::move(sandboxExtensionHandle), allowOverwrite);
 }
 
 void PendingDownload::didReceiveResponse(WebCore::ResourceResponse&& response, PrivateRelayed, ResponseCompletionHandler&& completionHandler)

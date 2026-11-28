@@ -30,10 +30,12 @@
 #include "CachedResourceClient.h"
 #include "CachedResourceLoader.h"
 #include "CachedResourceRequest.h"
+#include "CrossOriginEmbedderPolicy.h"
 #include "Document.h"
 #include "DocumentIsolationPolicy.h"
 #include "DocumentLoader.h"
 #include "DocumentResourceLoader.h"
+#include "DocumentSettingsValues.h"
 #include "Frame.h"
 #include "FrameLoader.h"
 #include "LocalFrame.h"
@@ -45,6 +47,8 @@
 #include "SecurityOrigin.h"
 #include "SecurityPolicy.h"
 #include "Settings.h"
+
+#include <wtf/Borrow.h>
 
 namespace WebCore {
 
@@ -109,7 +113,7 @@ static ResourceRequest makePrefetchRequest(URL&& url, const Vector<String>& tags
             if (tags[i] == nullAtom())
                 builder.append("null"_s);
             else
-                builder.append(tags[i]);
+                builder.append(borrow(tags)[i]);
         }
         request.setHTTPHeaderField(HTTPHeaderName::SecSpeculationTags, builder.toString());
     }
@@ -198,7 +202,7 @@ bool DocumentPrefetcher::canServeNavigations(const ResourceResponse& response) c
     RefPtr document = m_frame ? m_frame->document() : nullptr;
     if (!document || !document->settings().documentIsolationPolicyEnabled() || !document->settings().siteIsolationEnabled())
         return true;
-    auto documentIsolationPolicy = obtainDocumentIsolationPolicy(response, document->isSecureContext() ? IsSecureContext::Yes : IsSecureContext::No);
+    auto documentIsolationPolicy = obtainDocumentIsolationPolicy(response, document->isSecureContext() ? IsSecureContext::Yes : IsSecureContext::No, credentiallessSupport(document->settingsValues()));
     return documentIsolationPolicy.value == document->documentIsolationPolicy().value;
 }
 

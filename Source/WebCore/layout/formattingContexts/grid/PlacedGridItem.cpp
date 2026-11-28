@@ -32,8 +32,7 @@
 #include "StyleJustifySelf.h"
 #include "UnplacedGridItem.h"
 
-namespace WebCore {
-namespace Layout {
+namespace WebCore::Layout {
 
 PlacedGridItem::PlacedGridItem(const ElementBox& gridItem, const GridAreaLines& gridAreaLines, const Style::ComputedStyle& gridContainerStyle)
     : PlacedGridItem(gridItem, gridAreaLines, gridContainerStyle, gridItem.style())
@@ -47,10 +46,10 @@ PlacedGridItem::PlacedGridItem(const ElementBox& gridItem, const GridAreaLines& 
     , m_inlineAxisAlignment(gridItemStyle.justifySelf().resolve(&gridContainerStyle))
     , m_blockAxisAlignment(gridItemStyle.alignSelf().resolve(&gridContainerStyle))
     , m_writingMode(gridItemStyle.writingMode())
+    , m_boxSizing(gridItemStyle.boxSizing())
     , m_usedZoom(gridItemStyle.usedZoomForLength())
     , m_gridAreaLines(gridAreaLines)
 {
 }
 
-} // namespace Layout
-} // namespace WebCore
+} // namespace WebCore::Layout

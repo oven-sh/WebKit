@@ -45,13 +45,53 @@
 #include "WebCoreOpaqueRootInlines.h"
 #include <JavaScriptCore/JSLock.h>
 #include <JavaScriptCore/JSObjectInlines.h>
+#include <wtf/Borrow.h>
 #include <wtf/CrossThreadCopier.h>
+#include <wtf/HashMap.h>
+#include <wtf/Lock.h>
+#include <wtf/Locker.h>
+#include <wtf/NeverDestroyed.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
 
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(AudioWorkletGlobalScope);
+
+static Lock audioWorkletScopeLock;
+
+NODELETE static HashMap<ScriptExecutionContextIdentifier, unsigned>& audioWorkletScopeCounts() WTF_REQUIRES_LOCK(audioWorkletScopeLock)
+{
+    static NeverDestroyed<HashMap<ScriptExecutionContextIdentifier, unsigned>> counts;
+    ASSERT(audioWorkletScopeLock.isHeld());
+    return counts;
+}
+
+static void registerAudioWorkletScope(ScriptExecutionContextIdentifier documentIdentifier)
+{
+    Locker locker { audioWorkletScopeLock };
+    auto addResult = audioWorkletScopeCounts().add(documentIdentifier, 0);
+    ++addResult.iterator->value;
+}
+
+static void unregisterAudioWorkletScope(ScriptExecutionContextIdentifier documentIdentifier)
+{
+    Locker locker { audioWorkletScopeLock };
+    auto iterator = audioWorkletScopeCounts().find(documentIdentifier);
+    ASSERT(iterator != audioWorkletScopeCounts().end());
+    if (iterator == audioWorkletScopeCounts().end())
+        return;
+    if (iterator->value == 1)
+        audioWorkletScopeCounts().remove(iterator);
+    else
+        --iterator->value;
+}
+
+bool AudioWorkletGlobalScope::hasScopeForDocument(ScriptExecutionContextIdentifier documentIdentifier)
+{
+    Locker locker { audioWorkletScopeLock };
+    return audioWorkletScopeCounts().contains(documentIdentifier);
+}
 
 RefPtr<AudioWorkletGlobalScope> AudioWorkletGlobalScope::tryCreate(AudioWorkletThread& thread, const WorkletParameters& parameters)
 {
@@ -69,17 +109,22 @@ AudioWorkletGlobalScope::AudioWorkletGlobalScope(AudioWorkletThread& thread, Ref
     : WorkletGlobalScope(thread, WTF::move(vm), parameters)
     , m_currentFrame(parameters.currentFrame)
     , m_sampleRate(parameters.sampleRate)
+    , m_documentIdentifier(parameters.documentIdentifier)
     , m_port(MessagePort::entangle(*this, TransferredMessagePort { parameters.globalScopePort }))
 {
     ASSERT(!isMainThread());
+    registerAudioWorkletScope(m_documentIdentifier);
 }
 
-AudioWorkletGlobalScope::~AudioWorkletGlobalScope() = default;
+AudioWorkletGlobalScope::~AudioWorkletGlobalScope()
+{
+    unregisterAudioWorkletScope(m_documentIdentifier);
+}
 
 // https://www.w3.org/TR/webaudio/#dom-audioworkletglobalscope-registerprocessor
 ExceptionOr<void> AudioWorkletGlobalScope::registerProcessor(String&& name, Ref<JSAudioWorkletProcessorConstructor>&& processorConstructor)
 {
-    ASSERT(!isMainThread());
+    ASSERT(isContextThread());
 
     if (name.isEmpty())
         return Exception { ExceptionCode::NotSupportedError, "Name cannot be the empty string"_s };
@@ -113,7 +158,7 @@ ExceptionOr<void> AudioWorkletGlobalScope::registerProcessor(String&& name, Ref<
         parameterDescriptors = parameterDescriptorsConversionResult.releaseReturnValue();
 
         HashSet<String> paramNames;
-        for (auto& descriptor : parameterDescriptors) {
+        for (auto& descriptor : borrow(parameterDescriptors)) {
             auto addResult = paramNames.add(descriptor.name);
             if (!addResult.isNewEntry)
                 return Exception { ExceptionCode::NotSupportedError, makeString("parameterDescriptors contain duplicate AudioParam name: "_s, descriptor.name) };
@@ -135,7 +180,7 @@ ExceptionOr<void> AudioWorkletGlobalScope::registerProcessor(String&& name, Ref<
         return Exception { ExceptionCode::InvalidStateError };
 
     messagingProxy->postTaskToAudioWorklet([name = WTF::move(name).isolatedCopy(), parameterDescriptors = crossThreadCopy(WTF::move(parameterDescriptors))](AudioWorklet& worklet) mutable {
-        ASSERT(isMainThread());
+        RELEASE_ASSERT(isMainThread());
         if (RefPtr audioContext = worklet.audioContext())
             audioContext->addAudioParamDescriptors(name, WTF::move(parameterDescriptors));
     });

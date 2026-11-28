@@ -308,7 +308,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useWarmUpMarkedBlocks, true, Normal, "hand MarkedBlock allocation pages that a helper thread already made resident"_s) \
     v(Unsigned, warmUpMarkedBlockCount, 32, Normal, "how many MarkedBlocks the helper thread keeps ready with their pages already resident; 0 turns it off"_s) \
     v(Unsigned, warmUpMarkedBlockStartAfterBlocks, 64, Normal, "how many MarkedBlocks the process allocates before the helper thread starts; a program that stops before that never creates it"_s) \
-    v(Double, warmUpMarkedBlockIdleTimeout, 10, Normal, "seconds without a MarkedBlock request before the helper thread releases what it is holding and shuts down"_s) \
+    v(Double, warmUpMarkedBlockIdleTimeout, 10, Normal, "seconds without a MarkedBlock request before the helper thread releases its blocks; it shuts down once that time also passes without a buffer prefault request"_s) \
     v(Bool, scribbleFreeCells, false, Normal, nullptr) \
     v(Bool, decommitUnusedMarkedBlockPages, true, Normal, "after sweeping a MarkedBlock, return its interior OS pages that hold no live cell to the OS (only where OS pages are smaller than a MarkedBlock)") \
     v(Bool, evacuateAuxiliaryBlocksAfterEveryFullCollection, false, Normal, "testing: evacuate every Auxiliary block after each full collection, wherever the mutator happens to be, and scribble the old copies"_s) \
@@ -374,6 +374,10 @@ bool hasCapacityToUseLargeGigacage();
     v(Int32, priorityDeltaOfDFGCompilerThreads, computePriorityDeltaOfWorkerThreads(-1, 0), Normal, nullptr) \
     v(Int32, priorityDeltaOfFTLCompilerThreads, computePriorityDeltaOfWorkerThreads(-2, 0), Normal, nullptr) \
     v(Int32, priorityDeltaOfWasmCompilerThreads, computePriorityDeltaOfWorkerThreads(-1, 0), Normal, nullptr) \
+    \
+    /* FIXME: https://bugs.webkit.org/show_bug.cgi?id=331018 remove all the unused options once the pool is on by default */ \
+    v(Bool, useSharedHelperThreadPool, true, Normal, "runs GC marking helpers, JIT compiles and Wasm compiles on one shared pool of threads"_s) \
+    v(Unsigned, helperThreadPoolTargetCapacity, defaultThreadPoolCapacity(), Normal, "target number of shared pool threads that can run at once (excluding minimums)"_s) \
     \
     v(Bool, useProfiler, false, Normal, nullptr) \
     v(Bool, dumpProfilerDataAtExit, false, Normal, nullptr) \
@@ -751,6 +755,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, dumpWasmOpcodeStatistics, false, Normal, nullptr) \
     v(Bool, dumpWasmWarnings, false, Normal, nullptr) \
     v(Bool, useRecursiveJSONParse, true, Normal, nullptr) \
+    v(Bool, useBackgroundPrefaultForLargeBuffers, true, Normal, "have a helper thread fault in large buffers that are written from start to end, such as JSON.stringify results, while they are written; off in mini mode"_s) \
     v(Unsigned, thresholdForStringReplaceCache, 0x1000, Normal, nullptr) \
     v(Bool, useWasmIPInt, ipintEnabledByDefault(), Normal, "Use the in-place interpereter for WASM instead of LLInt."_s) \
     v(Bool, useWasmIPIntPrologueOSR, true, Normal, "Allow IPInt to tier up during function prologues"_s) \
@@ -783,6 +788,8 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, alwaysUseSharedArrayBuffer, false, Normal, nullptr) \
     /* Not sourced from UnifiedWebPreferences.yaml: allows an embedder to conditionally expose SharedArrayBuffer per global, see callers of JSGlobalObject::exposeSharedArrayBuffer(). */ \
     v(Bool, allowSharedArrayBuffer, true, Normal, nullptr) \
+    /* Bun: WebKit/WebKit@b0be2f45a9 has this rule without an option. V8 has it behind --js-nonextensible-applies-to-private, which is off. A process that runs a compiled image has it off (applyCompiledCodeDefaults()). */ \
+    v(Bool, useNonExtensibleAppliesToPrivate, true, Normal, "a private field, method or accessor is defined on an extensible object alone"_s) \
     /* Not sourced from UnifiedWebPreferences.yaml: shares its semantics with the WebCore-bound TrustedTypes feature. */ \
     v(Bool, useTrustedTypes, true, Normal, "Enable trusted types eval protection feature."_s) \
 

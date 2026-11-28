@@ -3,30 +3,25 @@
  * Copyright (C) 2025 Samuel Weinig <sam@webkit.org>
  *
  * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are
- * met:
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
  *
- *     * Redistributions of source code must retain the above copyright
- * notice, this list of conditions and the following disclaimer.
- *     * Redistributions in binary form must reproduce the above
- * copyright notice, this list of conditions and the following disclaimer
- * in the documentation and/or other materials provided with the
- * distribution.
- *     * Neither the name of Google Inc. nor the names of its
- * contributors may be used to endorse or promote products derived from
- * this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. AND ITS CONTRIBUTORS ``AS IS''
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+ * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL APPLE INC. OR ITS CONTRIBUTORS
+ * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
+ * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 #include "config.h"
@@ -44,8 +39,7 @@
 #include <ranges>
 #include <wtf/text/MakeString.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 namespace {
 
@@ -138,7 +132,7 @@ NamedLineCollectionBase::NamedLineCollectionBase(const RenderGrid& initialGrid, 
     auto lineName = nameIsAreaName ? implicitNamedGridLineForSide(name, side) : name;
     auto direction = directionFromSide(side);
     const auto* grid = &initialGrid;
-    const auto* gridContainerStyle = &grid->style();
+    CheckedRef gridContainerStyle = initialGrid.style();
 
     m_lastLine = explicitGridSizeForSide(*grid, side);
 
@@ -198,7 +192,7 @@ NamedLineCollectionBase::NamedLineCollectionBase(const RenderGrid& initialGrid, 
             }
             areaName = CustomIdent { AtomString { name.value.string().left(name.value.length() - suffixLength) } };
         }
-        auto implicitLine = clampedImplicitLineForArea(*gridContainerStyle, areaName, 0, m_lastLine, direction, startSide);
+        auto implicitLine = clampedImplicitLineForArea(gridContainerStyle, areaName, 0, m_lastLine, direction, startSide);
         if (implicitLine)
             m_inheritedNamedLinesIndices.append(*implicitLine);
     }
@@ -283,17 +277,17 @@ NamedLineCollection::NamedLineCollection(const RenderGrid& initialGrid, const Cu
 
     // If we're a subgrid, we want to inherit the line names from any ancestor grids.
     if (initialGrid.isSubgrid(direction)) {
-        for (auto& currentAncestorSubgrid : AncestorSubgridIterator(initialGrid, direction)) {
-            auto* currentAncestorSubgridParent = downcast<RenderGrid>(currentAncestorSubgrid.parent());
-            auto& currentAncestorStyle = currentAncestorSubgrid.style();
+        for (CheckedRef currentAncestorSubgrid : AncestorSubgridIterator(initialGrid, direction)) {
+            CheckedPtr currentAncestorSubgridParent = downcast<RenderGrid>(currentAncestorSubgrid->parent());
+            CheckedRef currentAncestorStyle = currentAncestorSubgrid->style();
 
             // auto-placed subgrids inside a grid lanes container do not inherit any line names
-            if ((currentAncestorSubgridParent->hasStackingAxisRows() && (currentAncestorStyle.gridItemColumnStart().isAuto() || currentAncestorStyle.gridItemColumnStart().isSpan()))
-                || (currentAncestorSubgridParent->hasStackingAxisColumns() && (currentAncestorStyle.gridItemRowStart().isAuto() || currentAncestorStyle.gridItemRowStart().isSpan())))
+            if ((currentAncestorSubgridParent->hasStackingAxisRows() && (currentAncestorStyle->gridItemColumnStart().isAuto() || currentAncestorStyle->gridItemColumnStart().isSpan()))
+                || (currentAncestorSubgridParent->hasStackingAxisColumns() && (currentAncestorStyle->gridItemRowStart().isAuto() || currentAncestorStyle->gridItemRowStart().isSpan())))
                 return;
             // Translate our explicit grid set of lines into the coordinate space of the
             // parent grid, adjusting direction/side as needed.
-            if (currentAncestorSubgrid.isHorizontalWritingMode() != currentAncestorSubgridParent->isHorizontalWritingMode())
+            if (currentAncestorSubgrid->isHorizontalWritingMode() != currentAncestorSubgridParent->isHorizontalWritingMode())
                 currentSide = transposedSide(currentSide);
             direction = directionFromSide(currentSide);
 
@@ -329,7 +323,7 @@ NamedLineCollection::NamedLineCollection(const RenderGrid& initialGrid, const Cu
                 // We now need to look at the grid areas for the parent (not the implicit
                 // lines for the parent!), and insert the ones that intersect as implicit
                 // lines (but in our single combined list).
-                auto implicitLine = clampedImplicitLineForArea(currentAncestorSubgridParent->style(), name, search.startLine(), search.endLine(), direction, isStartSide(side));
+                auto implicitLine = clampedImplicitLineForArea(protect(currentAncestorSubgridParent->style()), name, search.startLine(), search.endLine(), direction, isStartSide(side));
                 if (implicitLine) {
                     ensureInheritedNamedIndices();
                     appended = true;
@@ -441,15 +435,14 @@ static std::pair<GridPosition, GridPosition> adjustGridPositionsFromStyle(const 
 unsigned GridPositionsResolver::explicitGridCount(const RenderGrid& gridContainer, GridTrackSizingDirection direction)
 {
     if (gridContainer.isSubgrid(direction)) {
-        auto& parent = *downcast<RenderGrid>(gridContainer.parent());
-        auto flowAwareDirection = GridLayoutFunctions::flowAwareDirectionForGridItem(parent, gridContainer, direction);
-        return parent.gridSpanForGridItem(gridContainer, flowAwareDirection).integerSpan();
+        CheckedRef parent = *downcast<RenderGrid>(gridContainer.parent());
+        auto parentDirection = GridLayoutFunctions::flowAwareDirection(parent, gridContainer, direction);
+        return parent->gridSpanForGridItem(gridContainer, parentDirection).integerSpan();
     }
-    auto& style = gridContainer.style();
     return std::min<unsigned>(
         std::max(
-            style.gridTemplateList(direction).sizes.size() + gridContainer.autoRepeatCountForDirection(direction),
-            style.gridTemplateAreas().count(direction)
+            gridContainer.style().gridTemplateList(direction).sizes.size() + gridContainer.autoRepeatCountForDirection(direction),
+            gridContainer.style().gridTemplateAreas().count(direction)
         ),
         GridPosition::max()
     );
@@ -669,5 +662,4 @@ GridSpan GridPositionsResolver::resolveGridPositionsFromStyle(const RenderGrid& 
     return GridSpan::untranslatedDefiniteGridSpan(startLine, std::max(startLine, endLine));
 }
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

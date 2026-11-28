@@ -73,6 +73,7 @@ enum DeviceType {
     readonly attribute DOMString spatialVideoProjectionKind;
     readonly attribute long? spatialVideoHorizontalFieldOfView;
     undefined spatialCameraDidMove(unrestricted double yaw, unrestricted double pitch, unrestricted double fieldOfView);
+    undefined setSpatialVideoRendererActive(boolean active);
     readonly attribute boolean isAVExperienceControllerFullscreenEnabled;
 
     readonly attribute DOMString externalDeviceDisplayName;
@@ -90,7 +91,6 @@ enum DeviceType {
 
     readonly attribute SourceType? sourceType;
 
-    readonly attribute sequence<DOMString> shadowRootStyleSheets;
     DOMString base64StringForIconNameAndType(DOMString iconName, DOMString iconType);
     [Conditional=MEDIA_CONTROLS_CONTEXT_MENUS, EnabledBySetting=MediaControlsContextMenusEnabled] boolean showMediaControlsContextMenu(HTMLElement target, JSON options, VoidCallback callback);
     [Conditional=MEDIA_CONTROLS_CONTEXT_MENUS, EnabledBySetting=MediaControlsContextMenusEnabled, ImplementedAs=mediaControlsContextMenuItemsForBindings] sequence<MediaControlsContextMenuItem> mediaControlsContextMenuItems(JSON options);

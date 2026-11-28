@@ -34,6 +34,7 @@
 #include "SelectorChecker.h"
 #include "StyleComputedStyle.h"
 #include "StyleForVisitedLink.h"
+#include "StyleLocalPropertyRegistry.h"
 #include "StyleSubstitutionContext.h"
 #include "TextFlags.h"
 #include "TreeResolutionState.h"
@@ -43,8 +44,6 @@
 namespace WebCore {
 
 class FontCascadeDescription;
-class FontSelectionValue;
-class StyleResolver;
 struct CSSRegisteredCustomProperty;
 
 namespace CSSCalc {
@@ -56,9 +55,7 @@ namespace Style {
 class BuilderStatePropertyScope;
 class BuilderState;
 class Builder;
-class CustomPropertyRegistry;
 class Image;
-class LocalPropertyRegistry;
 class Scope;
 struct Color;
 struct FontFamilies;
@@ -189,7 +186,7 @@ public:
 
     bool isAuthorOrigin() const
     {
-        return m_currentProperty && m_currentProperty->origin == PropertyCascade::Origin::Author;
+        return m_currentProperty && (m_currentProperty->origin == PropertyCascade::Origin::Author || m_currentProperty->origin == PropertyCascade::Origin::Quirk);
     }
 
     NODELETE CSSPropertyID cssPropertyID() const;

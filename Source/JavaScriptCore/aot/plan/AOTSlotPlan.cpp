@@ -782,7 +782,7 @@ static BitVector findMergingFamilies(const Program& program, const Facts& facts,
     size_t numberOfTypes = program.types.numberOfTypes();
     BitVector familiesNamedWhole(families.size());
     BitVector typesAsked(numberOfTypes);
-    UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> setsAsked;
+    HashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> setsAsked;
     Vector<TypeID, 32> typesToAsk;
     Vector<LayoutSetID> setsThatMeet;
     auto meet = [&](LayoutSetID layouts) {

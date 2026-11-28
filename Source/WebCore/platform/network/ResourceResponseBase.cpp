@@ -89,6 +89,7 @@ ResourceResponseBase::ResourceResponseBase(std::optional<ResourceResponseData>&&
     , m_isRedirected(data ? data->isRedirected : false)
     , m_isRangeRequested(data ? data->isRangeRequested : false)
     , m_isFromPrevalentDomain(data ? data->isFromPrevalentDomain : false)
+    , m_requestIncludesCredentials(data ? data->requestIncludesCredentials : IncludesCredentials::Yes)
     , m_tainting(data ? data->tainting : Tainting::Basic)
     , m_source(data ? data->source : Source::Unknown)
     , m_type(data ? data->type : Type::Default)
@@ -122,6 +123,7 @@ ResourceResponseData ResourceResponseData::isolatedCopy() const
         result.certificateInfo = certificateInfo->isolatedCopy();
     result.ipAddressSpace = ipAddressSpace;
     result.isFromPrevalentDomain = isFromPrevalentDomain;
+    result.requestIncludesCredentials = requestIncludesCredentials;
     return result;
 }
 
@@ -151,6 +153,7 @@ ResourceResponseData ResourceResponseBase::crossThreadData() const
         data.certificateInfo = m_certificateInfo->isolatedCopy();
     data.ipAddressSpace = m_ipAddressSpace;
     data.isFromPrevalentDomain = m_isFromPrevalentDomain;
+    data.requestIncludesCredentials = m_requestIncludesCredentials;
 
     return data;
 }
@@ -184,6 +187,7 @@ ResourceResponse ResourceResponseBase::fromCrossThreadData(CrossThreadData&& dat
     response.m_certificateInfo = WTF::move(data.certificateInfo);
     response.m_ipAddressSpace = data.ipAddressSpace;
     response.m_isFromPrevalentDomain = data.isFromPrevalentDomain;
+    response.m_requestIncludesCredentials = data.requestIncludesCredentials;
     return response;
 }
 
@@ -943,7 +947,8 @@ std::optional<ResourceResponseData> ResourceResponseBase::getResponseData() cons
         m_isRangeRequested,
         std::optional<CertificateInfo> { m_certificateInfo },
         m_ipAddressSpace,
-        m_isFromPrevalentDomain
+        m_isFromPrevalentDomain,
+        m_requestIncludesCredentials
     } };
 }
 
@@ -951,8 +956,26 @@ std::optional<ResourceResponseData> ResourceResponseBase::getResponseData() cons
 
 namespace WTF::Persistence {
 
+enum class PersistedResponseFlag : uint32_t {
+    // Removing or reinterpreting bits requires a version bump
+    IsRedirected = 1 << 0,
+    UsedLegacyTLS = 1 << 1,
+    WasPrivateRelayed = 1 << 2,
+    IsRangeRequested = 1 << 3,
+    RequestIncludesCredentials = 1 << 4,
+    // Bits 5+ are for future fields: a present bit and a value bit
+};
+
 void Coder<WebCore::ResourceResponseData>::encodeForPersistence(Encoder& encoder, const WebCore::ResourceResponseData& data)
 {
+    // Changing this encoding, other than claiming a new flag bit, requires bumping currentVersion in CacheStorageDiskStore.cpp, or existing records become unreadable.
+    OptionSet<PersistedResponseFlag> flags;
+    flags.set(PersistedResponseFlag::IsRedirected, data.isRedirected);
+    flags.set(PersistedResponseFlag::UsedLegacyTLS, data.usedLegacyTLS == WebCore::UsedLegacyTLS::Yes);
+    flags.set(PersistedResponseFlag::WasPrivateRelayed, data.wasPrivateRelayed == WebCore::WasPrivateRelayed::Yes);
+    flags.set(PersistedResponseFlag::IsRangeRequested, data.isRangeRequested);
+    flags.set(PersistedResponseFlag::RequestIncludesCredentials, data.requestIncludesCredentials == WebCore::IncludesCredentials::Yes);
+
     encoder << data.url;
     encoder << data.mimeType;
     encoder << static_cast<int64_t>(data.expectedContentLength);
@@ -965,12 +988,9 @@ void Coder<WebCore::ResourceResponseData>::encodeForPersistence(Encoder& encoder
     encoder << data.source;
     encoder << data.type;
     encoder << data.tainting;
-    encoder << data.isRedirected;
-    encoder << data.usedLegacyTLS;
-    encoder << data.wasPrivateRelayed;
     encoder << data.proxyName;
-    encoder << data.isRangeRequested;
     encoder << data.ipAddressSpace;
+    encoder << flags.toRaw();
 }
 
 std::optional<WebCore::ResourceResponseData> Coder<WebCore::ResourceResponseData>::decodeForPersistence(Decoder& decoder)
@@ -1035,35 +1055,21 @@ std::optional<WebCore::ResourceResponseData> Coder<WebCore::ResourceResponseData
     if (!tainting)
         return std::nullopt;
 
-    std::optional<bool> isRedirected;
-    decoder >> isRedirected;
-    if (!isRedirected)
-        return std::nullopt;
-
-    std::optional<WebCore::UsedLegacyTLS> usedLegacyTLS;
-    decoder >> usedLegacyTLS;
-    if (!usedLegacyTLS)
-        return std::nullopt;
-
-    std::optional<WebCore::WasPrivateRelayed> wasPrivateRelayed;
-    decoder >> wasPrivateRelayed;
-    if (!wasPrivateRelayed)
-        return std::nullopt;
-
     std::optional<String> proxyName;
     decoder >> proxyName;
     if (!proxyName)
-        return std::nullopt;
-
-    std::optional<bool> isRangeRequested;
-    decoder >> isRangeRequested;
-    if (!isRangeRequested)
         return std::nullopt;
 
     std::optional<WebCore::IPAddressSpace> ipAddressSpace;
     decoder >> ipAddressSpace;
     if (!ipAddressSpace)
         return std::nullopt;
+
+    std::optional<uint32_t> rawFlags;
+    decoder >> rawFlags;
+    if (!rawFlags)
+        return std::nullopt;
+    auto flags = OptionSet<PersistedResponseFlag>::fromRaw(*rawFlags);
 
     return WebCore::ResourceResponseData {
         WTF::move(*url),
@@ -1078,14 +1084,15 @@ std::optional<WebCore::ResourceResponseData> Coder<WebCore::ResourceResponseData
         *source,
         *type,
         *tainting,
-        *isRedirected,
-        *usedLegacyTLS,
-        *wasPrivateRelayed,
+        flags.contains(PersistedResponseFlag::IsRedirected),
+        flags.contains(PersistedResponseFlag::UsedLegacyTLS) ? WebCore::UsedLegacyTLS::Yes : WebCore::UsedLegacyTLS::No,
+        flags.contains(PersistedResponseFlag::WasPrivateRelayed) ? WebCore::WasPrivateRelayed::Yes : WebCore::WasPrivateRelayed::No,
         WTF::move(*proxyName),
-        *isRangeRequested,
+        flags.contains(PersistedResponseFlag::IsRangeRequested),
         WTF::move(*certificateInfo),
         *ipAddressSpace,
-        false
+        false,
+        flags.contains(PersistedResponseFlag::RequestIncludesCredentials) ? WebCore::IncludesCredentials::Yes : WebCore::IncludesCredentials::No
     };
 }
 

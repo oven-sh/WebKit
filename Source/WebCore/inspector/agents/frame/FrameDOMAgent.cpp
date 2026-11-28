@@ -47,6 +47,7 @@
 #include "FrameDestructionObserverInlines.h"
 #include "FrameInlines.h"
 #include "HTMLFrameOwnerElement.h"
+#include "HTMLMediaElement.h"
 #include "HTMLNames.h"
 #include "HTMLScriptElement.h"
 #include "HTMLSlotElement.h"
@@ -74,17 +75,20 @@
 #include "ScriptController.h"
 #include "ShadowRoot.h"
 #include "StaticNodeList.h"
+#include "Styleable.h"
 #include "Text.h"
 #include "TextNodeTraversal.h"
 #include "WebInjectedScriptManager.h"
 #include "markup.h"
 #include <JavaScriptCore/InjectedScript.h>
 #include <JavaScriptCore/InjectedScriptManager.h>
+#include <JavaScriptCore/InspectorDebuggerAgent.h>
 #include <JavaScriptCore/InspectorProtocolObjects.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/TopExceptionScope.h>
 #include <pal/crypto/CryptoDigest.h>
 #include <pal/text/TextEncoding.h>
+#include <wtf/Stopwatch.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/Base64.h>
 #include <wtf/text/MakeString.h>
@@ -175,6 +179,9 @@ FrameDOMAgent::FrameDOMAgent(FrameAgentContext& context, InspectorOverlay& overl
     , m_injectedScriptManager(context.injectedScriptManager)
     , m_destroyedNodesTimer(*this, &FrameDOMAgent::destroyedNodesTimerFired)
     , m_focusNodeTimer(*this, &FrameDOMAgent::focusNode)
+#if ENABLE(VIDEO)
+    , m_mediaEventTracker(makeUniqueRef<InspectorMediaEventTracker>(*this))
+#endif
 {
 }
 
@@ -188,6 +195,17 @@ void FrameDOMAgent::didCreateFrontendAndBackend()
     Ref { m_instrumentingAgents.get() }->setPersistentFrameDOMAgent(this);
 
     m_document = protect(m_inspectedFrame)->document();
+
+#if ENABLE(VIDEO)
+    if (RefPtr document = m_document)
+        addEventListenersToNode(*document);
+
+    for (auto& weakMediaElement : HTMLMediaElement::allMediaElements()) {
+        Ref mediaElement = weakMediaElement;
+        if (mediaElement->document().frame() == m_inspectedFrame.ptr())
+            addEventListenersToNode(mediaElement.get());
+    }
+#endif // ENABLE(VIDEO)
 
     // Force a layout so that we can collect additional information from the layout process, as
     // InspectorDOMAgent does. The flex line-start cache is only populated by layouts that run while a
@@ -210,8 +228,14 @@ void FrameDOMAgent::relayoutDocument()
 // Deliberately does not touch the overlay. InspectorDOMAgent does `Ref overlay = m_overlay.get()` here,
 // which on the frame path would ref a LocalFrame whose refcount has already reached zero -- the frame
 // destructor is what calls into this controller.
-void FrameDOMAgent::willDestroyFrontendAndBackend(Inspector::DisconnectReason)
+void FrameDOMAgent::willDestroyFrontendAndBackend(Inspector::DisconnectReason reason)
 {
+#if ENABLE(VIDEO)
+    m_mediaEventTracker->reset(reason == Inspector::DisconnectReason::InspectedTargetDestroyed ? InspectorMediaEventTracker::RemoveEventListeners::No : InspectorMediaEventTracker::RemoveEventListeners::Yes);
+#else
+    UNUSED_PARAM(reason);
+#endif
+
     m_domEditor.reset();
     m_history.reset();
 
@@ -287,8 +311,6 @@ Vector<Ref<Node>> FrameDOMAgent::boundNodes() const
 
 Node* FrameDOMAgent::nodeForId(Inspector::Protocol::DOM::NodeId id)
 {
-    if (!m_idToNode.isValidKey(id))
-        return nullptr;
     return m_idToNode.get(id);
 }
 
@@ -316,6 +338,35 @@ RefPtr<Element> FrameDOMAgent::assertElement(Inspector::Protocol::ErrorString& e
     if (!element)
         errorString = "Node for given nodeId is not an element"_s;
     return element;
+}
+
+RefPtr<HTMLFrameOwnerElement> FrameDOMAgent::assertChildFrameOwner(Inspector::Protocol::ErrorString& errorString, const Inspector::Protocol::Network::FrameId& frameId)
+{
+    auto parsedFrameId = IdentifierRegistry::parseProtocolFrameId(frameId);
+    if (!parsedFrameId) {
+        errorString = "Invalid frameId format"_s;
+        return nullptr;
+    }
+
+    // Only direct children: their owner elements are in this agent's document, and every other frame has
+    // its own FrameDOMAgent. Walk the frame tree instead of using the identifier registry: assertFrame() only
+    // returns LocalFrames, so it misses a cross-site child, and the registry is keyed by the full frame ID,
+    // whose hosting process can be stale for a RemoteFrame. Compare the FrameIdentifier only.
+    // FIXME: Add an identifier registry lookup keyed by FrameIdentifier so this walk and the one in
+    // InspectorDOMAgent::assertFrame() are not needed, and other frameId commands do not miss RemoteFrames.
+    Ref frame = m_inspectedFrame;
+    for (RefPtr child = frame->tree().firstChild(); child; child = child->tree().nextSibling()) {
+        if (child->frameID() != parsedFrameId->second)
+            continue;
+
+        RefPtr ownerElement = child->ownerElement();
+        if (!ownerElement)
+            errorString = "Missing owner element for given frameId"_s;
+        return ownerElement;
+    }
+
+    errorString = "Missing child frame for given frameId"_s;
+    return nullptr;
 }
 
 RefPtr<Node> FrameDOMAgent::assertEditableNode(Inspector::Protocol::ErrorString& errorString, Inspector::Protocol::DOM::NodeId nodeId)
@@ -575,6 +626,37 @@ Inspector::Protocol::DOM::NodeId FrameDOMAgent::pushNodePathToFrontend(Inspector
     return boundNodeId(nodeToPush);
 }
 
+Inspector::Protocol::ErrorStringOr<Ref<Inspector::Protocol::DOM::Styleable>> FrameDOMAgent::pushStyleablePathToFrontend(const Styleable& styleable)
+{
+    Inspector::Protocol::ErrorString errorString;
+    auto nodeId = pushStyleableNodePathToFrontend(errorString, styleable);
+    if (!nodeId)
+        return makeUnexpected(errorString);
+
+    return InspectorDOMAgent::buildObjectForStyleable(nodeId, styleable);
+}
+
+Inspector::Protocol::DOM::NodeId FrameDOMAgent::pushStyleableElementToFrontend(const Styleable& styleable)
+{
+    Inspector::Protocol::ErrorString ignored;
+    return pushStyleableNodePathToFrontend(ignored, styleable);
+}
+
+Inspector::Protocol::DOM::NodeId FrameDOMAgent::pushStyleableNodePathToFrontend(Inspector::Protocol::ErrorString& errorString, const Styleable& styleable)
+{
+    if (!boundNodeId(protect(styleable.element->document()).ptr())) {
+        errorString = "Document must have been requested"_s;
+        return 0;
+    }
+
+    RefPtr element = InspectorDOMAgent::elementToPushForStyleable(styleable);
+    auto nodeId = pushNodePathToFrontend(errorString, protect(element ? element.get() : styleable.element.ptr()));
+    if (!nodeId && errorString.isEmpty())
+        errorString = "Unable to push node to frontend"_s;
+
+    return nodeId;
+}
+
 void FrameDOMAgent::setDocument(Document* document)
 {
     if (document == m_document.get())
@@ -600,7 +682,7 @@ void FrameDOMAgent::setDocument(Document* document)
     // Clears the flex line-start cache and re-seeds it for the new document, as the page agent does.
     relayoutDocument();
 
-    // FrameLoader::clear() sets a null document just before the new one. Only report the new one.
+    // FrameLoader::detachCurrentDocument() sets a null document just before the new one. Only report the new one.
     if (!document || !m_documentRequested)
         return;
 
@@ -723,6 +805,54 @@ Inspector::CommandResult<Ref<JSON::ArrayOf<int>>> FrameDOMAgent::requestAssigned
 }
 
 // MARK: - InspectorInstrumentation Hooks
+
+void FrameDOMAgent::addEventListenersToNode(Node& node)
+{
+#if ENABLE(VIDEO)
+    if (pageDOMAgentReportsMediaEvents(node))
+        return;
+    m_mediaEventTracker->addEventListenersToNode(node);
+#else
+    UNUSED_PARAM(node);
+#endif
+}
+
+void FrameDOMAgent::eventDidResetAfterDispatch(const Event& event)
+{
+#if ENABLE(VIDEO)
+    m_mediaEventTracker->eventDidResetAfterDispatch(event);
+#else
+    UNUSED_PARAM(event);
+#endif
+}
+
+#if ENABLE(VIDEO)
+// FIXME: <https://webkit.org/b/323034> Revisit once the main frame's tree comes from its frame target.
+bool FrameDOMAgent::pageDOMAgentReportsMediaEvents(Node& node) const
+{
+    return Ref { m_instrumentingAgents }->persistentDOMAgent() && InspectorMediaEventTracker::isInLocalFrameTree(node);
+}
+
+Inspector::Protocol::DOM::NodeId FrameDOMAgent::pushNodePathForMediaEvent(Node& node)
+{
+    // The node may have been adopted into another frame's document after its listeners were added.
+    if (node.document().frame() != m_inspectedFrame.ptr() || pageDOMAgentReportsMediaEvents(node))
+        return 0;
+    return pushNodePathToFrontend(&node);
+}
+
+void FrameDOMAgent::mediaEventDidFire(Inspector::Protocol::DOM::NodeId nodeId, const String& eventName, RefPtr<JSON::Object>&& data)
+{
+    auto timestamp = protect(protect(environment())->executionStopwatch())->elapsedTime().seconds();
+    m_frontendDispatcher->didFireEvent(nodeId, eventName, timestamp, WTF::move(data));
+}
+
+void FrameDOMAgent::powerEfficientPlaybackStateDidChange(Inspector::Protocol::DOM::NodeId nodeId, bool isPowerEfficient)
+{
+    auto timestamp = protect(protect(environment())->executionStopwatch())->elapsedTime().seconds();
+    m_frontendDispatcher->powerEfficientPlaybackStateChanged(nodeId, timestamp, isPowerEfficient);
+}
+#endif // ENABLE(VIDEO)
 
 void FrameDOMAgent::didInsertDOMNode(Node& node)
 {
@@ -1114,6 +1244,25 @@ Inspector::CommandResult<void> FrameDOMAgent::setAllowEditingUserAgentShadowTree
     return { };
 }
 
+Inspector::CommandResult<Ref<Inspector::Protocol::DOM::MediaStats>> FrameDOMAgent::getMediaStats(int nodeId)
+{
+#if ENABLE(VIDEO)
+    Inspector::Protocol::ErrorString errorString;
+    RefPtr element = assertElement(errorString, nodeId);
+    if (!element)
+        return makeUnexpected(errorString);
+
+    RefPtr mediaElement = dynamicDowncast<HTMLMediaElement>(element);
+    if (!mediaElement)
+        return makeUnexpected("Node for given nodeId is not a media element"_s);
+
+    return InspectorDOMAgent::buildMediaStats(*mediaElement);
+#else
+    UNUSED_PARAM(nodeId);
+    return makeUnexpected("no media support"_s);
+#endif
+}
+
 Inspector::CommandResult<Ref<JSON::ArrayOf<Inspector::Protocol::DOM::EventListener>>> FrameDOMAgent::getEventListenersForNode(int nodeId, std::optional<bool>&& includeAncestors)
 {
     Inspector::Protocol::ErrorString errorString;
@@ -1156,6 +1305,7 @@ Inspector::CommandResult<Ref<JSON::ArrayOf<Inspector::Protocol::DOM::EventListen
     auto addListener = [&](const Ref<RegisteredEventListener>& listener, const EventListenerInfo& info) {
         Inspector::Protocol::DOM::EventListenerId identifier = 0;
         bool disabled = false;
+        RefPtr<JSC::Breakpoint> breakpoint;
 
         Ref eventTarget = *info.eventTarget;
 
@@ -1163,6 +1313,7 @@ Inspector::CommandResult<Ref<JSON::ArrayOf<Inspector::Protocol::DOM::EventListen
             if (inspectorEventListener.matches(eventTarget, info.eventType, listener->callback(), listener->useCapture())) {
                 identifier = inspectorEventListener.identifier;
                 disabled = inspectorEventListener.disabled;
+                breakpoint = inspectorEventListener.breakpoint;
                 break;
             }
         }
@@ -1176,7 +1327,7 @@ Inspector::CommandResult<Ref<JSON::ArrayOf<Inspector::Protocol::DOM::EventListen
             m_eventListenerEntries.add(identifier, inspectorEventListener);
         }
 
-        listeners->addItem(buildObjectForEventListener(listener, identifier, eventTarget, info.eventType, disabled));
+        listeners->addItem(buildObjectForEventListener(listener, identifier, eventTarget, info.eventType, disabled, breakpoint));
     };
 
     // Get Capturing Listeners (in this order)
@@ -1211,6 +1362,61 @@ Inspector::CommandResult<void> FrameDOMAgent::setEventListenerDisabled(int event
     return { };
 }
 
+Inspector::CommandResult<void> FrameDOMAgent::setBreakpointForEventListener(int eventListenerId, RefPtr<JSON::Object>&& options)
+{
+    Inspector::Protocol::ErrorString errorString;
+
+    auto it = m_eventListenerEntries.find(eventListenerId);
+    if (it == m_eventListenerEntries.end())
+        return makeUnexpected("Missing event listener for given eventListenerId"_s);
+
+    // Events of nested frames only reach their own frame's agents.
+    Ref eventTarget = *it->value.eventTarget;
+    RefPtr<LocalFrame> frame;
+    if (RefPtr node = dynamicDowncast<Node>(eventTarget))
+        frame = node->document().frame();
+    else if (RefPtr window = dynamicDowncast<LocalDOMWindow>(eventTarget))
+        frame = window->frame();
+    if (frame != m_inspectedFrame.ptr())
+        return makeUnexpected("Not supported for event listeners outside the frame's document"_s);
+
+    if (it->value.breakpoint)
+        return makeUnexpected("Breakpoint for given eventListenerId already exists"_s);
+
+    it->value.breakpoint = InspectorDebuggerAgent::debuggerBreakpointFromPayload(errorString, WTF::move(options));
+    if (!it->value.breakpoint)
+        return makeUnexpected(errorString);
+
+    return { };
+}
+
+Inspector::CommandResult<void> FrameDOMAgent::removeBreakpointForEventListener(int eventListenerId)
+{
+    auto it = m_eventListenerEntries.find(eventListenerId);
+    if (it == m_eventListenerEntries.end())
+        return makeUnexpected("Missing event listener for given eventListenerId"_s);
+
+    if (!it->value.breakpoint)
+        return makeUnexpected("Breakpoint for given eventListenerId missing"_s);
+
+    it->value.breakpoint = nullptr;
+
+    return { };
+}
+
+// Stale entries are dropped here rather than on removal, since a `once` listener is removed just before it runs.
+void FrameDOMAgent::didAddEventListener(EventTarget& target, const AtomString& eventType, EventListener& listener, bool capture)
+{
+    // Adding the same callback again creates a new EventListener, so compare by value instead of by pointer.
+    m_eventListenerEntries.removeIf([&](auto& entry) {
+        auto& inspectorEventListener = entry.value;
+        return inspectorEventListener.eventTarget.get() == &target
+            && inspectorEventListener.eventType == eventType
+            && inspectorEventListener.useCapture == capture
+            && *inspectorEventListener.eventListener == listener;
+    });
+}
+
 bool FrameDOMAgent::isEventListenerDisabled(EventTarget& target, const AtomString& eventType, EventListener& listener, bool capture)
 {
     for (auto& inspectorEventListener : m_eventListenerEntries.values()) {
@@ -1218,6 +1424,24 @@ bool FrameDOMAgent::isEventListenerDisabled(EventTarget& target, const AtomStrin
             return inspectorEventListener.disabled;
     }
     return false;
+}
+
+RefPtr<JSC::Breakpoint> FrameDOMAgent::breakpointForEventListener(EventTarget& target, const AtomString& eventType, EventListener& listener, bool capture)
+{
+    for (auto& inspectorEventListener : m_eventListenerEntries.values()) {
+        if (inspectorEventListener.matches(target, eventType, listener, capture))
+            return inspectorEventListener.breakpoint;
+    }
+    return nullptr;
+}
+
+Inspector::Protocol::DOM::EventListenerId FrameDOMAgent::idForEventListener(EventTarget& target, const AtomString& eventType, EventListener& listener, bool capture)
+{
+    for (auto& inspectorEventListener : m_eventListenerEntries.values()) {
+        if (inspectorEventListener.matches(target, eventType, listener, capture))
+            return inspectorEventListener.identifier;
+    }
+    return 0;
 }
 
 // Cleared per-renderer at the start of every flex layout, so no explicit invalidation is needed.
@@ -1238,7 +1462,7 @@ Vector<size_t> FrameDOMAgent::flexibleBoxRendererCachedItemsAtStartOfLine(const 
     return m_flexibleBoxRendererCachedItemsAtStartOfLine.get(renderer);
 }
 
-Ref<Inspector::Protocol::DOM::EventListener> FrameDOMAgent::buildObjectForEventListener(const Ref<RegisteredEventListener>& registeredEventListener, Inspector::Protocol::DOM::EventListenerId identifier, EventTarget& eventTarget, const AtomString& eventType, bool disabled)
+Ref<Inspector::Protocol::DOM::EventListener> FrameDOMAgent::buildObjectForEventListener(const Ref<RegisteredEventListener>& registeredEventListener, Inspector::Protocol::DOM::EventListenerId identifier, EventTarget& eventTarget, const AtomString& eventType, bool disabled, const RefPtr<JSC::Breakpoint>& breakpoint)
 {
     Ref<EventListener> eventListener = registeredEventListener->callback();
 
@@ -1329,6 +1553,8 @@ Ref<Inspector::Protocol::DOM::EventListener> FrameDOMAgent::buildObjectForEventL
         value->setOnce(true);
     if (disabled)
         value->setDisabled(disabled);
+    if (breakpoint)
+        value->setHasBreakpoint(true);
     return value;
 }
 
@@ -1660,31 +1886,32 @@ Inspector::CommandResult<int> FrameDOMAgent::requestNode(const String& objectId)
 
 Inspector::CommandResult<int> FrameDOMAgent::requestFrameOwner(const String& frameId)
 {
-    auto parsedFrameId = IdentifierRegistry::parseProtocolFrameId(frameId);
-    if (!parsedFrameId)
-        return makeUnexpected("Invalid frameId format"_s);
+    Inspector::Protocol::ErrorString errorString;
 
-    // Only direct children: every frame has its own FrameDOMAgent, and the frontend asks the target of the
-    // child's parent. Compare the FrameIdentifier only: the hosting process in a frame ID can be stale in a
-    // process that holds a RemoteFrame.
-    Ref frame = m_inspectedFrame;
-    for (RefPtr child = frame->tree().firstChild(); child; child = child->tree().nextSibling()) {
-        if (child->frameID() != parsedFrameId->second)
-            continue;
+    RefPtr ownerElement = assertChildFrameOwner(errorString, frameId);
+    if (!ownerElement)
+        return makeUnexpected(errorString);
 
-        RefPtr ownerElement = child->ownerElement();
-        if (!ownerElement)
-            return makeUnexpected("Missing owner element for given frameId"_s);
+    auto nodeId = pushNodePathToFrontend(errorString, ownerElement.get());
+    if (!nodeId)
+        return makeUnexpected(errorString);
 
-        Inspector::Protocol::ErrorString errorString;
-        auto nodeId = pushNodePathToFrontend(errorString, ownerElement.get());
-        if (!nodeId)
-            return makeUnexpected(errorString);
+    return nodeId;
+}
 
-        return nodeId;
-    }
+Inspector::CommandResult<void> FrameDOMAgent::focus(int nodeId)
+{
+    Inspector::Protocol::ErrorString errorString;
 
-    return makeUnexpected("Missing child frame for given frameId"_s);
+    RefPtr element = assertElement(errorString, nodeId);
+    if (!element)
+        return makeUnexpected(errorString);
+    if (!element->isFocusable())
+        return makeUnexpected("Element for given nodeId is not focusable"_s);
+
+    element->focus();
+
+    return { };
 }
 
 Inspector::CommandResult<void> FrameDOMAgent::setInspectedNode(int nodeId)
@@ -1846,6 +2073,23 @@ Inspector::CommandResult<void> FrameDOMAgent::innerHighlightNodeList(Ref<JSON::A
 Inspector::CommandResult<void> FrameDOMAgent::hideHighlight()
 {
     protect(overlay())->hideHighlight();
+
+    return { };
+}
+
+Inspector::CommandResult<void> FrameDOMAgent::highlightFrame(const String& frameId, RefPtr<JSON::Object>&& color, RefPtr<JSON::Object>&& outlineColor)
+{
+    Inspector::Protocol::ErrorString errorString;
+
+    RefPtr ownerElement = assertChildFrameOwner(errorString, frameId);
+    if (!ownerElement)
+        return makeUnexpected(errorString);
+
+    auto highlightConfig = makeUnique<InspectorOverlay::Highlight::Config>();
+    highlightConfig->showInfo = true; // Always show tooltips for frames.
+    highlightConfig->content = parseInspectorColor(WTF::move(color)).value_or(Color::transparentBlack);
+    highlightConfig->contentOutline = parseInspectorColor(WTF::move(outlineColor)).value_or(Color::transparentBlack);
+    protect(overlay())->highlightNode(ownerElement.get(), *highlightConfig);
 
     return { };
 }

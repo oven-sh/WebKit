@@ -39,7 +39,7 @@ struct RegExpEntrypoints {
 struct RegExpNamedGroups {
     unsigned numDuplicateNamedCaptureGroups { 0 };
     FixedVector<AtomString> captureGroupNames;
-    UncheckedKeyHashMap<String, WTF::Vector<unsigned>> namedGroupToParenIndices;
+    HashMap<String, WTF::Vector<unsigned>> namedGroupToParenIndices;
 };
 
 class RegExpRecords {
@@ -95,7 +95,7 @@ private:
 
     const ImageRegExp* m_records { nullptr };
     Vector<uint32_t> m_firstCellOfRecord;
-    UncheckedKeyHashMap<uint64_t, RegExp*, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_cellsWithOtherFlags;
+    HashMap<uint64_t, RegExp*, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_cellsWithOtherFlags;
     Vector<RegExp*> m_cellsInOrderOfCreation;
     size_t m_numberOfCellsVisited { 0 };
     uint32_t m_lastFullVisitVersion { 0 };

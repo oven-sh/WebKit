@@ -105,11 +105,11 @@ private:
     Vector<DemotedInduction, 2> m_demoted;
     unsigned m_numberOfRecords { 0 };
     unsigned m_numberOfDemoted { 0 };
-    UncheckedKeyHashMap<const Value*, Places> m_placesOf;
-    UncheckedKeyHashMap<std::pair<Variable*, BasicBlock*>, Vector<unsigned, 1>> m_demotedAt;
+    HashMap<const Value*, Places> m_placesOf;
+    HashMap<std::pair<Variable*, BasicBlock*>, Vector<unsigned, 1>> m_demotedAt;
     BitVector m_isReferenced;
     // Made where a sweep goes on asking, and right until a value is added.
-    UncheckedKeyHashSet<const Value*> m_liveValues;
+    HashSet<const Value*> m_liveValues;
     unsigned m_numberOfWalksOverLiveValues { 0 };
     bool m_knowsLiveValues { false };
 };

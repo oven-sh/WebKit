@@ -32,10 +32,8 @@
 #include <wtf/Vector.h>
 #include <wtf/WeakPtr.h>
 
-namespace WebCore {
-namespace LayoutIntegration {
+namespace WebCore::LayoutIntegration {
 class InlineContent;
-}
 }
 
 namespace WTF {
@@ -81,6 +79,7 @@ public:
     float clearBeforeAfterGaps() const { return m_clearGapBeforeFirstLine + m_clearGapAfterLastLine; }
     float clearGapBeforeFirstLine() const { return m_clearGapBeforeFirstLine; }
     bool hasBlockLevelBoxes() const { return m_hasBlockLevelBoxes; }
+    bool hasFloats() const { return m_hasFloats; }
     bool hasPaintedInlineLevelBoxes() const { return m_hasPaintedInlineLevelBoxes; }
     bool contentFitsWithinMaximumLines() const { return m_contentFitsWithinMaximumLines; }
 
@@ -113,11 +112,12 @@ private:
 
     void setInkOverflow(const FloatRect& inkOverflow) { m_inkOverflow = inkOverflow; }
     void setScrollableOverflow(const FloatRect& scrollableOverflow) { m_scrollableOverflow = scrollableOverflow; }
-    void setHasMultilinePaintOverlap() { m_hasMultilinePaintOverlap = true; }
+    void setHasMultilinePaintOverlap(bool hasMultilinePaintOverlap) { m_hasMultilinePaintOverlap = hasMultilinePaintOverlap; }
     void setClearGapBeforeFirstLine(float clearGapBeforeFirstLine) { m_clearGapBeforeFirstLine = clearGapBeforeFirstLine; }
     void setClearGapAfterLastLine(float clearGapAfterLastLine) { m_clearGapAfterLastLine = clearGapAfterLastLine; }
     void setFirstLinePaginationOffset(float firstLinePaginationOffset) { m_firstLinePaginationOffset = firstLinePaginationOffset; }
     void setHasBlockLevelBoxes() { m_hasBlockLevelBoxes = true; }
+    void setHasFloats(bool hasFloats) { m_hasFloats = hasFloats; }
     void setContentMayHaveInkOverflow(bool mayHaveInkOverflow) { m_contentMayHaveInkOverflow = mayHaveInkOverflow; }
     bool contentMayHaveInkOverflow() const { return m_contentMayHaveInkOverflow; }
     void setHasPaintedInlineLevelBoxes() { m_hasPaintedInlineLevelBoxes = true; }
@@ -142,6 +142,7 @@ private:
 
     bool m_hasMultilinePaintOverlap { false };
     bool m_hasBlockLevelBoxes { false };
+    bool m_hasFloats { false };
     bool m_contentMayHaveInkOverflow { false };
     bool m_hasPaintedInlineLevelBoxes { false };
 

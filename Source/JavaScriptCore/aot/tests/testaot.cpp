@@ -469,7 +469,7 @@ int main(int argc, char** argv)
             JSC::Options::useTemporal() = true;
             JSC::Options::useExplicitResourceManagement() = true;
             for (const String& option : parsedCommandLine->jscOptions)
-                JSC::Options::setOption(byteCast<char>(option.utf8().span().subspan(2).data()), false);
+                JSC::Options::setOption(byteCast<char>(makeUTF8CString(option).span().subspan(2).data()), false);
         }
         JSC::Options::notifyOptionsChanged();
     }

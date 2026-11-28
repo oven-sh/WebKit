@@ -118,7 +118,7 @@ private:
         LayoutSetID membersLaidIn;
     };
     Vector<OffsetsByShape, 2> m_offsetsByShape;
-    UncheckedKeyHashMap<uint64_t, uint32_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_offsetsByShapeOfKeyAndMembers;
+    HashMap<uint64_t, uint32_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_offsetsByShapeOfKeyAndMembers;
 };
 
 void SlotAccessEmitter::takeKeyOrderStepOr(CellPointer cell, const std::optional<KeyOrderStep>& step, NOESCAPE const Invocable<void()> auto& otherwise)

@@ -124,7 +124,7 @@ GameControllerHapticEffect::~GameControllerHapticEffect()
 
 void GameControllerHapticEffect::start(CompletionHandler<void(bool)>&& completionHandler)
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     ASSERT(!m_completionHandler);
 
     m_completionHandler = WTF::move(completionHandler);

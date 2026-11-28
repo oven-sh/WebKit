@@ -61,6 +61,7 @@ class MessagePortChannelProvider;
 class Performance;
 class ReportingScope;
 class ScheduledAction;
+class Scheduler;
 class ScriptBuffer;
 class ScriptBufferSourceProvider;
 class TrustedScriptURL;
@@ -117,7 +118,7 @@ public:
     WorkerSWClientConnection& swClientConnection();
     void updateServiceWorkerClientData() final;
 
-    Ref<WorkerThread> thread() const;
+    WEBCORE_EXPORT Ref<WorkerThread> thread() const;
 
     using ScriptExecutionContext::hasPendingActivity;
 
@@ -149,6 +150,7 @@ public:
 
     Crypto& crypto();
     NODELETE Performance& performance() const;
+    Scheduler& scheduler();
     ReportingScope& reportingScope() const { return m_reportingScope.get(); }
 
     void prepareForDestruction() override;
@@ -161,7 +163,7 @@ public:
     CSSValuePool& cssValuePool() final;
     CSSFontSelector* cssFontSelector() final;
     Ref<FontFaceSet> fonts();
-    RefPtr<FontLoadRequest> fontLoadRequest(const String& url, bool isSVG, bool isInitiatingElementInUserAgentShadowTree, LoadedFromOpaqueSource) final;
+    RefPtr<FontLoadRequest> fontLoadRequest(const CSS::URL&, bool isSVG, bool isInitiatingElementInUserAgentShadowTree) final;
     void beginLoadingFontSoon(FontLoadRequest&) final;
 
     NODELETE const SettingsValues& settingsValues() const LIFETIME_BOUND final { return m_settingsValues; }
@@ -249,6 +251,7 @@ private:
     RefPtr<Performance> m_performance;
     const Ref<ReportingScope> m_reportingScope;
     mutable RefPtr<Crypto> m_crypto;
+    RefPtr<Scheduler> m_scheduler;
 
     WeakPtr<ScriptBufferSourceProvider> m_mainScriptSourceProvider;
     MemoryCompactRobinHoodHashMap<URL, WeakHashSet<ScriptBufferSourceProvider>> m_importedScriptsSourceProviders;

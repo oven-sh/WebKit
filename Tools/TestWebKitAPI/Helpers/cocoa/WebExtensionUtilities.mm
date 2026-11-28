@@ -31,7 +31,6 @@
 
 #if ENABLE(WK_WEB_EXTENSIONS)
 
-#import "Helpers/cocoa/TestCocoaImageUtilities.h"
 #import "Helpers/cocoa/TestWebExtensionsDelegate.h"
 #import "Helpers/cocoa/WebExtensionUtilities.h"
 #import <WebKit/WKPreferencesPrivate.h>
@@ -69,16 +68,28 @@ static NSError *managerError(NSString *description)
 
 @end
 
+NSExceptionName testExceptionRaisedBySettingValue(id object, NSString *key, id value)
+{
+    @try {
+        [object setValue:value forKey:key];
+    } @catch (NSException *exception) {
+        return exception.name;
+    }
+
+    return nil;
+}
+
 @implementation TestWebExtensionManager {
     bool _done;
     bool _receivedMessage;
     bool _runningTestFromQueue;
+    NSString *_lastAssertionFailureMessage;
     NSMutableDictionary *_messages;
     NSMutableArray<TestWebExtensionWindow *> *_windows;
     void (^_doneHandler)(NSError *);
     NSMutableArray<NSString *> *_collectedFailures;
     NSString *_pendingTestMessage;
-    void (^_pendingTestMessageHandler)(NSError *);
+    void (^_pendingTestMessageHandler)(id, NSError *);
 }
 
 + (BOOL)shouldEnableSiteIsolation
@@ -338,31 +349,6 @@ static NSError *managerError(NSString *description)
     TestWebKitAPI::Util::run(&_done);
 }
 
-- (void)runForTimeInterval:(NSTimeInterval)interval
-{
-    _done = false;
-
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(interval * NSEC_PER_SEC)), mainDispatchQueueSingleton(), ^{
-        self->_done = true;
-    });
-
-    TestWebKitAPI::Util::run(&_done);
-}
-
-- (void)runUntilContextError
-{
-    if (_context.errors.count)
-        return;
-
-    id observer = [NSNotificationCenter.defaultCenter addObserverForName:WKWebExtensionContextErrorsDidUpdateNotification object:_context queue:nil usingBlock:^(NSNotification *) {
-        self->_done = true;
-    }];
-
-    [self runForTimeInterval:5];
-
-    [NSNotificationCenter.defaultCenter removeObserver:observer];
-}
-
 - (id)runUntilTestMessage:(NSString *)message
 {
     if (id result = [self _takeTestMessage:message])
@@ -389,10 +375,10 @@ static NSError *managerError(NSString *description)
     _doneHandler = [completionHandler copy];
 }
 
-- (void)waitForTestMessage:(NSString *)message completionHandler:(void (^)(NSError *))completionHandler
+- (void)waitForTestMessage:(NSString *)message completionHandler:(void (^)(id, NSError *))completionHandler
 {
-    if ([self _takeTestMessage:message]) {
-        completionHandler([self _collectedFailuresError]);
+    if (id argument = [self _takeTestMessage:message]) {
+        completionHandler(argument, [self _collectedFailuresError]);
         return;
     }
 
@@ -410,6 +396,37 @@ static NSError *managerError(NSString *description)
     }
 
     [self runWithCompletionHandler:completionHandler];
+}
+
+- (void)waitForContextErrorWithCompletionHandler:(void (^)(NSError *))completionHandler
+{
+    if (_context.errors.count) {
+        completionHandler([self _collectedFailuresError]);
+        return;
+    }
+
+    __block void (^handler)(NSError *) = [completionHandler copy];
+    __block id observer;
+    __weak TestWebExtensionManager *weakSelf = self;
+
+    auto finish = ^{
+        if (!handler)
+            return;
+
+        [NSNotificationCenter.defaultCenter removeObserver:observer];
+        observer = nil;
+
+        auto completionHandler = handler;
+        handler = nil;
+        completionHandler([weakSelf _collectedFailuresError]);
+    };
+
+    observer = [NSNotificationCenter.defaultCenter addObserverForName:WKWebExtensionContextErrorsDidUpdateNotification object:_context queue:nil usingBlock:^(NSNotification *) {
+        finish();
+    }];
+
+    // Stop waiting after 5 seconds, so that a test whose error never arrives fails its own expectations instead of hanging.
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5 * NSEC_PER_SEC)), mainDispatchQueueSingleton(), finish);
 }
 
 - (id)_takeTestMessage:(NSString *)message
@@ -445,7 +462,7 @@ static NSError *managerError(NSString *description)
         _pendingTestMessageHandler = nil;
         _pendingTestMessage = nil;
 
-        handler([self _collectedFailuresError] ?: managerError([NSString stringWithFormat:@"The extension finished without sending the test message \"%@\".", message]));
+        handler(nil, [self _collectedFailuresError] ?: managerError([NSString stringWithFormat:@"The extension finished without sending the test message \"%@\".", message]));
         return;
     }
 
@@ -493,6 +510,8 @@ static NSError *managerError(NSString *description)
     if (result || _runningTestFromQueue)
         return;
 
+    _lastAssertionFailureMessage = [message copy] ?: @"";
+
     if (!message.length)
         message = @"Assertion failed with no message.";
 
@@ -503,6 +522,8 @@ static NSError *managerError(NSString *description)
 {
     if (result || _runningTestFromQueue)
         return;
+
+    _lastAssertionFailureMessage = [message copy] ?: @"";
 
     if (!message.length)
         message = @"Expected equality of these values";
@@ -541,13 +562,14 @@ static NSError *managerError(NSString *description)
     if (!_pendingTestMessageHandler)
         return;
 
-    if (![self _takeTestMessage:_pendingTestMessage])
+    id pendingArgument = [self _takeTestMessage:_pendingTestMessage];
+    if (!pendingArgument)
         return;
 
     auto handler = _pendingTestMessageHandler;
     _pendingTestMessageHandler = nil;
     _pendingTestMessage = nil;
-    handler([self _collectedFailuresError]);
+    handler(pendingArgument, [self _collectedFailuresError]);
 }
 
 - (void)_webExtensionController:(WKWebExtensionController *)controller recordTestAddedWithName:(NSString *)testName andSourceURL:(NSString *)sourceURL lineNumber:(unsigned)lineNumber
@@ -563,7 +585,7 @@ static NSError *managerError(NSString *description)
 
 - (void)_webExtensionController:(WKWebExtensionController *)controller recordTestFinishedWithName:(NSString *)testName result:(BOOL)result message:(NSString *)message andSourceURL:(NSString *)sourceURL lineNumber:(unsigned)lineNumber
 {
-    if (_runningTestFromQueue) {
+    if (_runningTestFromQueue && testName.length) {
         _runningTestFromQueue = NO;
 
         NSMutableDictionary<NSString *, id> *testResults = [_testResults mutableCopy];
@@ -574,8 +596,12 @@ static NSError *managerError(NSString *description)
     }
 
     // Record the failure before signalling, so that an async waiter cannot resume and finish the
-    // test before the failure has been attributed to it.
-    if (!result) {
+    // test before the failure has been attributed to it. A failed assertion outside a queued test
+    // also finishes the run, and has already been recorded with its details.
+    bool repeatsAssertion = [_lastAssertionFailureMessage isEqualToString:message ?: @""];
+    _lastAssertionFailureMessage = nil;
+
+    if (!result && !repeatsAssertion) {
         if (!message.length)
             message = @"Test failed with no message.";
 
@@ -716,14 +742,9 @@ static WKUserContentController *userContentController(BOOL usingPrivateBrowsing)
     [_extensionController didChangeTabProperties:WKWebExtensionTabChangedPropertiesLoading forTab:self];
 }
 
-- (void)_webView:(WKWebView *)webView navigationDidFinishDocumentLoad:(WKNavigation *)navigation
-{
-    [_extensionController didChangeTabProperties:WKWebExtensionTabChangedPropertiesTitle | WKWebExtensionTabChangedPropertiesURL forTab:self];
-}
-
 - (void)webView:(WKWebView *)webView didFinishNavigation:(WKNavigation *)navigation
 {
-    [_extensionController didChangeTabProperties:WKWebExtensionTabChangedPropertiesLoading forTab:self];
+    [_extensionController didChangeTabProperties:WKWebExtensionTabChangedPropertiesLoading | WKWebExtensionTabChangedPropertiesTitle | WKWebExtensionTabChangedPropertiesURL forTab:self];
 }
 
 - (WKWebView *)webViewForWebExtensionContext:(WKWebExtensionContext *)context
@@ -734,6 +755,11 @@ static WKUserContentController *userContentController(BOOL usingPrivateBrowsing)
 - (NSURL *)urlForWebExtensionContext:(WKWebExtensionContext *)context
 {
     return _overrideURL ?: _webView.URL;
+}
+
+- (BOOL)isReaderModeAvailableForWebExtensionContext:(WKWebExtensionContext *)context
+{
+    return !_readerModeUnavailable;
 }
 
 - (BOOL)isReaderModeActiveForWebExtensionContext:(WKWebExtensionContext *)context
@@ -1213,20 +1239,6 @@ RetainPtr<TestWebExtensionManager> loadExtension(NSDictionary *manifest, NSDicti
 void loadAndRunExtension(NSDictionary *manifest, NSDictionary *resources, WKWebExtensionControllerConfiguration *configuration)
 {
     [loadExtension(manifest, resources, configuration) run];
-}
-
-NSData *makePNGData(CGSize size, SEL colorSelector)
-{
-#if USE(APPKIT)
-    return [TestCocoaImageUtilities pngDataWithSize:size color:[NSColor performSelector:colorSelector]];
-#else
-    return [TestCocoaImageUtilities pngDataWithSize:size color:[UIColor performSelector:colorSelector]];
-#endif
-}
-
-void performWithAppearance(Appearance appearance, void (^block)(void))
-{
-    [TestCocoaImageUtilities performWithDarkAppearance:appearance == Appearance::Dark block:block];
 }
 
 } // namespace Util

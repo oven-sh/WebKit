@@ -30,7 +30,7 @@
 #include "LayerTreeHostPlayStation.h"
 
 #if USE(COORDINATED_GRAPHICS)
-#include "CoordinatedSceneState.h"
+#include "CoordinatedSceneStatePlayStation.h"
 #include "CoordinatedTileManager.h"
 #include "DrawingArea.h"
 #include "WebPageInlines.h"
@@ -401,16 +401,22 @@ bool LayerTreeHost::isCompositionRequiredOrOngoing() const
 
 void LayerTreeHost::requestComposition(CompositionReason)
 {
-#if ENABLE(SCROLLING_THREAD)
-    if (ScrollingThread::isCurrentThread()) {
-        m_sceneState->flushPendingState();
-        if (!m_compositionRequiredInScrollingThread)
-            return;
-        m_compositionRequiredInScrollingThread = false;
-    }
-#endif
-
     m_compositor->scheduleUpdate();
+}
+
+void LayerTreeHost::didApplyLayerScrollingPositions()
+{
+    m_sceneState->commitPendingScrollingPositions();
+
+#if ENABLE(SCROLLING_THREAD)
+    if (ScrollingThread::isCurrentThread() && std::exchange(m_compositionRequiredInScrollingThread, false))
+        requestComposition(CompositionReason::AsyncScrolling);
+#endif
+}
+
+void LayerTreeHost::didChangeLayerPendingScrollingPosition(CoordinatedPlatformLayer& layer)
+{
+    m_sceneState->didChangeLayerPendingScrollingPosition(layer);
 }
 
 RunLoop* LayerTreeHost::compositingRunLoop() const

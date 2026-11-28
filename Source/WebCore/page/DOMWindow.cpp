@@ -34,6 +34,9 @@
 #include "Crypto.h"
 #include "CustomElementRegistry.h"
 #include "DOMRect.h"
+#if ENABLE(DOCUMENT_PIP)
+#include "DocumentPictureInPicture.h"
+#endif
 #include "DocumentSecurityOrigin.h"
 #include "DocumentView.h"
 #include "ExceptionOr.h"
@@ -56,6 +59,7 @@
 #include "RemoteDOMWindow.h"
 #include "ResourceLoadObserver.h"
 #include "ScheduledAction.h"
+#include "Scheduler.h"
 #include "Screen.h"
 #include "SecurityOrigin.h"
 #include "Site.h"
@@ -145,8 +149,15 @@ void DOMWindow::close()
     }
 
     RefPtr localFrame = dynamicDowncast<LocalFrame>(frame);
+#if ENABLE(DOCUMENT_PIP)
+    // https://wicg.github.io/document-picture-in-picture/#close-document-pip-window
+    // Document Picture-in-Picture windows skip checking whether unloading is user-canceled.
+    if (localFrame && !page->isDocumentPictureInPicture() && !localFrame->loader().shouldClose())
+        return;
+#else
     if (localFrame && !localFrame->loader().shouldClose())
         return;
+#endif
 
     ResourceLoadObserver::singleton().updateCentralStatisticsStore([] { });
 
@@ -275,12 +286,12 @@ ExceptionOr<History&> DOMWindow::history()
     return localThis->history();
 }
 
-ExceptionOr<CustomElementRegistry&> DOMWindow::ensureCustomElementRegistry()
+ExceptionOr<CustomElementRegistry&> DOMWindow::customElements()
 {
     auto* localThis = dynamicDowncast<LocalDOMWindow>(*this);
     if (!localThis)
         return Exception { ExceptionCode::SecurityError };
-    return localThis->ensureCustomElementRegistry();
+    return localThis->customElementRegistry();
 }
 
 ExceptionOr<BarProp&> DOMWindow::locationbar()
@@ -450,6 +461,16 @@ ExceptionOr<CookieStore&> DOMWindow::cookieStore()
         return Exception { ExceptionCode::SecurityError };
     return localThis->cookieStore();
 }
+
+#if ENABLE(DOCUMENT_PIP)
+ExceptionOr<DocumentPictureInPicture&> DOMWindow::documentPictureInPicture()
+{
+    auto* localThis = dynamicDowncast<LocalDOMWindow>(*this);
+    if (!localThis)
+        return Exception { ExceptionCode::SecurityError };
+    return localThis->documentPictureInPicture();
+}
+#endif
 
 ExceptionOr<Screen&> DOMWindow::screen()
 {
@@ -627,6 +648,14 @@ ExceptionOr<Crypto&> DOMWindow::crypto() const
     if (!localThis)
         return Exception { ExceptionCode::SecurityError };
     return localThis->crypto();
+}
+
+ExceptionOr<Scheduler&> DOMWindow::scheduler() const
+{
+    auto* localThis = dynamicDowncast<LocalDOMWindow>(*this);
+    if (!localThis)
+        return Exception { ExceptionCode::SecurityError };
+    return localThis->scheduler();
 }
 
 ExceptionOr<RefPtr<WindowProxy>> DOMWindow::open(LocalDOMWindow& activeWindow, LocalDOMWindow& firstWindow, const String& urlString, const AtomString& frameName, const String& windowFeaturesString)
@@ -850,22 +879,20 @@ ExceptionOr<void> DOMWindow::moveTo(int x, int y) const
     return { };
 }
 
-ExceptionOr<void> DOMWindow::resizeBy(int x, int y) const
+ExceptionOr<void> DOMWindow::resizeBy(int x, int y)
 {
-    auto* localThis = dynamicDowncast<LocalDOMWindow>(*this);
+    RefPtr localThis = dynamicDowncast<LocalDOMWindow>(*this);
     if (!localThis)
         return Exception { ExceptionCode::SecurityError };
-    localThis->resizeBy(x, y);
-    return { };
+    return localThis->resizeBy(x, y);
 }
 
-ExceptionOr<void> DOMWindow::resizeTo(int width, int height) const
+ExceptionOr<void> DOMWindow::resizeTo(int width, int height)
 {
-    auto* localThis = dynamicDowncast<LocalDOMWindow>(*this);
+    RefPtr localThis = dynamicDowncast<LocalDOMWindow>(*this);
     if (!localThis)
         return Exception { ExceptionCode::SecurityError };
-    localThis->resizeTo(width, height);
-    return { };
+    return localThis->resizeTo(width, height);
 }
 
 ExceptionOr<DOMSelection*> DOMWindow::getSelection()
@@ -969,13 +996,13 @@ bool DOMWindow::isCurrentlyDisplayedInFrame() const
     return frame && frame->window() == this;
 }
 
-void DOMWindow::printErrorMessage(const String& message) const
+void DOMWindow::printErrorMessage(const String& message, MessageSource source) const
 {
     if (message.isEmpty())
         return;
 
     if (CheckedPtr frameConsole = console())
-        frameConsole->addMessage(MessageSource::JS, MessageLevel::Error, message);
+        frameConsole->addMessage(source, MessageLevel::Error, message);
 }
 
 String DOMWindow::crossDomainAccessErrorMessage(const LocalDOMWindow& activeWindow, IncludeTargetOrigin includeTargetOrigin)
@@ -1066,7 +1093,7 @@ bool DOMWindow::isInsecureScriptAccess(const LocalDOMWindow& activeWindow, const
         }
     }
 
-    activeWindow.printErrorMessage(crossDomainAccessErrorMessage(activeWindow, IncludeTargetOrigin::Yes));
+    activeWindow.printErrorMessage(crossDomainAccessErrorMessage(activeWindow, IncludeTargetOrigin::Yes), MessageSource::Security);
     return true;
 }
 

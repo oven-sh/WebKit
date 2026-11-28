@@ -97,13 +97,14 @@ ScrollTimeline& StyleOriginatedTimelinesController::inactiveNamedTimeline(const 
     return timelines.last();
 }
 
-ScrollTimeline* StyleOriginatedTimelinesController::determineTreeOrder(const Vector<Ref<ScrollTimeline>>& ancestorTimelines, const Styleable& styleable, const Element* timelineScopeElement)
+RefPtr<ScrollTimeline> StyleOriginatedTimelinesController::determineTreeOrder(const Vector<Ref<ScrollTimeline>>& ancestorTimelines, const Styleable& styleable, const Element* timelineScopeElement)
 {
-    RefPtr element = styleable.element;
+    RefPtr element = styleable.element.ptr();
     while (element) {
         Vector<Ref<ScrollTimeline>> matchedTimelines;
         for (auto& timeline : ancestorTimelines) {
-            if (element == originatingElementIncludingTimelineScope(timeline))
+            // A timeline hoisted by an ancestor's timeline-scope is still referenceable from its own declaring element's subtree.
+            if (element == originatingElementIncludingTimelineScope(timeline) || element == originatingElement(timeline))
                 matchedTimelines.append(timeline);
         }
         if (!matchedTimelines.isEmpty()) {
@@ -111,21 +112,21 @@ ScrollTimeline* StyleOriginatedTimelinesController::determineTreeOrder(const Vec
                 // Naming conflict due to timeline-scope, see if the element declares a non-deferred timeline.
                 for (auto& matchedTimeline : matchedTimelines) {
                     if (element == originatingElement(matchedTimeline))
-                        return matchedTimeline.unsafePtr();
+                        return WTF::move(matchedTimeline);
                 }
                 // Prefer the nearest timeline in hierarchy.
                 for (auto& matchedTimeline : matchedTimelines | std::views::reverse) {
-                    if (styleable.element.isComposedTreeDescendantOf(*originatingElement(matchedTimeline)))
-                        return matchedTimeline.unsafePtr();
+                    if (styleable.element->isComposedTreeDescendantOf(*originatingElement(matchedTimeline)))
+                        return WTF::move(matchedTimeline);
                 }
                 // Otherwise return the last of the matching timelines per https://github.com/w3c/csswg-drafts/issues/12581.
-                return matchedTimelines.last().unsafePtr();
+                return WTF::move(matchedTimelines.last());
             }
             ASSERT(matchedTimelines.size() <= 2);
             // Favor scroll timelines in case of conflict
             if (!is<ViewTimeline>(matchedTimelines.first()))
-                return matchedTimelines.first().unsafePtr();
-            return matchedTimelines.last().unsafePtr();
+                return WTF::move(matchedTimelines.first());
+            return WTF::move(matchedTimelines.last());
         }
         // Has blocking timeline scope element
         if (timelineScopeElement == element.get()) {
@@ -146,18 +147,21 @@ ScrollTimeline* StyleOriginatedTimelinesController::determineTreeOrder(const Vec
         ASSERT(lhsStyleable);
         ASSERT(rhsStyleable);
 
+        // https://drafts.csswg.org/scroll-animations-1/#timeline-scoping
+        // An element may only define one timeline per name: In case of a name conflict, names
+        // declared later in the naming property (scroll-timeline-name, view-timeline-name) take
+        // precedence, and scroll progress timelines take precedence over view progress timelines.
         if (lhsStyleable == rhsStyleable) {
             ASSERT(is<ViewTimeline>(lhs) != is<ViewTimeline>(rhs));
-            if (!is<ViewTimeline>(lhs))
-                return false;
+            return !is<ViewTimeline>(lhs);
         }
 
         return compareStyleablePositionsInDocumentTreeOrder(*lhsStyleable, *rhsStyleable);
     });
-    return sortedTimelines.first().unsafePtr();
+    return WTF::move(sortedTimelines.first());
 }
 
-ScrollTimeline* StyleOriginatedTimelinesController::determineTimelineForElement(const Vector<Ref<ScrollTimeline>>& timelines, const Styleable& styleable, Style::ScopeOrdinal targetTimelineScopeOrdinal, const Element* timelineScopeElement)
+RefPtr<ScrollTimeline> StyleOriginatedTimelinesController::determineTimelineForElement(const Vector<Ref<ScrollTimeline>>& timelines, const Styleable& styleable, Style::ScopeOrdinal targetTimelineScopeOrdinal, const Element* timelineScopeElement)
 {
     // https://drafts.csswg.org/scroll-animations-1/#timeline-scoping
     // A named scroll progress timeline or view progress timeline is referenceable by:
@@ -225,14 +229,14 @@ void StyleOriginatedTimelinesController::updateTimelineForTimelineScope(const Re
     for (auto& entry : m_timelineScopeEntries) {
         if (auto entryElement = entry.second.styleable()) {
             Ref protectedEntryElement { entryElement->element };
-            if (timelineElement->isComposedTreeDescendantOf(protectedEntryElement.get()) && (entry.first.type == Style::NameScope::Type::All || entry.first.names.contains(Style::CustomIdent { name })))
+            if (timelineElement->isComposedTreeInclusiveDescendantOf(protectedEntryElement.get()) && (entry.first.type == Style::NameScope::Type::All || entry.first.names.contains(Style::CustomIdent { name })))
                 matchedTimelineScopeElements.appendIfNotContains(*entryElement);
         }
     }
     RefPtr element = timelineElement;
     while (element) {
         auto it = matchedTimelineScopeElements.findIf([element] (const Styleable& entry) {
-            return &entry.element == element;
+            return entry.element.ptr() == element;
         });
         if (it != notFound) {
             Ref protectedTimelineScopeElement { matchedTimelineScopeElements.at(it).element };
@@ -290,9 +294,7 @@ void StyleOriginatedTimelinesController::updateCSSAnimationsAssociatedWithNamedT
 
 void StyleOriginatedTimelinesController::removePendingOperationsForCSSAnimation(const CSSAnimation& animation)
 {
-    m_cssAnimationsPendingAttachment.removeAllMatching([&] (const auto& pendingAnimation) {
-        return pendingAnimation.ptr() == &animation;
-    });
+    m_cssAnimationsPendingAttachment.remove(animation);
 }
 
 void StyleOriginatedTimelinesController::documentDidResolveStyle()
@@ -410,11 +412,10 @@ void StyleOriginatedTimelinesController::attachAnimation(CSSAnimation& animation
         auto timelineScopeElements = relatedTimelineScopeElements(Style::CustomIdent { timelineName->name });
         if (timelineScopeElements.isEmpty())
             return nullptr;
-        // Find the nearest parent within timelineScopeElements.
-        for (RefPtr currentParent = target->element.parentElementInComposedTree(); currentParent; currentParent = currentParent->parentElementInComposedTree()) {
+        for (RefPtr currentElement = target->element.ptr(); currentElement; currentElement = currentElement->parentElementInComposedTree()) {
             for (auto& timelineScopeElement : timelineScopeElements) {
-                if (currentParent == timelineScopeElement.element())
-                    return currentParent;
+                if (currentElement == timelineScopeElement.element())
+                    return currentElement;
             }
         }
         return nullptr;
@@ -422,9 +423,12 @@ void StyleOriginatedTimelinesController::attachAnimation(CSSAnimation& animation
 
     auto it = m_nameToTimelineMap.find(timelineName->name);
     auto hasNamedTimeline = it != m_nameToTimelineMap.end() && it->value.containsIf([&](auto& timeline) {
-        auto* timelineScope = timeline->timelineScopeDeclaredElement();
-        if (timelineScope && timelineScope != relevantTimelineScopeElement)
-            return false;
+        RefPtr timelineScope = timeline->timelineScopeDeclaredElement();
+        if (timelineScope && timelineScope != relevantTimelineScopeElement) {
+            RefPtr timelineElement = originatingElement(timeline);
+            if (!timelineElement || !target->element->isComposedTreeInclusiveDescendantOf(*timelineElement))
+                return false;
+        }
         return !timeline->isInactiveStyleOriginatedTimeline();
     });
 
@@ -432,7 +436,7 @@ void StyleOriginatedTimelinesController::attachAnimation(CSSAnimation& animation
     // just register a pending timeline attachment operation so we can try again
     // when style has resolved.
     if (!hasNamedTimeline && allowsDeferral == AllowsDeferral::Yes) {
-        m_cssAnimationsPendingAttachment.append(animation);
+        m_cssAnimationsPendingAttachment.add(animation);
         return;
     }
 
@@ -448,7 +452,7 @@ void StyleOriginatedTimelinesController::attachAnimation(CSSAnimation& animation
         // once style resolution completes as further updates may occur that would yield a different timeline
         // and possibly also mark that animation's target as dirty to update the animated style.
         if (allowsDeferral == AllowsDeferral::Yes && timeline && timeline->isInactiveStyleOriginatedTimeline())
-            m_cssAnimationsPendingAttachment.append(animation);
+            m_cssAnimationsPendingAttachment.add(animation);
         protectedAnimation->setTimeline(WTF::move(timeline));
     }
 
@@ -456,21 +460,23 @@ void StyleOriginatedTimelinesController::attachAnimation(CSSAnimation& animation
     // to mark this animation as pending attachment in case this name
     // resolves in the future.
     if (!protectedAnimation->timeline())
-        m_cssAnimationsPendingAttachment.append(animation);
+        m_cssAnimationsPendingAttachment.add(animation);
 }
 
 void StyleOriginatedTimelinesController::updateTimelinesForTimelineScope(Vector<Ref<ScrollTimeline>> entries, const Styleable& styleable)
 {
+    Ref element { styleable.element };
     for (auto& entry : entries) {
-        if (RefPtr entryElement = originatingElementExcludingTimelineScope(entry)) {
-            Ref element { styleable.element };
-            if (entryElement->isComposedTreeDescendantOf(element)) {
-                entry->setTimelineScopeElement(element);
-                for (Ref animation : copyToVector(entry->relevantAnimations())) {
-                    if (RefPtr cssAnimation = dynamicDowncast<CSSAnimation>(animation))
-                        attachAnimation(*cssAnimation, AllowsDeferral::Yes);
-                }
-            }
+        RefPtr entryElement = originatingElement(entry);
+        if (!entryElement || !entryElement->isComposedTreeInclusiveDescendantOf(element))
+            continue;
+        RefPtr currentTimelineScopeElement = entry->timelineScopeDeclaredElement();
+        if (currentTimelineScopeElement == element.ptr() || (currentTimelineScopeElement && !element->isComposedTreeDescendantOf(*currentTimelineScopeElement)))
+            continue;
+        entry->setTimelineScopeElement(element);
+        for (Ref animation : copyToVector(entry->relevantAnimations())) {
+            if (RefPtr cssAnimation = dynamicDowncast<CSSAnimation>(animation))
+                attachAnimation(*cssAnimation, AllowsDeferral::Yes);
         }
     }
 }
@@ -494,7 +500,7 @@ void StyleOriginatedTimelinesController::updateNamedTimelineMapForTimelineScope(
         HashSet<Ref<ScrollTimeline>> namedTimelinesToUpdate;
         for (auto& entry : m_nameToTimelineMap) {
             for (auto& timeline : entry.value) {
-                if (timeline->timelineScopeDeclaredElement() == &styleable.element)
+                if (timeline->timelineScopeDeclaredElement() == styleable.element.ptr())
                     timeline->clearTimelineScopeDeclaredElement();
                 // Make sure to track this timeline to be updated in a separate
                 // step since updating timeline relationships could affect m_nameToTimelineMap.
@@ -532,11 +538,8 @@ void StyleOriginatedTimelinesController::updateNamedTimelineMapForTimelineScope(
 
 bool StyleOriginatedTimelinesController::isPendingTimelineAttachment(const WebAnimation& animation) const
 {
-    if (RefPtr cssAnimation = dynamicDowncast<CSSAnimation>(animation)) {
-        return m_cssAnimationsPendingAttachment.containsIf([&](auto& pendingAnimation) {
-            return pendingAnimation.ptr() == cssAnimation.get();
-        });
-    }
+    if (RefPtr cssAnimation = dynamicDowncast<CSSAnimation>(animation))
+        return m_cssAnimationsPendingAttachment.contains(*cssAnimation);
     return false;
 }
 

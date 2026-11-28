@@ -70,7 +70,7 @@ static void prepareLazyStateOfInlineCandidates(VM& vm, CodeBlock* codeBlock, Cod
         unsigned depth; // inline depth of `block`; the root is 0, as in InliningPlan
     };
     Vector<Entry, 16> worklist;
-    UncheckedKeyHashSet<CodeBlock*> seen;
+    HashSet<CodeBlock*> seen;
     auto push = [&](CodeBlock* block, unsigned depth) {
         if (block && seen.add(block).isNewEntry)
             worklist.append({ block, depth });

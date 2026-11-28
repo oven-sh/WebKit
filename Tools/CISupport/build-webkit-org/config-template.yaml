@@ -6,7 +6,7 @@
     },
     "mac_tahoe_aws": {
       "first": 10002,
-      "worker": { "platform": "mac-tahoe", "os": "macOS Golden Gate 27.2-26B123", "device": "Mac16,11", "xcode": "Xcode 27.0-27A266a", "fleet": "aws" }
+      "worker": { "platform": "mac-tahoe", "os": "macOS Golden Gate 27.0-26A428", "device": "Mac16,11", "xcode": "Xcode 27.0-27A266a", "fleet": "aws" }
     },
     "mac_sequoia_aircloud": {
       "first": 10100,
@@ -266,6 +266,7 @@
                   },
                   { "name": "Apple-Tahoe-Release-Build", "factory": "BuildFactory",
                   "platform": "mac-tahoe", "configuration": "release", "architectures": ["x86_64", "arm64"],
+                  "deployment_target": "26.4",
                   "triggers": [
                       "tahoe-release-tests-wk2",
                       "tahoe-release-applesilicon-tests-wk2"
@@ -285,6 +286,7 @@
                   { "name": "Apple-Tahoe-Debug-Build", "factory": "BuildFactory",
                   "platform": "mac-tahoe", "configuration": "debug", "architectures": ["x86_64", "arm64"],
                   "additionalArguments": ["--cmake"],
+                  "deployment_target": "26.4",
                   "triggers": [
                       "tahoe-debug-tests-wk2",
                       "tahoe-debug-applesilicon-tests-wk2",
@@ -391,7 +393,8 @@
                   },
                   {
                     "name": "Apple-iOS-27-Simulator-Debug-Build", "factory": "BuildFactory",
-                    "platform": "ios-simulator-27", "configuration": "debug", "architectures": ["x86_64", "arm64"],
+                    "platform": "ios-simulator-27", "configuration": "debug", "architectures": ["arm64"],
+                    "additionalArguments": ["--cmake"],
                     "triggers": ["ios-simulator-27-debug-tests-wk2", "ipados-simulator-27-debug-tests-wk2"],
                     "workernames": ["bot307", "bot308"]
                   },
@@ -408,7 +411,7 @@
                   },
                   {
                     "name": "Apple-iOS-27-Simulator-Debug-WK2-Tests", "factory": "TestAllButJSCFactory",
-                    "platform": "ios-simulator-27", "configuration": "debug", "architectures": ["x86_64", "arm64"], "device_model": "iphone",
+                    "platform": "ios-simulator-27", "configuration": "debug", "architectures": ["arm64"], "device_model": "iphone",
                     "additionalArguments": ["--no-retry-failures", "--no-sample-on-timeout", "--child-processes=6"],
                     "workernames": ["bot653"]
                   },
@@ -420,7 +423,7 @@
                   },
                   {
                     "name": "Apple-iPadOS-27-Simulator-Debug-WK2-Tests", "factory": "TestAllButJSCFactory",
-                    "platform": "ios-simulator-27", "configuration": "debug", "architectures": ["x86_64", "arm64"], "device_model": "ipad",
+                    "platform": "ios-simulator-27", "configuration": "debug", "architectures": ["arm64"], "device_model": "ipad",
                     "additionalArguments": ["--no-retry-failures", "--no-sample-on-timeout", "--child-processes=6"],
                     "workernames": ["bot664"]
                   },

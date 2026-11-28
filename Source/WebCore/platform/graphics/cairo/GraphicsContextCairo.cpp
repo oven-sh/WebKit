@@ -108,15 +108,15 @@ void GraphicsContextCairo::save(GraphicsContextState::Purpose purpose)
     cairo_save(m_cr.get());
 }
 
-void GraphicsContextCairo::restore(GraphicsContextState::Purpose purpose)
+bool GraphicsContextCairo::restore(GraphicsContextState::Purpose purpose)
 {
-    if (!stackSize())
-        return;
+    if (!canRestore(purpose))
+        return false;
 
     GraphicsContext::restore(purpose);
 
     if (m_cairoStateStack.isEmpty())
-        return;
+        return true;
 
     if (m_cairoState->m_mask.pattern) {
         cairo_pop_group_to_source(m_cr.get());
@@ -133,6 +133,7 @@ void GraphicsContextCairo::restore(GraphicsContextState::Purpose purpose)
     m_cairoState = &m_cairoStateStack.last();
 
     cairo_restore(m_cr.get());
+    return true;
 }
 
 // Draws a filled rectangle with a stroked border.
@@ -187,7 +188,7 @@ void GraphicsContextCairo::fillRect(const FloatRect& rect, RequiresClipToRect)
     Cairo::fillRect(*this, rect, Cairo::FillSource(state), Cairo::ShadowState(state));
 }
 
-void GraphicsContextCairo::fillRect(const FloatRect& rect, Gradient& gradient, const AffineTransform& gradientSpaceTransform, RequiresClipToRect)
+void GraphicsContextCairo::fillRect(const FloatRect& rect, const Gradient& gradient, const AffineTransform& gradientSpaceTransform, RequiresClipToRect)
 {
     auto& state = this->state();
     Cairo::fillRect(*this, rect, Cairo::FillSource(state, gradient, gradientSpaceTransform), Cairo::ShadowState(state));
@@ -218,10 +219,9 @@ IntRect GraphicsContextCairo::clipBounds() const
     return Cairo::State::getClipBounds(*platformContext());
 }
 
-void GraphicsContextCairo::clipToImageBuffer(ImageBuffer& buffer, const FloatRect& destRect)
+void GraphicsContextCairo::clipToNativeImage(const NativeImage& nativeImage, const FloatRect& destRect)
 {
-    if (auto nativeImage = nativeImageForDrawing(buffer))
-        Cairo::clipToImageBuffer(*this, nativeImage->platformImage().get(), destRect);
+    Cairo::clipToImageBuffer(*this, nativeImage.platformImage().get(), destRect);
 }
 
 void GraphicsContextCairo::drawFocusRing(const Path& path, float outlineWidth, const Color& color, float)

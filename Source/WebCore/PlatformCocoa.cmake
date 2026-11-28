@@ -163,7 +163,30 @@ endif ()
 
 if (NOT USE_LIBWEBRTC)
     set(_webm_parser_dir "${CMAKE_SOURCE_DIR}/Source/ThirdParty/libwebrtc/Source/third_party/libwebm/webm_parser")
-    file(GLOB _webm_parser_srcs "${_webm_parser_dir}/src/*.cc")
+    set(_webm_parser_srcs
+        "${_webm_parser_dir}/src/ancestory.cc"
+        "${_webm_parser_dir}/src/bit_utils.cc"
+        "${_webm_parser_dir}/src/block_header_parser.cc"
+        "${_webm_parser_dir}/src/block_parser.cc"
+        "${_webm_parser_dir}/src/buffer_reader.cc"
+        "${_webm_parser_dir}/src/callback.cc"
+        "${_webm_parser_dir}/src/date_parser.cc"
+        "${_webm_parser_dir}/src/file_reader.cc"
+        "${_webm_parser_dir}/src/float_parser.cc"
+        "${_webm_parser_dir}/src/id_element_parser.cc"
+        "${_webm_parser_dir}/src/id_parser.cc"
+        "${_webm_parser_dir}/src/istream_reader.cc"
+        "${_webm_parser_dir}/src/master_parser.cc"
+        "${_webm_parser_dir}/src/parser_utils.cc"
+        "${_webm_parser_dir}/src/segment_parser.cc"
+        "${_webm_parser_dir}/src/size_parser.cc"
+        "${_webm_parser_dir}/src/skip_parser.cc"
+        "${_webm_parser_dir}/src/unknown_parser.cc"
+        "${_webm_parser_dir}/src/var_int_parser.cc"
+        "${_webm_parser_dir}/src/virtual_block_parser.cc"
+        "${_webm_parser_dir}/src/void_parser.cc"
+        "${_webm_parser_dir}/src/webm_parser.cc"
+    )
     add_library(WebMParser OBJECT ${_webm_parser_srcs})
     target_include_directories(WebMParser PRIVATE "${_webm_parser_dir}/include" "${_webm_parser_dir}")
     target_compile_definitions(WebMParser PRIVATE WEBRTC_WEBKIT_BUILD)
@@ -1037,13 +1060,14 @@ list(REMOVE_ITEM WebCore_PRIVATE_FRAMEWORK_HEADERS
 
     platform/xr/XRHitTestSourceIdentifier.h
 
-    rendering/EllipsisBoxPainter.h
     rendering/LineClampUpdater.h
     rendering/RenderFrame.h
     rendering/RenderLayoutState.h
     rendering/RenderListItem.h
     rendering/RenderMediaInlines.h
     rendering/RenderModel.h
+
+    rendering/paint/EllipsisBoxPainter.h
 
     rendering/shapes/PolygonLayoutShape.h
 
@@ -1346,9 +1370,11 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/cocoa/ISOBMFFPreParser.h
     platform/graphics/cocoa/ISOBMFFTrackInfoParser.h
     platform/graphics/cocoa/MediaPlayerEnumsCocoa.h
+    platform/graphics/cocoa/MeshGradientRendererMetal.h
     platform/graphics/cocoa/NativeImageCocoa.h
     platform/graphics/cocoa/NullPlaybackSessionInterface.h
     platform/graphics/cocoa/NullVideoPresentationInterface.h
+    platform/graphics/cocoa/PDFKitDocument.h
     platform/graphics/cocoa/PeriodicSharedTimer.h
     platform/graphics/cocoa/ShareableCVPixelBuffer.h
     platform/graphics/cocoa/ShareableCVPixelFormat.h
@@ -1357,6 +1383,7 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/cocoa/SystemFontDatabaseCoreText.h
     platform/graphics/cocoa/TextTrackRepresentationCocoa.h
     platform/graphics/cocoa/VP9UtilitiesCocoa.h
+    platform/graphics/cocoa/VideoMediaSampleRenderer.h
     platform/graphics/cocoa/VideoTargetFactory.h
     platform/graphics/cocoa/WebActionDisablingCALayerDelegate.h
     platform/graphics/cocoa/WebCoreCALayerExtras.h
@@ -1367,6 +1394,7 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/cv/CVUtilities.h
     platform/graphics/cv/ImageRotationSessionVT.h
     platform/graphics/cv/PixelBufferConformerCV.h
+    platform/graphics/cv/PlanarImageConverterCV.h
     platform/graphics/cv/VideoFrameCV.h
 
     platform/ios/DeviceOrientationUpdateProvider.h
@@ -1426,6 +1454,7 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/mediastream/cocoa/DisplayCaptureSourceCocoa.h
     platform/mediastream/cocoa/RealtimeIncomingVideoSourceCocoa.h
     platform/mediastream/cocoa/ScreenCaptureKitCaptureSource.h
+    platform/mediastream/cocoa/ScreenCaptureKitSelection.h
     platform/mediastream/cocoa/ScreenCaptureKitSharingSessionManager.h
     platform/mediastream/cocoa/WebAudioSourceProviderCocoa.h
 
@@ -1548,7 +1577,10 @@ set(WebCore_USER_AGENT_SCRIPTS
     ${WEBCORE_DIR}/Modules/modern-media-controls/media/CNNCaptionQuirk.js
 )
 
-list(APPEND WebCoreTestSupport_LIBRARIES PRIVATE WebCore ${IOKIT_LIBRARY})
+# Listed as a framework so WEBKIT_LIBRARY() skips PAL, which WebCore already
+# contains, instead of linking a second copy of it into WebCoreTestSupport.
+list(APPEND WebCoreTestSupport_FRAMEWORKS WebCore)
+list(APPEND WebCoreTestSupport_LIBRARIES PRIVATE ${IOKIT_LIBRARY})
 list(APPEND WebCoreTestSupport_PRIVATE_HEADERS
     testing/cocoa/CocoaColorSerialization.h
     testing/cocoa/WebArchiveDumpSupport.h

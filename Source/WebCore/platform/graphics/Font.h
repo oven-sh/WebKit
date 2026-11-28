@@ -96,6 +96,10 @@ public:
     const Font& verticalRightOrientationFont() const;
     const Font& uprightOrientationFont() const;
     const Font& invisibleFont() const;
+#if USE(CORE_TEXT)
+    // This font with the synthetic bold turned off, or this font if it has no synthetic bold.
+    const Font& nonSyntheticBoldFont() const;
+#endif
 
     FloatRect boundsForGlyph(Glyph) const;
 #if USE(CORE_TEXT) || USE(SKIA)
@@ -174,7 +178,7 @@ private:
     float platformWidthForGlyph(Glyph) const;
     Path platformPathForGlyph(Glyph) const;
 
-    mutable HashMap<unsigned, RefPtr<GlyphPage>, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_glyphPages;
+    mutable HashMap<unsigned, RefPtr<GlyphPage>> m_glyphPages;
     mutable GlyphMetricsMap<float> m_glyphToWidthMap;
     mutable std::unique_ptr<GlyphMetricsMap<FloatRect>> m_glyphToBoundsMap;
     // FIXME: Find a more efficient way to represent std::optional<Path>.
@@ -192,6 +196,9 @@ private:
         RefPtr<Font> verticalRightOrientationFont;
         RefPtr<Font> uprightOrientationFont;
         RefPtr<Font> invisibleFont;
+#if USE(CORE_TEXT)
+        RefPtr<Font> nonSyntheticBoldFont;
+#endif
         RefPtr<Font> halfWidthFont;
     };
 

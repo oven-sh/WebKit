@@ -60,15 +60,15 @@ public:
 private:
     void paintDisplayBox(const InlineDisplay::Box&);
     void paintEllipsis(size_t lineIndex);
-    NODELETE LayoutPoint flippedContentOffsetIfNeeded(const RenderBox&) const;
+    NODELETE LayoutPoint paintOffsetForChild(const RenderBox&) const;
     NODELETE const RenderBlock& root() const;
 
     PaintInfo& m_paintInfo;
     const LayoutPoint m_paintOffset;
     LayoutRect m_damageRect;
-    const RenderBoxModelObject* m_inlineBoxWithLayer { nullptr };
+    const CheckedPtr<const RenderBoxModelObject> m_inlineBoxWithLayer;
     const InlineContent& m_inlineContent;
-    const RenderBlockFlow& m_root;
+    const CheckedRef<const RenderBlockFlow> m_root;
     SingleThreadWeakListHashSet<RenderBoxModelObject> m_outlineObjects;
 };
 
@@ -78,8 +78,8 @@ public:
     bool testIsIncludesAndUpdate(const InlineDisplay::Box&);
 
 private:
-    const Layout::ElementBox* const m_inlineBoxWithLayer;
-    const Layout::ElementBox* m_currentExcludedInlineBox { nullptr };
+    const CheckedPtr<const Layout::ElementBox> m_inlineBoxWithLayer;
+    CheckedPtr<const Layout::ElementBox> m_currentExcludedInlineBox;
 };
 
 }

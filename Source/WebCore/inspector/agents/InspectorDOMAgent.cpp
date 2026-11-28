@@ -216,50 +216,6 @@ private:
     const RefPtr<Node> m_node;
 };
 
-class EventFiredCallback final : public EventListener {
-public:
-    NODELETE static Ref<EventFiredCallback> create(InspectorDOMAgent& domAgent)
-    {
-        return adoptRef(*new EventFiredCallback(domAgent));
-    }
-
-    void handleEvent(ScriptExecutionContext&, Event& event) final
-    {
-        CheckedPtr domAgent = m_domAgent.get();
-        if (!domAgent)
-            return;
-
-        RefPtr node = dynamicDowncast<Node>(event.target());
-        if (!node || domAgent->m_dispatchedEvents.contains(&event))
-            return;
-
-        auto nodeId = domAgent->pushNodePathToFrontend(node.get());
-        if (!nodeId)
-            return;
-
-        domAgent->m_dispatchedEvents.add(&event);
-
-        RefPtr<JSON::Object> data = JSON::Object::create();
-
-#if ENABLE(FULLSCREEN_API)
-        if (event.type() == eventNames().webkitfullscreenchangeEvent || event.type() == eventNames().fullscreenchangeEvent)
-            data->setBoolean("enabled"_s, !!protect(protect(node->document())->fullscreen())->fullscreenElement());
-#endif // ENABLE(FULLSCREEN_API)
-
-        auto timestamp = protect(protect(domAgent->environment())->executionStopwatch())->elapsedTime().seconds();
-        domAgent->m_frontendDispatcher->didFireEvent(nodeId, event.type(), timestamp, data->size() ? WTF::move(data) : nullptr);
-    }
-
-private:
-    EventFiredCallback(InspectorDOMAgent& domAgent)
-        : EventListener(EventListener::CPPEventListenerType)
-        , m_domAgent(domAgent)
-    {
-    }
-
-    const WeakPtr<InspectorDOMAgent> m_domAgent;
-};
-
 String InspectorDOMAgent::toErrorString(ExceptionCode ec)
 {
     return static_cast<bool>(ec) ? String(DOMException::name(ec)) : emptyString();
@@ -279,7 +235,7 @@ InspectorDOMAgent::InspectorDOMAgent(PageAgentContext& context, InspectorOverlay
     , m_overlay(overlay)
     , m_destroyedNodesTimer(*this, &InspectorDOMAgent::destroyedNodesTimerFired)
 #if ENABLE(VIDEO)
-    , m_mediaMetricsTimer(*this, &InspectorDOMAgent::mediaMetricsTimerFired)
+    , m_mediaEventTracker(makeUniqueRef<InspectorMediaEventTracker>(*this))
 #endif
 {
 }
@@ -306,35 +262,6 @@ void InspectorDOMAgent::didCreateFrontendAndBackend()
 #endif
 }
 
-#if ENABLE(VIDEO)
-static void forEachInspectedNodeEventName(Node& node, const Function<void(const AtomString&)>& callback)
-{
-#if ENABLE(FULLSCREEN_API)
-    if (isAnyOf<Document, HTMLMediaElement>(node))
-        callback(eventNames().webkitfullscreenchangeEvent);
-#endif // ENABLE(FULLSCREEN_API)
-
-    if (is<HTMLMediaElement>(node)) {
-        callback(eventNames().abortEvent);
-        callback(eventNames().canplayEvent);
-        callback(eventNames().canplaythroughEvent);
-        callback(eventNames().emptiedEvent);
-        callback(eventNames().endedEvent);
-        callback(eventNames().loadeddataEvent);
-        callback(eventNames().loadedmetadataEvent);
-        callback(eventNames().loadstartEvent);
-        callback(eventNames().pauseEvent);
-        callback(eventNames().playEvent);
-        callback(eventNames().playingEvent);
-        callback(eventNames().seekedEvent);
-        callback(eventNames().seekingEvent);
-        callback(eventNames().stalledEvent);
-        callback(eventNames().suspendEvent);
-        callback(eventNames().waitingEvent);
-    }
-}
-#endif // ENABLE(VIDEO)
-
 void InspectorDOMAgent::willDestroyFrontendAndBackend(Inspector::DisconnectReason)
 {
     m_history.reset();
@@ -352,25 +279,7 @@ void InspectorDOMAgent::willDestroyFrontendAndBackend(Inspector::DisconnectReaso
     overlay->clearAllFlexOverlays();
 
 #if ENABLE(VIDEO)
-    if (m_eventFiredCallback) {
-        auto removeFromNode = [eventFiredCallback = Ref { *m_eventFiredCallback }](Node& node) {
-            forEachInspectedNodeEventName(node, [node = Ref { node }, eventFiredCallback](const AtomString& eventName) {
-                node->removeEventListener(eventName, eventFiredCallback.get(), { });
-            });
-        };
-
-        if (RefPtr document = m_document)
-            removeFromNode(*document);
-
-        for (auto& mediaElement : HTMLMediaElement::allMediaElements())
-            removeFromNode(Ref { mediaElement.get() });
-
-        m_eventFiredCallback = nullptr;
-    }
-
-    if (m_mediaMetricsTimer.isActive())
-        m_mediaMetricsTimer.stop();
-    m_mediaMetrics.clear();
+    m_mediaEventTracker->reset(InspectorMediaEventTracker::RemoveEventListeners::Yes);
 #endif // ENABLE(VIDEO)
 
     Ref { m_instrumentingAgents.get() }->setPersistentDOMAgent(nullptr);
@@ -505,6 +414,33 @@ Document* InspectorDOMAgent::assertDocument(Inspector::Protocol::ErrorString& er
     return document.unsafeGet();
 }
 
+RefPtr<Frame> InspectorDOMAgent::assertFrame(Inspector::Protocol::ErrorString& errorString, const Inspector::Protocol::Network::FrameId& frameId)
+{
+    auto parsedFrameId = IdentifierRegistry::parseProtocolFrameId(frameId);
+    if (!parsedFrameId) {
+        // Without Site Isolation, frame IDs come from the LegacyIdentifierRegistry and are opaque.
+        RefPtr frame = protect(m_inspectedPage->inspectorController().identifierRegistry())->frameForId(frameId);
+        if (!frame)
+            errorString = "Missing frame for given frameId"_s;
+        return frame;
+    }
+
+    // Walk the frame tree instead of using the identifier registry: assertFrame() only returns LocalFrames, so
+    // it misses a cross-site child that is a RemoteFrame in this process, and the registry is keyed by the full
+    // frame ID, whose hosting process can be stale for a RemoteFrame. Compare the FrameIdentifier only. Do not
+    // look below a RemoteFrame: the frames there are reached through their own FrameDOMAgent, and an owner
+    // element in their documents is not part of this agent's tree.
+    // FIXME: Add an identifier registry lookup keyed by FrameIdentifier so this walk and the one in
+    // FrameDOMAgent::assertChildFrameOwner() are not needed, and other frameId commands do not miss RemoteFrames.
+    for (RefPtr frame = &m_inspectedPage->mainFrame(); frame; frame = is<LocalFrame>(*frame) ? frame->tree().traverseNext() : frame->tree().traverseNextSkippingChildren()) {
+        if (frame->frameID() == parsedFrameId->second)
+            return frame;
+    }
+
+    errorString = "Missing frame for given frameId"_s;
+    return nullptr;
+}
+
 Element* InspectorDOMAgent::assertElement(Inspector::Protocol::ErrorString& errorString, Inspector::Protocol::DOM::NodeId nodeId)
 {
     RefPtr node = assertNode(errorString, nodeId);
@@ -592,28 +528,27 @@ void InspectorDOMAgent::discardBindings()
 {
     m_nodeToId.clear();
     m_idToNode.clear();
-    m_dispatchedEvents.clear();
     m_eventListenerEntries.clear();
     m_childrenRequested.clear();
 }
 
-NODELETE static RefPtr<Element> elementToPushForStyleable(const Styleable& styleable)
+RefPtr<Element> InspectorDOMAgent::elementToPushForStyleable(const Styleable& styleable)
 {
     auto& element = styleable.element;
     // FIXME: We want to get rid of PseudoElement.
     if (styleable.pseudoElementIdentifier) {
         if (styleable.pseudoElementIdentifier->type == PseudoElementType::Before)
-            return element.beforePseudoElement();
+            return element->beforePseudoElement();
         if (styleable.pseudoElementIdentifier->type == PseudoElementType::After)
-            return element.afterPseudoElement();
+            return element->afterPseudoElement();
     }
-    return &element;
+    return element.ptr();
 }
 
 Inspector::Protocol::DOM::NodeId InspectorDOMAgent::pushStyleableElementToFrontend(const Styleable& styleable)
 {
     RefPtr element = elementToPushForStyleable(styleable);
-    return pushNodeToFrontend(protect(element ? element.get() : &styleable.element));
+    return pushNodeToFrontend(protect(element ? element.get() : styleable.element.ptr()));
 }
 
 Inspector::Protocol::DOM::NodeId InspectorDOMAgent::pushNodeToFrontend(Node* nodeToPush)
@@ -642,9 +577,6 @@ Inspector::Protocol::DOM::NodeId InspectorDOMAgent::pushNodeToFrontend(Inspector
 
 Node* InspectorDOMAgent::nodeForId(Inspector::Protocol::DOM::NodeId id)
 {
-    if (!m_idToNode.isValidKey(id))
-        return nullptr;
-
     return m_idToNode.get(id);
 }
 
@@ -769,8 +701,12 @@ Inspector::Protocol::DOM::NodeId InspectorDOMAgent::pushNodePathToFrontend(Node*
 Ref<Inspector::Protocol::DOM::Styleable> InspectorDOMAgent::pushStyleablePathToFrontend(Inspector::Protocol::ErrorString errorString, const Styleable& styleable)
 {
     RefPtr element = elementToPushForStyleable(styleable);
-    auto nodeId = pushNodePathToFrontend(errorString, protect(element ? element.get() : &styleable.element));
+    auto nodeId = pushNodePathToFrontend(errorString, protect(element ? element.get() : styleable.element.ptr()));
+    return buildObjectForStyleable(nodeId, styleable);
+}
 
+Ref<Inspector::Protocol::DOM::Styleable> InspectorDOMAgent::buildObjectForStyleable(Inspector::Protocol::DOM::NodeId nodeId, const Styleable& styleable)
+{
     auto protocolStyleable = Inspector::Protocol::DOM::Styleable::create()
         .setNodeId(nodeId)
         .release();
@@ -1692,7 +1628,7 @@ Inspector::Protocol::ErrorStringOr<void> InspectorDOMAgent::highlightFrame(const
 {
     Inspector::Protocol::ErrorString errorString;
 
-    RefPtr frame = protect(m_inspectedPage->inspectorController().identifierRegistry())->assertFrame(errorString, frameId);
+    RefPtr frame = assertFrame(errorString, frameId);
     if (!frame)
         return makeUnexpected(errorString);
 
@@ -1909,30 +1845,21 @@ Inspector::Protocol::ErrorStringOr<Inspector::Protocol::DOM::NodeId> InspectorDO
 
 Inspector::Protocol::ErrorStringOr<Inspector::Protocol::DOM::NodeId> InspectorDOMAgent::requestFrameOwner(const Inspector::Protocol::Network::FrameId& frameId)
 {
-    auto parsedFrameId = IdentifierRegistry::parseProtocolFrameId(frameId);
-    if (!parsedFrameId)
-        return makeUnexpected("Invalid frameId format"_s);
+    Inspector::Protocol::ErrorString errorString;
 
-    // Compare the FrameIdentifier only: the hosting process in a frame ID can be stale in a process that
-    // holds a RemoteFrame. Do not look below a RemoteFrame: the frames there are reached through their own
-    // FrameDOMAgent, and an owner element in their documents is not part of this agent's tree.
-    for (RefPtr frame = &m_inspectedPage->mainFrame(); frame; frame = is<LocalFrame>(*frame) ? frame->tree().traverseNext() : frame->tree().traverseNextSkippingChildren()) {
-        if (frame->frameID() != parsedFrameId->second)
-            continue;
+    RefPtr frame = assertFrame(errorString, frameId);
+    if (!frame)
+        return makeUnexpected(errorString);
 
-        RefPtr ownerElement = frame->ownerElement();
-        if (!ownerElement)
-            return makeUnexpected("Missing owner element for given frameId"_s);
+    RefPtr ownerElement = frame->ownerElement();
+    if (!ownerElement)
+        return makeUnexpected("Missing owner element for given frameId"_s);
 
-        Inspector::Protocol::ErrorString errorString;
-        auto nodeId = pushNodePathToFrontend(errorString, ownerElement.get());
-        if (!nodeId)
-            return makeUnexpected("Unable to push the owner element for given frameId"_s);
+    auto nodeId = pushNodePathToFrontend(errorString, ownerElement.get());
+    if (!nodeId)
+        return makeUnexpected("Unable to push the owner element for given frameId"_s);
 
-        return nodeId;
-    }
-
-    return makeUnexpected("Missing frame for given frameId"_s);
+    return nodeId;
 }
 
 String InspectorDOMAgent::documentURLString(Document* document)
@@ -2692,21 +2619,36 @@ Inspector::Protocol::DOM::NodeId InspectorDOMAgent::identifierForNode(Node& node
 void InspectorDOMAgent::addEventListenersToNode(Node& node)
 {
 #if ENABLE(VIDEO)
-    if (!m_eventFiredCallback)
-        m_eventFiredCallback = EventFiredCallback::create(*this);
-
-    forEachInspectedNodeEventName(node, [node = Ref { node }, eventFiredCallback = Ref { *m_eventFiredCallback }](const AtomString& eventName) {
-        node->addEventListener(eventName, eventFiredCallback.copyRef());
-    });
-
-    if (is<HTMLMediaElement>(node)) {
-        if (!m_mediaMetricsTimer.isActive())
-            m_mediaMetricsTimer.start(0_s, 1_s / 15.);
-    }
+    // FrameDOMAgent reports media events for nodes outside the local frame tree.
+    if (!InspectorMediaEventTracker::isInLocalFrameTree(node))
+        return;
+    m_mediaEventTracker->addEventListenersToNode(node);
 #else
     UNUSED_PARAM(node);
 #endif // ENABLE(VIDEO)
 }
+
+#if ENABLE(VIDEO)
+Inspector::Protocol::DOM::NodeId InspectorDOMAgent::pushNodePathForMediaEvent(Node& node)
+{
+    // The node may have been adopted out of the local frame tree after its listeners were added.
+    if (!InspectorMediaEventTracker::isInLocalFrameTree(node))
+        return 0;
+    return pushNodePathToFrontend(&node);
+}
+
+void InspectorDOMAgent::mediaEventDidFire(Inspector::Protocol::DOM::NodeId nodeId, const String& eventName, RefPtr<JSON::Object>&& data)
+{
+    auto timestamp = protect(protect(environment())->executionStopwatch())->elapsedTime().seconds();
+    m_frontendDispatcher->didFireEvent(nodeId, eventName, timestamp, WTF::move(data));
+}
+
+void InspectorDOMAgent::powerEfficientPlaybackStateDidChange(Inspector::Protocol::DOM::NodeId nodeId, bool isPowerEfficient)
+{
+    auto timestamp = protect(protect(environment())->executionStopwatch())->elapsedTime().seconds();
+    m_frontendDispatcher->powerEfficientPlaybackStateChanged(nodeId, timestamp, isPowerEfficient);
+}
+#endif // ENABLE(VIDEO)
 
 void InspectorDOMAgent::didInsertDOMNode(Node& node)
 {
@@ -3004,7 +2946,11 @@ bool InspectorDOMAgent::isEventListenerDisabled(EventTarget& target, const AtomS
 
 void InspectorDOMAgent::eventDidResetAfterDispatch(const Event& event)
 {
-    m_dispatchedEvents.remove(&event);
+#if ENABLE(VIDEO)
+    m_mediaEventTracker->eventDidResetAfterDispatch(event);
+#else
+    UNUSED_PARAM(event);
+#endif
 }
 
 void InspectorDOMAgent::flexibleBoxRendererBeganLayout(const RenderObject& renderer)
@@ -3041,51 +2987,6 @@ Inspector::Protocol::DOM::EventListenerId InspectorDOMAgent::idForEventListener(
     }
     return 0;
 }
-
-#if ENABLE(VIDEO)
-void InspectorDOMAgent::mediaMetricsTimerFired()
-{
-    // FIXME: remove metrics information for any media element when it's destroyed
-
-    if (HTMLMediaElement::allMediaElements().isEmpty()) {
-        if (m_mediaMetricsTimer.isActive())
-            m_mediaMetricsTimer.stop();
-        m_mediaMetrics.clear();
-        return;
-    }
-
-    for (auto& weakMediaElement : HTMLMediaElement::allMediaElements()) {
-        Ref mediaElement = weakMediaElement.get();
-        if (!is<HTMLVideoElement>(mediaElement) || !mediaElement->isPlaying())
-            continue;
-
-        auto videoPlaybackQuality = mediaElement->getVideoPlaybackQuality();
-        unsigned displayCompositedVideoFrames = videoPlaybackQuality->displayCompositedVideoFrames();
-
-        auto iterator = m_mediaMetrics.find(mediaElement);
-        if (iterator == m_mediaMetrics.end()) {
-            m_mediaMetrics.set(mediaElement.get(), MediaMetrics(displayCompositedVideoFrames));
-            continue;
-        }
-
-        bool isPowerEfficient = displayCompositedVideoFrames > iterator->value.displayCompositedFrames;
-        if (iterator->value.isPowerEfficient != isPowerEfficient) {
-            iterator->value.isPowerEfficient = isPowerEfficient;
-
-            if (auto nodeId = pushNodePathToFrontend(mediaElement.ptr())) {
-                auto timestamp = protect(protect(environment())->executionStopwatch())->elapsedTime().seconds();
-                m_frontendDispatcher->powerEfficientPlaybackStateChanged(nodeId, timestamp, iterator->value.isPowerEfficient);
-            }
-        }
-
-        iterator->value.displayCompositedFrames = displayCompositedVideoFrames;
-    }
-
-    m_mediaMetrics.removeIf([&] (auto& entry) {
-        return !HTMLMediaElement::allMediaElements().contains(&entry.key);
-    });
-}
-#endif
 
 RefPtr<Node> InspectorDOMAgent::nodeForPath(const String& path)
 {
@@ -3215,22 +3116,12 @@ NODELETE static Inspector::Protocol::DOM::VideoProjectionMetadataKind videoProje
 }
 #endif
 
-Inspector::Protocol::ErrorStringOr<Ref<Inspector::Protocol::DOM::MediaStats>> InspectorDOMAgent::getMediaStats(Inspector::Protocol::DOM::NodeId nodeId)
-{
 #if ENABLE(VIDEO)
-    Inspector::Protocol::ErrorString errorString;
-
-    RefPtr element = assertElement(errorString, nodeId);
-    if (!element)
-        return makeUnexpected(errorString);
-
-    RefPtr mediaElement = dynamicDowncast<HTMLMediaElement>(element);
-    if (!mediaElement)
-        return makeUnexpected("Node for given nodeId is not a media element"_s);
-
+Ref<Inspector::Protocol::DOM::MediaStats> InspectorDOMAgent::buildMediaStats(HTMLMediaElement& mediaElement)
+{
     auto stats = Inspector::Protocol::DOM::MediaStats::create().release();
 
-    auto quality = mediaElement->getVideoPlaybackQuality();
+    auto quality = mediaElement.getVideoPlaybackQuality();
     auto jsonQuality = Inspector::Protocol::DOM::VideoPlaybackQuality::create()
         .setTotalVideoFrames(quality->totalVideoFrames())
         .setDroppedVideoFrames(quality->droppedVideoFrames())
@@ -3238,21 +3129,21 @@ Inspector::Protocol::ErrorStringOr<Ref<Inspector::Protocol::DOM::MediaStats>> In
         .release();
     stats->setQuality(WTF::move(jsonQuality));
 
-    auto sourceType = mediaElement->localizedSourceType();
+    auto sourceType = mediaElement.localizedSourceType();
     if (!sourceType.isEmpty())
         stats->setSource(sourceType);
 
-    RefPtr videoTrack = mediaElement->videoTracks() ? mediaElement->videoTracks()->selectedItem() : nullptr;
-    RefPtr audioTrack = mediaElement->audioTracks() ? mediaElement->audioTracks()->firstEnabled() : nullptr;
+    RefPtr videoTrack = mediaElement.videoTracks() ? mediaElement.videoTracks()->selectedItem() : nullptr;
+    RefPtr audioTrack = mediaElement.audioTracks() ? mediaElement.audioTracks()->firstEnabled() : nullptr;
 
-    auto viewport = mediaElement->contentBoxRect().size();
+    auto viewport = mediaElement.contentBoxRect().size();
     auto viewportJSON = Inspector::Protocol::DOM::ViewportSize::create()
         .setWidth(viewport.width())
         .setHeight(viewport.height())
         .release();
     stats->setViewport(WTF::move(viewportJSON));
 
-    if (RefPtr window = mediaElement->document().window())
+    if (RefPtr window = mediaElement.document().window())
         stats->setDevicePixelRatio(window->devicePixelRatio());
 
     if (videoTrack) {
@@ -3312,6 +3203,23 @@ Inspector::Protocol::ErrorStringOr<Ref<Inspector::Protocol::DOM::MediaStats>> In
     }
 
     return stats;
+}
+#endif
+
+Inspector::Protocol::ErrorStringOr<Ref<Inspector::Protocol::DOM::MediaStats>> InspectorDOMAgent::getMediaStats(Inspector::Protocol::DOM::NodeId nodeId)
+{
+#if ENABLE(VIDEO)
+    Inspector::Protocol::ErrorString errorString;
+
+    RefPtr element = assertElement(errorString, nodeId);
+    if (!element)
+        return makeUnexpected(errorString);
+
+    RefPtr mediaElement = dynamicDowncast<HTMLMediaElement>(element);
+    if (!mediaElement)
+        return makeUnexpected("Node for given nodeId is not a media element"_s);
+
+    return buildMediaStats(*mediaElement);
 #else
     UNUSED_PARAM(nodeId);
     return makeUnexpected("no media support"_s);

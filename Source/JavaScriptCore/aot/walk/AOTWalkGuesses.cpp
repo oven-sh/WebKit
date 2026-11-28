@@ -1520,7 +1520,7 @@ static void collectValueUsesOfBody(Walker& walker, const BodyIndex& index, BodyS
     kept.callsStoredLeavesOffReads = callsOfStoredLeavesOffReads >= minNamesUsedElsewhere;
     if (hasLoops && (asksElementOfReadInLoop || namesMemberOfOneClass || kept.callsStoredLeavesOffReads || (namesReaderOfCharacters && !walker.program().at(walker.currentFunction()).has(FunctionFlags::IsChecked)))) {
         Vector<uint32_t> places(numberOfValues, [](size_t number) { return static_cast<uint32_t>(number); });
-        UncheckedKeyHashMap<uint64_t, uint32_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> firstReadsOfPlaces;
+        HashMap<uint64_t, uint32_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> firstReadsOfPlaces;
         auto placeOf = [&](ValueID value) {
             return places[roots[value.index()]];
         };
@@ -22235,7 +22235,7 @@ static uint32_t findParametersThatBodyLeansOn(Walker& walker, std::span<Paramete
         TypeID behindGuard;
         TypeID inFrontOfGuard;
     };
-    UncheckedKeyHashMap<uint32_t, NarrowedName, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> narrowedNames;
+    HashMap<uint32_t, NarrowedName, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> narrowedNames;
     BitVector blocksThatNoRunEnters;
     std::array<BitVector, 2> branchesWithEdgeThatNoRunTakes;
     BitVector iterationsThatLean;

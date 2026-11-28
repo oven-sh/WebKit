@@ -325,7 +325,7 @@ bool RemoteMediaPlayerSupport::registerRemoteEngineIfAvailable(MediaEngineRegist
 
 static void buildMediaEnginesVector() WTF_REQUIRES_LOCK(mediaEngineVectorLock)
 {
-    ASSERT(mediaEngineVectorLock.isLocked());
+    RELEASE_ASSERT(mediaEngineVectorLock.isLocked());
 
 #if USE(AVFOUNDATION)
     if (DeprecatedGlobalSettings::isAVFoundationEnabled()) {
@@ -533,7 +533,7 @@ MediaPlayer::MediaPlayer(MediaPlayerClient& client, MediaPlayerEnums::MediaEngin
 
 MediaPlayer::~MediaPlayer()
 {
-    ASSERT(!m_initializingMediaEngine);
+    RELEASE_ASSERT(!m_initializingMediaEngine);
     if (RefPtr privatePtr = m_private)
         privatePtr->mediaPlayerWillBeDestroyed();
 }
@@ -647,8 +647,8 @@ void MediaPlayer::setPlayerPrivate(RefPtr<MediaPlayerPrivateInterface>&& playerP
     // the only reference. It may only be replaced between mediaPlayerWillInitializeMediaEngine()
     // and mediaPlayerDidInitializeMediaEngine(), which hold MediaElementAudioSourceNode's process
     // lock; m_initializingMediaEngine tracks that window.
-    ASSERT(isMainThread());
-    ASSERT(m_initializingMediaEngine);
+    RELEASE_ASSERT(isMainThread());
+    RELEASE_ASSERT(m_initializingMediaEngine);
     m_private = WTF::move(playerPrivate);
 }
 
@@ -667,7 +667,7 @@ void MediaPlayer::loadWithNextMediaEngine(const MediaPlayerFactory* current)
 #define MEDIASTREAM 0
 #endif
 
-    ASSERT(!m_initializingMediaEngine);
+    RELEASE_ASSERT(!m_initializingMediaEngine);
     m_initializingMediaEngine = true;
     protect(client())->mediaPlayerWillInitializeMediaEngine();
 
@@ -747,13 +747,18 @@ void MediaPlayer::loadWithNextMediaEngine(const MediaPlayerFactory* current)
 
 void MediaPlayer::queueTaskOnEventLoop(Function<void()>&& task)
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     protect(client())->mediaPlayerQueueTaskOnEventLoop(WTF::move(task));
 }
 
 bool MediaPlayer::hasAvailableVideoFrame() const
 {
     return protect(m_private)->hasAvailableVideoFrame();
+}
+
+bool MediaPlayer::videoFrameHasAlpha() const
+{
+    return protect(m_private)->videoFrameHasAlpha();
 }
 
 void MediaPlayer::prepareForRendering()
@@ -1035,16 +1040,6 @@ void MediaPlayer::setVideoLayerSizeFenced(const FloatSize& size, WTF::MachSendRi
 NSArray* MediaPlayer::timedMetadata() const
 {
     return protect(m_private)->timedMetadata();
-}
-
-String MediaPlayer::accessLog() const
-{
-    return protect(m_private)->accessLog();
-}
-
-String MediaPlayer::errorLog() const
-{
-    return protect(m_private)->errorLog();
 }
 
 #endif

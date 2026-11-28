@@ -1,4 +1,4 @@
-# The link took the name for undefined, so the image does not run where the option defines it.
+# An image that was linked without the option takes the name for absent, so it does not run where the option defines it.
 # OPTIONS: exclude=UnlistedGlobals
 # PROGRAM-OF: number-of-a-decimal.ir
 # RUN: run-in-shell --useDecimal=1 print("ran");

@@ -34,11 +34,11 @@
 #include <WebCore/IntRectHash.h>
 #include <WebCore/LoadSchedulingMode.h>
 #include <WebCore/MediaSessionGroupIdentifier.h>
+#include <WebCore/NetworkInterception.h>
 #include <WebCore/NetworkLoadPolicy.h>
 #include <WebCore/PageIdentifier.h>
 #include <WebCore/Pagination.h>
 #include <WebCore/PlaybackTargetClientContextIdentifier.h>
-#include <WebCore/ProcessSwapDisposition.h>
 #include <WebCore/RegistrableDomain.h>
 #include <WebCore/ScriptExecutionContextIdentifier.h>
 #include <WebCore/ScriptTrackingPrivacyCategory.h>
@@ -499,6 +499,12 @@ public:
     bool openedByDOMWithOpener() const { return m_openedByDOMWithOpener; }
     void setOpenedByDOMWithOpener(bool value) { m_openedByDOMWithOpener = value; }
 
+    // https://wicg.github.io/document-picture-in-picture/#is-document-picture-in-picture
+#if ENABLE(DOCUMENT_PIP)
+    bool isDocumentPictureInPicture() const { return m_isDocumentPictureInPicture; }
+    void setIsDocumentPictureInPicture(bool value) { m_isDocumentPictureInPicture = value; }
+#endif
+
     const RegistrableDomain& openedByScriptDomain() const LIFETIME_BOUND { return m_openedByScriptDomain; }
     void setOpenedByScriptDomain(RegistrableDomain&& domain) { m_openedByScriptDomain = WTF::move(domain); }
 
@@ -758,6 +764,10 @@ public:
     WEBCORE_EXPORT void setShouldSuppressScrollbarAnimations(bool suppressAnimations);
     void lockAllOverlayScrollbarsToHidden(bool lockOverlayScrollbars);
 
+    std::optional<ScrollbarStyle> scrollbarStyleOverride() const { return m_scrollbarStyleOverride; }
+    WEBCORE_EXPORT void setScrollbarStyleOverride(std::optional<ScrollbarStyle>);
+    ScrollbarStyle scrollbarStyle() const;
+
     WEBCORE_EXPORT void setVerticalScrollElasticity(ScrollElasticity);
     ScrollElasticity verticalScrollElasticity() const { return static_cast<ScrollElasticity>(m_verticalScrollElasticity); }
 
@@ -910,12 +920,13 @@ public:
     WEBCORE_EXPORT void resumeScriptedAnimations();
     bool scriptedAnimationsSuspended() const { return m_scriptedAnimationsSuspended; }
 
-#if ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
+    bool systemImageAnimationEnabled() const { return m_systemImageAnimationEnabled; }
+    void setSystemImageAnimationEnabled(bool enabled) { m_systemImageAnimationEnabled = enabled; }
+
     void updatePlayStateForAllAnimations();
     WEBCORE_EXPORT void setImageAnimationEnabled(bool);
     void addIndividuallyPlayingAnimationElement(HTMLImageElement&);
     void removeIndividuallyPlayingAnimationElement(HTMLImageElement&);
-#endif
     NODELETE WEBCORE_EXPORT bool imageAnimationEnabled() const;
     ImageAnimationTimeline& imageAnimationTimeline() const { return m_imageAnimationTimeline; }
 
@@ -1164,6 +1175,12 @@ public:
     bool isResourceCachingDisabledByWebInspector() const { return m_resourceCachingDisabledByWebInspector; }
     void setResourceCachingDisabledByWebInspector(bool disabled) { m_resourceCachingDisabledByWebInspector = disabled; }
 
+    // The network interception configuration active in this process for this page. Under Site
+    // Isolation the authoritative copy lives in the UI process, which pushes it down to every
+    // process hosting one of the page's frames.
+    const Inspector::NetworkInterception& networkInterception() const { return m_networkInterception; }
+    void setNetworkInterception(Inspector::NetworkInterception&& interception) { m_networkInterception = WTF::move(interception); }
+
     std::optional<EventThrottlingBehavior> eventThrottlingBehaviorOverride() const { return m_eventThrottlingBehaviorOverride; }
     void setEventThrottlingBehaviorOverride(std::optional<EventThrottlingBehavior> throttling) { m_eventThrottlingBehaviorOverride = throttling; }
 
@@ -1320,7 +1337,7 @@ public:
     void opportunisticallyRunIdleCallbacks(MonotonicTime deadline);
     WEBCORE_EXPORT void performOpportunisticallyScheduledTasks(MonotonicTime deadline);
     void deleteRemovedNodesAndDetachedRenderers();
-    String ensureMediaKeysStorageDirectoryForOrigin(const SecurityOriginData&);
+    String ensureMediaKeysStorageDirectoryForOrigin(const SecurityOriginData&, std::optional<FrameIdentifier>);
     WEBCORE_EXPORT void setMediaKeysStorageDirectory(const String&);
 
     bool isWaitingForLoadToFinish() const { return m_isWaitingForLoadToFinish; }
@@ -1616,6 +1633,9 @@ private:
 
     bool m_openedByDOM { false };
     bool m_openedByDOMWithOpener { false };
+#if ENABLE(DOCUMENT_PIP)
+    bool m_isDocumentPictureInPicture { false };
+#endif
 
     bool m_tabKeyCyclesThroughElements { true };
     bool m_defersLoading { false };
@@ -1656,6 +1676,7 @@ private:
     float m_initialScaleIgnoringContentSize { 1.0f };
 
     bool m_suppressScrollbarAnimations { false };
+    std::optional<ScrollbarStyle> m_scrollbarStyleOverride;
 
 #if HAVE(NSREFRESHCONTROLLER)
     bool m_hasRefreshController { false };
@@ -1678,6 +1699,7 @@ private:
     JSC::Debugger* m_debugger { nullptr }; // FIXME: Use a smart pointer.
 
     bool m_canStartMedia { true };
+    bool m_systemImageAnimationEnabled { true };
     Ref<ImageAnimationTimeline> m_imageAnimationTimeline;
     bool m_videoAutoplayPreviewsEnabled { true };
     // Elements containing animations that are individually playing (potentially overriding the page-wide imageAnimationEnabled() state).
@@ -1764,6 +1786,7 @@ private:
     bool m_showAllPlugins { false };
     bool m_controlledByAutomation { false };
     bool m_resourceCachingDisabledByWebInspector { false };
+    Inspector::NetworkInterception m_networkInterception;
     bool m_isUtilityPage;
     bool m_shouldEnableICECandidateFilteringByDefault { true };
     bool m_mediaPlaybackIsSuspended { false };

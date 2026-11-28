@@ -152,12 +152,11 @@ private:
     ALWAYS_INLINE void setCodeStart(StringView);
 
     template<typename CharacterType>
-    ALWAYS_INLINE const Identifier* makeIdentifier(std::span<const CharacterType>);
+    ALWAYS_INLINE UniquedStringImpl* makeIdentifier(std::span<const CharacterType>);
 
-    ALWAYS_INLINE const Identifier* makeLatin1Identifier(std::span<const Latin1Character>);
-    ALWAYS_INLINE const Identifier* makeLatin1Identifier(std::span<const char16_t>);
-    ALWAYS_INLINE const Identifier* makeRightSizedIdentifier(std::span<const char16_t>, char16_t orAllChars);
-    ALWAYS_INLINE const Identifier* makeEmptyIdentifier();
+    ALWAYS_INLINE UniquedStringImpl* makeLatin1Identifier(std::span<const Latin1Character>);
+    ALWAYS_INLINE UniquedStringImpl* makeLatin1Identifier(std::span<const char16_t>);
+    ALWAYS_INLINE UniquedStringImpl* makeRightSizedIdentifier(std::span<const char16_t>, char16_t orAllChars);
 
     ALWAYS_INLINE void skipWhitespace();
 
@@ -177,10 +176,12 @@ private:
     template <bool shouldBuildStrings> ALWAYS_INLINE StringParseResult parseComplexEscape(bool strictMode);
     ALWAYS_INLINE StringParseResult parseTemplateLiteral(JSTokenData*, RawStringsBuildMode);
     
-    using NumberParseResult = Variant<double, const Identifier*>;
+    using NumberParseResult = Variant<double, UniquedStringImpl*>;
     ALWAYS_INLINE std::optional<NumberParseResult> parseHex();
     ALWAYS_INLINE std::optional<NumberParseResult> parseBinary();
     ALWAYS_INLINE std::optional<NumberParseResult> parseOctal();
+    JSTokenType lexDecimalWithoutSeparators(JSTokenData*, const T* start, const T* integerEnd, uint64_t integer);
+    JSTokenType scanDecimalArrayElementFollowedByComma(double& value, const T* start, const T* integerEnd, uint64_t integer);
     ALWAYS_INLINE std::optional<NumberParseResult> parseDecimal();
     ALWAYS_INLINE bool parseDecimalSuffix(JSTokenData*);
     ALWAYS_INLINE bool parseNumberAfterDecimalPoint();
@@ -243,30 +244,24 @@ WTF_MAKE_TZONE_ALLOCATED_TEMPLATE_IMPL(template<typename T>, Lexer<T>);
 
 template<typename T>
 template<typename CharacterType>
-ALWAYS_INLINE const Identifier* Lexer<T>::makeIdentifier(std::span<const CharacterType> characters)
+ALWAYS_INLINE UniquedStringImpl* Lexer<T>::makeIdentifier(std::span<const CharacterType> characters)
 {
-    return &m_arena->makeIdentifier(m_vm, characters);
+    return m_arena->makeIdentifier(m_vm, characters);
 }
 
 template <>
-ALWAYS_INLINE const Identifier* Lexer<Latin1Character>::makeRightSizedIdentifier(std::span<const char16_t> characters, char16_t)
+ALWAYS_INLINE UniquedStringImpl* Lexer<Latin1Character>::makeRightSizedIdentifier(std::span<const char16_t> characters, char16_t)
 {
-    return &m_arena->makeLatin1Identifier(m_vm, characters);
+    return m_arena->makeLatin1Identifier(m_vm, characters);
 }
 
 template <>
-ALWAYS_INLINE const Identifier* Lexer<char16_t>::makeRightSizedIdentifier(std::span<const char16_t> characters, char16_t orAllChars)
+ALWAYS_INLINE UniquedStringImpl* Lexer<char16_t>::makeRightSizedIdentifier(std::span<const char16_t> characters, char16_t orAllChars)
 {
     if (!(orAllChars & ~0xff))
-        return &m_arena->makeLatin1Identifier(m_vm, characters);
+        return m_arena->makeLatin1Identifier(m_vm, characters);
 
-    return &m_arena->makeIdentifier(m_vm, characters);
-}
-
-template <typename T>
-ALWAYS_INLINE const Identifier* Lexer<T>::makeEmptyIdentifier()
-{
-    return &m_arena->makeEmptyIdentifier(m_vm);
+    return m_arena->makeIdentifier(m_vm, characters);
 }
 
 template <>
@@ -284,21 +279,21 @@ ALWAYS_INLINE void Lexer<char16_t>::setCodeStart(StringView sourceString)
 }
 
 template <typename T>
-ALWAYS_INLINE const Identifier* Lexer<T>::makeLatin1Identifier(std::span<const Latin1Character> characters)
+ALWAYS_INLINE UniquedStringImpl* Lexer<T>::makeLatin1Identifier(std::span<const Latin1Character> characters)
 {
-    return &m_arena->makeIdentifier(m_vm, characters);
+    return m_arena->makeIdentifier(m_vm, characters);
 }
 
 template <typename T>
-ALWAYS_INLINE const Identifier* Lexer<T>::makeLatin1Identifier(std::span<const char16_t> characters)
+ALWAYS_INLINE UniquedStringImpl* Lexer<T>::makeLatin1Identifier(std::span<const char16_t> characters)
 {
-    return &m_arena->makeLatin1Identifier(m_vm, characters);
+    return m_arena->makeLatin1Identifier(m_vm, characters);
 }
 
 #if ASSERT_ENABLED
-bool isSafeBuiltinIdentifier(VM&, const Identifier*);
+bool isSafeBuiltinIdentifier(VM&, UniquedStringImpl*);
 #else
-ALWAYS_INLINE bool isSafeBuiltinIdentifier(VM&, const Identifier*) { return true; }
+ALWAYS_INLINE bool isSafeBuiltinIdentifier(VM&, UniquedStringImpl*) { return true; }
 #endif // ASSERT_ENABLED
 
 template <typename T>
@@ -308,7 +303,7 @@ ALWAYS_INLINE JSTokenType Lexer<T>::lex(JSToken* tokenRecord, OptionSet<LexerFla
     return lexWithoutClearingLineTerminator(tokenRecord, lexerFlags, strictMode);
 }
 
-// Consumes a decimal integer literal or `null` immediately followed by ',' (including the ',') and returns the
+// Consumes a decimal literal or `null` immediately followed by ',' (including the ',') and returns the
 // literal's token type. Otherwise consumes nothing and returns ERRORTOK.
 template <typename T>
 ALWAYS_INLINE JSTokenType Lexer<T>::scanSimpleArrayElementFollowedByComma(double& value)
@@ -321,12 +316,14 @@ ALWAYS_INLINE JSTokenType Lexer<T>::scanSimpleArrayElementFollowedByComma(double
         if (result) {
             while (ptr < m_codeEnd && isASCIIDigit(*ptr))
                 result = result * 10 + (*ptr++ - '0');
-            if (ptr - start > numberOfDigitsForSafeInt52)
-                return ERRORTOK;
         }
+        if (ptr - start > numberOfDigitsForSafeInt52 || (ptr < m_codeEnd && (*ptr == '.' || isASCIIAlphaCaselessEqual(*ptr, 'e'))))
+            return scanDecimalArrayElementFollowedByComma(value, start, ptr, result);
         value = result;
         type = INTEGER;
-    } else if (m_codeEnd - ptr >= 4 &&  compareCharacters(ptr, 'n', 'u', 'l', 'l')) {
+    } else if (m_codeEnd - ptr >= 2 && *ptr == '.' && isASCIIDigit(ptr[1]))
+        return scanDecimalArrayElementFollowedByComma(value, start, start, 0);
+    else if (m_codeEnd - ptr >= 4 &&  compareCharacters(ptr, 'n', 'u', 'l', 'l')) {
         ptr += 4;
         type = NULLTOKEN;
     } else

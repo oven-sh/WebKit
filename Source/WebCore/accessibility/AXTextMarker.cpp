@@ -677,7 +677,7 @@ String AXTextMarkerRange::toString(IncludeListMarkerText includeListMarkerText, 
         // non-zero length means textual node, zero length means replaced node (AKA "attachments" in AX)
         if (it.text().length()) {
             // If this is in a list item, we need to add the text for the list marker
-            // because a RenderListOutsideMarker does not have a Node equivalent and thus does not appear
+            // because an outside list marker box does not have a Node equivalent and thus does not appear
             // when iterating text.
             // Don't add list marker text for new line character.
             if (it.text().length() != 1 || !isASCIIWhitespace(it.text()[0]))
@@ -2159,7 +2159,7 @@ AXIsolatedObject* findObjectWithRuns(AXIsolatedObject& start, AXDirection direct
     }
     AX_ASSERT(direction == AXDirection::Previous);
 
-    auto previousInPreOrder = [&] (AXIsolatedObject& object) -> AXIsolatedObject* {
+    auto previousInPreOrder = [&](AXIsolatedObject& object) -> RefPtr<AXIsolatedObject> {
         if (RefPtr sibling = object.previousSiblingIncludingIgnored(/* updateChildrenIfNeeded */ true)) {
             if (shouldStop(*sibling))
                 return nullptr;
@@ -2167,7 +2167,7 @@ AXIsolatedObject* findObjectWithRuns(AXIsolatedObject& start, AXDirection direct
             const auto& children = sibling->childrenIncludingIgnored(/* updateChildrenIfNeeded */ true);
             if (children.size() && canDescendFrom(*sibling, children.last().get()))
                 return downcast<AXIsolatedObject>(sibling->deepestLastChildIncludingIgnored(/* updateChildrenIfNeeded */ true));
-            return downcast<AXIsolatedObject>(sibling.unsafeGet());
+            return downcast<AXIsolatedObject>(WTF::move(sibling));
         }
         return object.parentObject();
     };

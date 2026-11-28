@@ -142,7 +142,7 @@ struct PrivateNameEntryHashTraits : HashTraits<PrivateNameEntry> {
     static constexpr bool needsDestruction = false;
 };
 
-typedef UncheckedKeyHashMap<PackedRefPtr<UniquedStringImpl>, PrivateNameEntry, IdentifierRepHash, HashTraits<PackedRefPtr<UniquedStringImpl>>, PrivateNameEntryHashTraits> PrivateNameEnvironment;
+typedef HashMap<PackedRefPtr<UniquedStringImpl>, PrivateNameEntry, IdentifierRepHash, HashTraits<PackedRefPtr<UniquedStringImpl>>, PrivateNameEntryHashTraits> PrivateNameEnvironment;
 
 class VariableEnvironment {
     WTF_MAKE_TZONE_ALLOCATED(VariableEnvironment);
@@ -173,12 +173,6 @@ public:
     ALWAYS_INLINE Map::const_iterator begin() const { return m_map.begin(); }
     ALWAYS_INLINE Map::const_iterator end() const { return m_map.end(); }
     ALWAYS_INLINE Map::AddResult add(const RefPtr<UniquedStringImpl>& identifier) { return m_map.add(identifier, VariableEnvironmentEntry()); }
-    ALWAYS_INLINE Map::AddResult add(const Identifier& identifier) { return add(identifier.impl()); }
-
-    // Defined in VariableEnvironmentInlines.h.
-    PrivateNameEnvironment::AddResult addPrivateName(const Identifier& identifier);
-    // Defined in VariableEnvironmentInlines.h.
-    PrivateNameEnvironment::AddResult addPrivateName(const RefPtr<UniquedStringImpl>& identifier);
 
     ALWAYS_INLINE unsigned size() const { return m_map.size() + privateNamesSize(); }
     ALWAYS_INLINE unsigned mapSize() const { return m_map.size(); }
@@ -219,11 +213,6 @@ public:
 
     using PrivateNamesRange = WTF::IteratorRange<PrivateNameEnvironment::iterator>;
 
-    // Defined in VariableEnvironmentInlines.h.
-    Map::AddResult declarePrivateField(const Identifier& identifier);
-
-    // Defined in VariableEnvironmentInlines.h.
-    bool declarePrivateMethod(const Identifier& identifier);
     bool declarePrivateMethod(const RefPtr<UniquedStringImpl>& identifier, PrivateNameEntry::Traits addionalTraits = PrivateNameEntry::Traits::None);
 
     enum class PrivateDeclarationResult {
@@ -234,19 +223,8 @@ public:
 
     PrivateDeclarationResult declarePrivateAccessor(const RefPtr<UniquedStringImpl>&, PrivateNameEntry accessorTraits);
 
-    // Defined in VariableEnvironmentInlines.h.
-    bool declareStaticPrivateMethod(const Identifier& identifier);
-
-    // Defined in VariableEnvironmentInlines.h.
-    PrivateDeclarationResult declarePrivateSetter(const Identifier& identifier);
-    // Defined in VariableEnvironmentInlines.h.
-    PrivateDeclarationResult declareStaticPrivateSetter(const Identifier& identifier);
     PrivateDeclarationResult declarePrivateSetter(const RefPtr<UniquedStringImpl>& identifier, PrivateNameEntry::Traits modifierTraits = PrivateNameEntry::Traits::None);
 
-    // Defined in VariableEnvironmentInlines.h.
-    PrivateDeclarationResult declarePrivateGetter(const Identifier& identifier);
-    // Defined in VariableEnvironmentInlines.h.
-    PrivateDeclarationResult declareStaticPrivateGetter(const Identifier& identifier);
     PrivateDeclarationResult declarePrivateGetter(const RefPtr<UniquedStringImpl>& identifier, PrivateNameEntry::Traits modifierTraits = PrivateNameEntry::Traits::None);
 
     Map::AddResult declarePrivateField(const RefPtr<UniquedStringImpl>&);
@@ -305,15 +283,15 @@ public:
         return false;
     }
 
-    ALWAYS_INLINE bool hasPrivateName(const Identifier& identifier)
+    ALWAYS_INLINE bool hasPrivateName(UniquedStringImpl* identifier)
     {
         if (!m_rareData)
             return false;
-        return m_rareData->m_privateNames.contains(identifier.impl());
+        return m_rareData->m_privateNames.contains(identifier);
     }
 
     // Defined in VariableEnvironmentInlines.h.
-    void addPrivateNamesFrom(const PrivateNameEnvironment* privateNameEnvironment);
+    void addPrivateNamesFrom(const PrivateNameEnvironment*);
 
     struct RareData {
         WTF_MAKE_STRUCT_TZONE_ALLOCATED(RareData);
@@ -343,7 +321,7 @@ private:
     std::unique_ptr<VariableEnvironment::RareData> m_rareData;
 };
 
-using TDZEnvironment = UncheckedKeyHashSet<RefPtr<UniquedStringImpl>, IdentifierRepHash>;
+using TDZEnvironment = HashSet<RefPtr<UniquedStringImpl>, IdentifierRepHash>;
 
 class CompactTDZEnvironment {
     WTF_MAKE_TZONE_ALLOCATED(CompactTDZEnvironment);
@@ -484,7 +462,7 @@ private:
 
     Handle get(CompactTDZEnvironment*, bool& isNewEntry);
 
-    UncheckedKeyHashMap<CompactTDZEnvironmentKey, unsigned> m_map;
+    HashMap<CompactTDZEnvironmentKey, unsigned> m_map;
 };
 
 class TDZEnvironmentLink : public RefCounted<TDZEnvironmentLink> {
@@ -503,7 +481,7 @@ private:
     friend class CachedTDZEnvironmentLink;
 
     CompactTDZEnvironmentMap::Handle m_handle;
-    RefPtr<TDZEnvironmentLink> m_parent;
+    const RefPtr<TDZEnvironmentLink> m_parent;
 };
 
 } // namespace JSC

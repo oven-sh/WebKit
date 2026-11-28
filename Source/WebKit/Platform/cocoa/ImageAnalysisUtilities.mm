@@ -83,16 +83,13 @@ TextRecognitionResult makeTextRecognitionResult(VKCImageAnalysis *analysis)
 
     bool isFirstLine = true;
     size_t nextLineIndex = 1;
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL VKWKLineInfo *line in allLines.get()) {
-        Vector<TextRecognitionWordData> children;
+    for (VKWKLineInfo *line in allLines.get()) {
         RetainPtr<NSArray<VKWKTextInfo *>> vkChildren = line.children;
-        children.reserveInitialCapacity(vkChildren.get().count);
+        Vector<TextRecognitionWordData> children(ReserveCapacityTag { }, vkChildren.get().count);
 
         String lineText = line.string;
         unsigned searchLocation = 0;
-        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-        for (SUPPRESS_UNRETAINED_LOCAL VKWKTextInfo *child in vkChildren.get()) {
+        for (VKWKTextInfo *child in vkChildren.get()) {
             if (searchLocation >= lineText.length()) {
                 ASSERT_NOT_REACHED();
                 continue;
@@ -129,8 +126,7 @@ TextRecognitionResult makeTextRecognitionResult(VKCImageAnalysis *analysis)
     if ([analysis respondsToSelector:@selector(textDataDetectors)]) {
         auto dataDetectors = RetainPtr { analysis.textDataDetectors };
         result.dataDetectors.reserveInitialCapacity([dataDetectors count]);
-        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-        for (SUPPRESS_UNRETAINED_LOCAL VKWKDataDetectorInfo *info in dataDetectors.get())
+        for (VKWKDataDetectorInfo *info in dataDetectors.get())
             result.dataDetectors.append({ info.result, floatQuads(retainPtr(info.boundingQuads).get()) });
     }
 #endif // ENABLE(DATA_DETECTION)
@@ -154,8 +150,7 @@ bool languageIdentifierSupportsLiveText(NSString *languageIdentifier)
 
     static NeverDestroyed<MemoryCompactRobinHoodHashSet<String>> supportedLanguages = [] {
         MemoryCompactRobinHoodHashSet<String> set;
-        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-        for (SUPPRESS_UNRETAINED_LOCAL NSString *identifier in [PAL::getVKCImageAnalyzerClassSingleton() supportedRecognitionLanguages]) {
+        for (NSString *identifier in [PAL::getVKCImageAnalyzerClassSingleton() supportedRecognitionLanguages]) {
             if (auto code = languageCodeForLocale(identifier); !code.isEmpty())
                 set.add(WTF::move(code));
         }
@@ -171,10 +166,9 @@ static TextRecognitionResult makeTextRecognitionResult(VKCImageAnalysisTranslati
     RetainPtr<NSArray<VKCTranslatedParagraph *>> paragraphs = translation.paragraphs;
     result.blocks.reserveInitialCapacity(paragraphs.get().count);
 
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL VKCTranslatedParagraph *paragraph in paragraphs.get()) {
+    for (VKCTranslatedParagraph *paragraph in paragraphs.get()) {
         if (!paragraph.text.length) {
-            RELEASE_LOG(Translation, "[#%{public}s] Skipping empty translation paragraph", transactionID.loggingString().utf8());
+            RELEASE_LOG(Translation, "[#%{public}s] Skipping empty translation paragraph", makeUTF8CString(transactionID.loggingString()));
             continue;
         }
 
@@ -209,20 +203,20 @@ void requestVisualTranslation(VKCImageAnalyzer *analyzer, NSURL *imageURL, const
     static auto imageAnalysisRequestID = TransactionID::generateMonotonic();
     auto currentRequestID = imageAnalysisRequestID.increment();
     if (shouldLogFullImageTranslationResults())
-        RELEASE_LOG(Translation, "[#%{public}s] Image translation started for %{private}@", currentRequestID.loggingString().utf8(), imageURL);
+        RELEASE_LOG(Translation, "[#%{public}s] Image translation started for %{private}@", makeUTF8CString(currentRequestID.loggingString()), imageURL);
     else
-        RELEASE_LOG(Translation, "[#%{public}s] Image translation started", currentRequestID.loggingString().utf8());
+        RELEASE_LOG(Translation, "[#%{public}s] Image translation started", makeUTF8CString(currentRequestID.loggingString()));
     auto request = createImageAnalyzerRequest(image, VKAnalysisTypeText);
     [analyzer processRequest:request.get() progressHandler:nil completionHandler:makeBlockPtr([completion = WTF::move(completion), sourceLocale, targetLocale, currentRequestID, startTime] (VKCImageAnalysis *analysis, NSError *analysisError) mutable {
         callOnMainRunLoop([completion = WTF::move(completion), analysis = RetainPtr { analysis }, analysisError = RetainPtr { analysisError }, sourceLocale, targetLocale, currentRequestID, startTime] () mutable {
             auto imageAnalysisDelay = MonotonicTime::now() - startTime;
             if (!analysis) {
-                RELEASE_LOG(Translation, "[#%{public}s] Image translation failed in %.3f sec. (error: %{public}@)", currentRequestID.loggingString().utf8(), imageAnalysisDelay.seconds(), analysisError.get());
+                RELEASE_LOG(Translation, "[#%{public}s] Image translation failed in %.3f sec. (error: %{public}@)", makeUTF8CString(currentRequestID.loggingString()), imageAnalysisDelay.seconds(), analysisError.get());
                 return completion({ });
             }
 
             if (![analysis hasResultsForAnalysisTypes:VKAnalysisTypeText]) {
-                RELEASE_LOG(Translation, "[#%{public}s] Image translation completed in %.3f sec. (no text)", currentRequestID.loggingString().utf8(), imageAnalysisDelay.seconds());
+                RELEASE_LOG(Translation, "[#%{public}s] Image translation completed in %.3f sec. (no text)", makeUTF8CString(currentRequestID.loggingString()), imageAnalysisDelay.seconds());
                 return completion({ });
             }
 
@@ -230,38 +224,36 @@ void requestVisualTranslation(VKCImageAnalyzer *analyzer, NSURL *imageURL, const
             if (shouldLogFullImageTranslationResults()) {
                 StringBuilder stringToLog;
                 bool firstLine = true;
-                // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-                for (SUPPRESS_UNRETAINED_LOCAL VKWKLineInfo *info in allLines.get()) {
+                for (VKWKLineInfo *info in allLines.get()) {
                     if (!firstLine)
                         stringToLog.append("\\n"_s);
                     stringToLog.append(String { info.string });
                     firstLine = false;
                 }
-                RELEASE_LOG(Translation, "[#%{public}s] Image translation recognized text in %.3f sec. (line count: %zu): \"%{private}s\"", currentRequestID.loggingString().utf8(), imageAnalysisDelay.seconds(), allLines.get().count, stringToLog.toString().utf8());
+                RELEASE_LOG(Translation, "[#%{public}s] Image translation recognized text in %.3f sec. (line count: %zu): \"%{private}s\"", makeUTF8CString(currentRequestID.loggingString()), imageAnalysisDelay.seconds(), allLines.get().count, makeUTF8CString(stringToLog.toString()));
             } else
-                RELEASE_LOG(Translation, "[#%{public}s] Image translation recognized text in %.3f sec. (line count: %zu)", currentRequestID.loggingString().utf8(), imageAnalysisDelay.seconds(), allLines.get().count);
+                RELEASE_LOG(Translation, "[#%{public}s] Image translation recognized text in %.3f sec. (line count: %zu)", makeUTF8CString(currentRequestID.loggingString()), imageAnalysisDelay.seconds(), allLines.get().count);
 
             auto translationStartTime = MonotonicTime::now();
             auto completionBlock = makeBlockPtr([completion = WTF::move(completion), currentRequestID, translationStartTime](VKCImageAnalysisTranslation *translation, NSError *error) mutable {
                 auto translationDelay = MonotonicTime::now() - translationStartTime;
                 if (error) {
-                    RELEASE_LOG(Translation, "[#%{public}s] Image translation failed in %.3f sec. (error: %{public}@)", currentRequestID.loggingString().utf8(), translationDelay.seconds(), error);
+                    RELEASE_LOG(Translation, "[#%{public}s] Image translation failed in %.3f sec. (error: %{public}@)", makeUTF8CString(currentRequestID.loggingString()), translationDelay.seconds(), error);
                     return completion({ });
                 }
 
                 if (shouldLogFullImageTranslationResults()) {
                     StringBuilder stringToLog;
                     bool firstLine = true;
-                    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-                    for (SUPPRESS_UNRETAINED_LOCAL VKCTranslatedParagraph *paragraph in translation.paragraphs) {
+                    for (VKCTranslatedParagraph *paragraph in translation.paragraphs) {
                         if (!firstLine)
                             stringToLog.append("\\n"_s);
                         stringToLog.append(String { paragraph.text });
                         firstLine = false;
                     }
-                    RELEASE_LOG(Translation, "[#%{public}s] Image translation completed in %.3f sec. (paragraph count: %zu): \"%{private}s\"", currentRequestID.loggingString().utf8(), translationDelay.seconds(), translation.paragraphs.count, stringToLog.toString().utf8());
+                    RELEASE_LOG(Translation, "[#%{public}s] Image translation completed in %.3f sec. (paragraph count: %zu): \"%{private}s\"", makeUTF8CString(currentRequestID.loggingString()), translationDelay.seconds(), translation.paragraphs.count, makeUTF8CString(stringToLog.toString()));
                 } else
-                    RELEASE_LOG(Translation, "[#%{public}s] Image translation completed in %.3f sec. (paragraph count: %zu)", currentRequestID.loggingString().utf8(), translationDelay.seconds(), translation.paragraphs.count);
+                    RELEASE_LOG(Translation, "[#%{public}s] Image translation completed in %.3f sec. (paragraph count: %zu)", makeUTF8CString(currentRequestID.loggingString()), translationDelay.seconds(), translation.paragraphs.count);
 
                 completion(makeTextRecognitionResult(translation, currentRequestID));
             });
@@ -398,8 +390,7 @@ void requestPayloadForQRCode(CGImageRef image, CompletionHandler<void(NSString *
                 return;
             }
 
-            // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-            for (SUPPRESS_UNRETAINED_LOCAL VNBarcodeObservation *result in request.results) {
+            for (VNBarcodeObservation *result in request.results) {
                 if (![result.symbology isEqualToString:PAL::get_Vision_VNBarcodeSymbologyQRSingleton()])
                     continue;
 
@@ -448,8 +439,7 @@ void recognizeText(CGImageRef image, std::optional<TextRecognitionLevel> level, 
             }
 
             RetainPtr resultBuffer = adoptNS([NSMutableString new]);
-            // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-            for (SUPPRESS_UNRETAINED_LOCAL VNRecognizedTextObservation *observation in observations.get()) {
+            for (VNRecognizedTextObservation *observation in observations.get()) {
                 RetainPtr best = [[observation topCandidates:1] firstObject];
                 if (!best)
                     continue;
