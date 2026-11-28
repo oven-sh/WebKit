@@ -11,6 +11,7 @@
 #include "AOTClassPrototype.h"
 #include "AOTClassTable.h"
 #include "AOTClosure.h"
+#include "AOTCompiledStructure.h"
 #include "AOTGenerator.h"
 #include "AOTGlobalBindings.h"
 #include "AOTHeapCacheRegistry.h"
@@ -64,23 +65,32 @@ bool ChainDependents::hasChainDependent(VM&, uint32_t structureIDBits, UniquedSt
     return m_structuresWithState.contains(std::bit_cast<StructureID>(structureIDBits));
 }
 
+static CompiledStructure* compiledStructureOrNull(uint32_t structureIDBits)
+{
+    return const_cast<CompiledStructure*>(compiledObjectStructureOrNull(std::bit_cast<StructureID>(structureIDBits).decode()));
+}
+
+// A dependent outlives its Structure, and the ID may have become that of any other Structure since.
 void ChainDependents::StructuresThatPassStores::dropChainDependent(VM&, uint32_t structureIDBits, UniquedStringImpl*)
 {
-    StructureID id = std::bit_cast<StructureID>(structureIDBits);
-    if (m_dependents.m_structuresWithState.contains(id))
-        uncheckedDowncast<CompiledStructure>(id.decode())->clear(CompiledStructure::FurtherFlag::PassesStoresAbove);
+    if (!m_dependents.m_structuresWithState.contains(std::bit_cast<StructureID>(structureIDBits)))
+        return;
+    if (CompiledStructure* structure = compiledStructureOrNull(structureIDBits))
+        structure->clear(CompiledStructure::FurtherFlag::PassesStoresAbove);
 }
 
 bool ChainDependents::StructuresThatPassStores::hasChainDependent(VM&, uint32_t structureIDBits, UniquedStringImpl*) const
 {
-    StructureID id = std::bit_cast<StructureID>(structureIDBits);
-    return m_dependents.m_structuresWithState.contains(id) && uncheckedDowncast<CompiledStructure>(id.decode())->has(CompiledStructure::FurtherFlag::PassesStoresAbove);
+    if (!m_dependents.m_structuresWithState.contains(std::bit_cast<StructureID>(structureIDBits)))
+        return false;
+    CompiledStructure* structure = compiledStructureOrNull(structureIDBits);
+    return structure && structure->has(CompiledStructure::FurtherFlag::PassesStoresAbove);
 }
 
-bool ChainDependents::StructuresThatPassStores::keepChainDependent(VM& vm, uint32_t, UniquedStringImpl* uid, const CreatedMembers& created)
+bool ChainDependents::StructuresThatPassStores::keepChainDependent(VM& vm, uint32_t, UniquedStringImpl* uid, unsigned hashOfUID, const CreatedMembers& created)
 {
     unsigned attributes = 0;
-    PropertyOffset offset = created.prototype->structure()->get(vm, uid, attributes);
+    PropertyOffset offset = created.prototype->structure()->getWithoutReadingName(vm, uid, hashOfUID, attributes);
     return !isValidOffset(offset) || !(attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue);
 }
 
@@ -191,7 +201,10 @@ void ChainDependents::add(std::span<JSObject* const> chainObjects, const ChainDe
         DependentSet& set = dependent.uidOrNull ? dependents.byName.ensure(dependent.uidOrNull, [] {
             return DependentSet();
         }).iterator->value : dependents.onAnyName;
-        if (!set.add(dependent).isNewEntry)
+        auto result = set.add(dependent);
+        if (dependent.uidOrNull)
+            result.iterator->setHashOfUID(IdentifierRepHash::hash(dependent.uidOrNull));
+        if (!result.isNewEntry)
             continue;
         ++m_numberOfDependentsAddedSinceOwnersWereAsked;
     }
@@ -247,7 +260,7 @@ void ChainDependents::didCreateMembers(const CreatedMembers& created)
     ObjectDependents& all = iterator->value;
     Vector<ChainDependent, 8> dropped;
     all.removeIf([&](const ChainDependent& dependent) {
-        if (ownerOf(dependent).keepChainDependent(vm, dependent.subject, dependent.uidOrNull, created))
+        if (ownerOf(dependent).keepChainDependent(vm, dependent.subject, dependent.uidOrNull, dependent.hashOfUID(), created))
             return false;
         dropped.append(dependent);
         return true;

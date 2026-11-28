@@ -91,6 +91,7 @@ static bool canDefineElementsDirectly(JSObject* object)
 static JSObject* createExtraPropertiesWithElement(Instance* instance, uint32_t index, JSValue value)
 {
     VM& vm = *instance->vm;
+    EnsureStillAliveScope valueScope(value);
     uint32_t length = index + 1;
     unsigned vectorLength = Butterfly::optimalContiguousVectorLength(static_cast<size_t>(0), std::max<unsigned>(length + length / 2, BASE_CONTIGUOUS_VECTOR_LEN));
     Butterfly* butterfly = Butterfly::create(vm, nullptr, 0, 0, true, IndexingHeader(), vectorLength * sizeof(EncodedJSValue));

@@ -101,6 +101,24 @@ ALWAYS_INLINE PropertyOffset Structure::get(VM& vm, PropertyName propertyName, u
     return offset;
 }
 
+ALWAYS_INLINE PropertyOffset Structure::getWithoutReadingName(VM& vm, UniquedStringImpl* uid, unsigned hash, unsigned& attributes)
+{
+    ASSERT(!isCompilationThread());
+    ASSERT(structure()->classInfoForCells() == info());
+
+    if (m_seenProperties.ruleOut(CompactPtr<UniquedStringImpl>::encode(uid)))
+        return invalidOffset;
+
+    PropertyTable* propertyTable = ensurePropertyTableIfNotEmpty(vm);
+    if (!propertyTable)
+        return invalidOffset;
+
+    auto [offset, entryAttributes] = propertyTable->getWithoutReadingKey(uid, hash);
+    if (offset != invalidOffset)
+        attributes = entryAttributes;
+    return offset;
+}
+
 inline bool Structure::hasIndexingHeader(const JSCell* cell) const
 {
     if (hasIndexedProperties(indexingType()))

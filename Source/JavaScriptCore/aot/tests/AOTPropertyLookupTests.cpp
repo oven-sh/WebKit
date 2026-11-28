@@ -32,6 +32,7 @@
 #include "ProxyObject.h"
 #include "PutPropertySlot.h"
 #include "Symbol.h"
+#include <array>
 #include <bit>
 #include <optional>
 #include <span>
@@ -623,6 +624,94 @@ static void testNamedChangesOfAnObjectWithManyDependents(LoadedProgram& program)
     AOT_TEST_CHECK(!dependents.hasDependents(fixture.prototype));
 }
 
+static void testNamesOfEvictedDependentsAreNotReadBehindCreatedMembers(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    ObjectBelowPrototype fixture(program);
+    ChainDependents& dependents = *program.state().chainDependents;
+    StructureID id = fixture.object->structure()->id();
+    CreatedMembers created { fixture.prototype, program.state().objects->classes.structureOfDeclaredMemberHolders() };
+    DeferGC deferGC(vm);
+
+    // Small and large tables, with a removed property and with a Symbol.
+    Vector<Identifier> namesOfPrototype;
+    namesOfPrototype.append(Identifier::fromUid(Symbol::create(vm)->privateName()));
+    fixture.prototype->putDirect(vm, namesOfPrototype.last(), jsNumber(0));
+    Identifier removed = Identifier::fromString(vm, "removed"_s);
+    fixture.prototype->putDirect(vm, removed, jsNumber(0));
+    auto agreesWithGet = [&](const Identifier& name) {
+        Structure* structure = fixture.prototype->structure();
+        unsigned attributes = 0;
+        unsigned expected = 0;
+        return structure->getWithoutReadingName(vm, name.impl(), IdentifierRepHash::hash(name.impl()), attributes) == structure->get(vm, name, expected) && attributes == expected;
+    };
+    for (unsigned index = 0; index < 1000; ++index) {
+        namesOfPrototype.append(Identifier::fromString(vm, makeString("ofPrototype"_s, index)));
+        fixture.prototype->putDirect(vm, namesOfPrototype.last(), jsNumber(index), index % 2 ? PropertyAttribute::DontEnum | 0 : 0);
+        if (index == 10)
+            JSCell::deleteProperty(fixture.prototype, program.realm(), removed);
+        if (index == 5 || index == 20 || index == 999) {
+            for (const Identifier& name : namesOfPrototype)
+                AOT_TEST_CHECK(agreesWithGet(name));
+            AOT_TEST_CHECK(agreesWithGet(removed) && agreesWithGet(fixture.label));
+        }
+    }
+
+    fixture.file(fixture.label);
+    constexpr unsigned numberOfNames = 500;
+    for (unsigned index = 0; index < numberOfNames; ++index) {
+        Identifier added = Identifier::fromString(vm, makeString("evicted"_s, index));
+        fixture.file(added);
+        fixture.caches.tables().remove(id, fixture.caches.nameOf(added.impl()), SlotAccess::Read);
+    }
+    size_t numberOfDependents = dependents.numberOfDependents(fixture.prototype);
+    AOT_TEST_CHECK(numberOfDependents > 1);
+
+    // Under AddressSanitizer this reads no name that has been freed.
+    dependents.didCreateMembers(created);
+    AOT_TEST_CHECK(dependents.numberOfDependents(fixture.prototype) == numberOfDependents && fixture.isFiledAsAbsent(fixture.label));
+    fixture.prototype->putDirect(vm, fixture.label, jsNumber(1));
+    AOT_TEST_CHECK(!fixture.find(fixture.label) && dependents.numberOfDependents(fixture.prototype) == numberOfDependents - 1);
+
+    // A name that the prototype has got by then is found, a Symbol's as well.
+    for (const Identifier& name : { fixture.other, Identifier::fromUid(Symbol::create(vm)->privateName()) }) {
+        fixture.file(name);
+        AOT_TEST_CHECK(fixture.isFiledAsAbsent(name));
+        {
+            SetForScope unobservedHolder(vm.aotState().unobservedClassHolder, fixture.prototype);
+            fixture.prototype->putDirect(vm, name, jsNumber(1));
+        }
+        numberOfDependents = dependents.numberOfDependents(fixture.prototype);
+        dependents.didCreateMembers(created);
+        AOT_TEST_CHECK(!fixture.find(name) && dependents.numberOfDependents(fixture.prototype) == numberOfDependents - 1);
+    }
+}
+
+static void testDependentOfCompiledStructureLeavesOtherStructureWithItsIDAlone(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    ObjectBelowPrototype fixture(program);
+    ChainDependents& dependents = *program.state().chainDependents;
+    Structure* ordinary = fixture.object->structure();
+    std::array<JSObject*, 1> chain { fixture.prototype };
+    dependents.addStateOfStructure(chain, ordinary, fixture.label.impl());
+    AOT_TEST_CHECK(dependents.numberOfDependents(fixture.prototype) == 1);
+
+    // What areStoresPassedAbove() had added for CompiledStructures that have died since. A debug build or AddressSanitizer stops where one of them is taken for the Structure that has the ID now.
+    ChainDependentOwnerID owner = dependents.idOfStructuresThatPassStores();
+    constexpr unsigned numberOfNames = 4000;
+    Vector<Identifier> names;
+    for (unsigned index = 0; index < numberOfNames; ++index) {
+        names.append(Identifier::fromString(vm, makeString("passed"_s, index)));
+        dependents.add(chain, { names.last().impl(), ordinary->id().bits(), owner });
+    }
+    AOT_TEST_CHECK(dependents.numberOfDependents(fixture.prototype) == numberOfNames + 1);
+    didChangeChainObject(vm, fixture.prototype, names[0].impl());
+    AOT_TEST_CHECK(dependents.numberOfDependents(fixture.prototype) == numberOfNames);
+    vm.heap.collectNow(Sync, CollectionScope::Full);
+    AOT_TEST_CHECK(dependents.numberOfDependents(fixture.prototype) == 1);
+}
+
 static Object* allocateLabeledObject(LoadedProgram& program)
 {
     const ProgramTables& tables = program.state().tables;
@@ -944,6 +1033,8 @@ std::span<const NativeTest> propertyLookupTests()
         { "property-lookup/symbol-of-one-realm-is-filed-in-front"_s, withProgramCreatingSymbol<testSymbolOfOneRealmIsFiledInFront> },
         { "property-lookup/symbol-of-each-realm-is-never-filed-in-front"_s, runSymbolOfEachRealmIsNeverFiledInFront },
         { "property-lookup/evicted-dependents-are-dropped-when-the-table-has-doubled"_s, withProgram<testEvictedDependentsAreDroppedWhenTheTableHasDoubled> },
+        { "property-lookup/names-of-evicted-dependents-are-not-read-behind-created-members"_s, withProgram<testNamesOfEvictedDependentsAreNotReadBehindCreatedMembers> },
+        { "property-lookup/dependent-of-compiled-structure-leaves-other-structure-with-its-id-alone"_s, withProgram<testDependentOfCompiledStructureLeavesOtherStructureWithItsIDAlone> },
         { "property-lookup/named-changes-of-an-object-with-many-dependents"_s, withProgram<testNamedChangesOfAnObjectWithManyDependents> },
         { "property-lookup/reads-below-empty-slots-ask-the-first-object-that-has-one"_s, withProgram<testReadsBelowEmptySlotsAskTheFirstObjectThatHasOne> },
         { "property-lookup/empty-slot-of-receiver-defers-to-unboxed-field-of-compiled-prototype"_s, withProgramReadingCount<testEmptySlotOfReceiverDefersToUnboxedFieldOfCompiledPrototype> },

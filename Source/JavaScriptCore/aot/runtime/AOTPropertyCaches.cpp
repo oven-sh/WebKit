@@ -1595,12 +1595,12 @@ static std::optional<Slot> slotBehindCreatedMember(const Slot& slot, const Creat
 
 static bool belongsToOneObject(Structure*);
 
-bool VMPropertyCaches::keepChainDependent(VM& vm, uint32_t structureIDBits, UniquedStringImpl* uid, const CreatedMembers& created)
+bool VMPropertyCaches::keepChainDependent(VM& vm, uint32_t structureIDBits, UniquedStringImpl* uid, unsigned hashOfUID, const CreatedMembers& created)
 {
     ASSERT(uid);
     ASSERT(vm.heap.isDeferred());
     unsigned attributes = 0;
-    PropertyOffset offset = created.prototype->structure()->get(vm, uid, attributes);
+    PropertyOffset offset = created.prototype->structure()->getWithoutReadingName(vm, uid, hashOfUID, attributes);
     if (!isValidOffset(offset))
         return true;
     StructureID id = std::bit_cast<StructureID>(structureIDBits);
@@ -2273,13 +2273,13 @@ void SiteCaches::dropChainDependent(VM&, uint32_t siteIndex, UniquedStringImpl*)
         clear(at(siteIndex));
 }
 
-bool SiteCaches::keepChainDependent(VM& vm, uint32_t siteIndex, UniquedStringImpl* uid, const CreatedMembers& created)
+bool SiteCaches::keepChainDependent(VM& vm, uint32_t siteIndex, UniquedStringImpl* uid, unsigned hashOfUID, const CreatedMembers& created)
 {
     ASSERT(vm.heap.isDeferred());
     if (!uid)
         return false;
     unsigned attributes = 0;
-    PropertyOffset offset = created.prototype->structure()->get(vm, uid, attributes);
+    PropertyOffset offset = created.prototype->structure()->getWithoutReadingName(vm, uid, hashOfUID, attributes);
     if (!isValidOffset(offset))
         return true;
     Slot slot = m_slots[siteIndex].get();
