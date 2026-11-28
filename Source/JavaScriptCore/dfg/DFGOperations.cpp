@@ -6663,6 +6663,13 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationTriggerReoptimizationNow, void, (Code
     optimizedCodeBlock->jettison(Profiler::JettisonDueToOSRExit, CountReoptimization);
 }
 
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationStopInliningTailCall, void, (CodeBlock* optimizedCodeBlock, InlineCallFrame* tailCall))
+{
+    BytecodeIndex bytecodeIndex = tailCall->directCaller.bytecodeIndex().withCheckpoint(noCheckpoints);
+    ExitProfile::add(optimizedCodeBlock->baselineAlternative(), FrequentExitSite(bytecodeIndex, TailCallInliningFailed, exitingJITTypeFor(optimizedCodeBlock->jitType()), ExitFromNotInlined));
+    optimizedCodeBlock->jettison(Profiler::JettisonDueToOSRExit, CountReoptimization);
+}
+
 #if ENABLE(FTL_JIT)
 static bool shouldTriggerFTLCompile(CodeBlock* codeBlock, JITCode* jitCode)
 {

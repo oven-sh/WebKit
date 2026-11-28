@@ -3304,6 +3304,13 @@ llintOpWithMetadata(op_profile_control_flow, OpProfileControlFlow, macro (size, 
     dispatch()
 end)
 
+llintOpWithMetadata(op_count_coverage, OpCountCoverage, macro (size, get, dispatch, metadata, return)
+    metadata(t5, t0)
+    loadp OpCountCoverage::Metadata::m_count[t5], t0
+    addq 1, [t0]
+    dispatch()
+end)
+
 llintOpWithMetadata(op_instanceof, OpInstanceof, macro (size, get, dispatch, metadata, return)
 
     macro getAndLoadConstantOrVariable(fieldName, index, value)

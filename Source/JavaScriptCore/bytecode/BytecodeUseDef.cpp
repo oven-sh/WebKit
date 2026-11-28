@@ -95,6 +95,7 @@ void computeUsesForBytecodeIndexImpl(const JSInstruction* instruction, Checkpoin
     case op_argument_count:
     case op_catch:
     case op_profile_control_flow:
+    case op_count_coverage:
     case op_create_direct_arguments:
     case op_create_cloned_arguments:
     case op_create_rest:
@@ -460,6 +461,7 @@ void computeDefsForBytecodeIndexImpl(unsigned numVars, const JSInstruction* inst
     case op_define_accessor_property:
     case op_profile_type:
     case op_profile_control_flow:
+    case op_count_coverage:
     case op_put_to_arguments:
     case op_call_ignore_result:
     case op_set_function_name:

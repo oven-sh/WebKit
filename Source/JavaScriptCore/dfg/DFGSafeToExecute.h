@@ -723,6 +723,7 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case NewSymbol:
     case ProfileType:
     case ProfileControlFlow:
+    case CountCoverage:
     case InstanceOf:
     case InstanceOfMegamorphic:
     case InstanceOfCustom:

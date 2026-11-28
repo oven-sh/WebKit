@@ -39,9 +39,31 @@
 
 namespace JSC { namespace DFG {
 
+// An exit into an inlined tail call leaves a hole on the stack (see reifyInlinedCallFrames()), which the next tail call does not close.
+static void stopInliningTailCallIfHolesAddUp(VM& vm, CCallHelpers& jit, const OSRExitBase& exit)
+{
+    InlineCallFrame* outermost = exit.m_codeOrigin.inlineCallFrame();
+    while (outermost && outermost->directCaller.inlineCallFrame())
+        outermost = outermost->directCaller.inlineCallFrame();
+    if (!outermost || !outermost->isTail())
+        return;
+
+    constexpr int32_t moreThanAFrameUsuallyTakes = 16 * KB;
+    jit.addPtr(AssemblyHelpers::TrustedImm32(moreThanAFrameUsuallyTakes), GPRInfo::callFrameRegister, GPRInfo::regT0);
+    auto callerIsNear = jit.branchPtr(AssemblyHelpers::Above, GPRInfo::regT0, AssemblyHelpers::Address(GPRInfo::callFrameRegister, CallFrame::callerFrameOffset()));
+
+    jit.setupArguments<decltype(operationStopInliningTailCall)>(AssemblyHelpers::TrustedImmPtr(jit.codeBlock()), AssemblyHelpers::TrustedImmPtr(outermost));
+    jit.prepareCallOperation(vm);
+    jit.move(AssemblyHelpers::TrustedImmPtr(tagCFunction<OperationPtrTag>(operationStopInliningTailCall)), GPRInfo::nonArgGPR0);
+    jit.call(GPRInfo::nonArgGPR0, OperationPtrTag);
+
+    callerIsNear.link(&jit);
+}
+
 void handleExitCounts(VM& vm, CCallHelpers& jit, const OSRExitBase& exit)
 {
     if (!exitKindMayJettison(exit.m_kind)) {
+        stopInliningTailCallIfHolesAddUp(vm, jit, exit);
         // FIXME: We may want to notice that we're frequently exiting
         // at an op_catch that we didn't compile an entrypoint for, and
         // then trigger a reoptimization of this CodeBlock:

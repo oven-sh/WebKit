@@ -41,7 +41,7 @@ DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(ParserArenaRoot);
 
 void SourceElements::append(StatementNode* statement)
 {
-    if (statement->isEmptyStatement())
+    if (statement->isEmptyStatement() && !statement->hasCoveragePlaces())
         return;
 
     if (!m_head) {

@@ -86,6 +86,7 @@ ExitMode mayExitImpl(Graph& graph, Node* node, StateType& state)
     case GetEvalScope:
     case PhantomLocal:
     case CountExecution:
+    case CountCoverage:
     case SuperSamplerBegin:
     case SuperSamplerEnd:
     case Jump:

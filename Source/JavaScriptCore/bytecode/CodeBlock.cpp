@@ -46,6 +46,7 @@
 #include "CodeBlockInlines.h"
 #include "CodeBlockSet.h"
 #include "ControlFlowProfiler.h"
+#include "CoverageCounters.h"
 #include "DFGCapabilities.h"
 #include "DFGCommon.h"
 #include "DFGJITCode.h"
@@ -615,6 +616,16 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
 
         LINK(OpCatch)
         LINK(OpProfileControlFlow)
+
+        case op_count_coverage: {
+            INITIALIZE_METADATA(OpCountCoverage)
+            auto* counters = ownerExecutable->source().provider()->coverageCounters();
+            RELEASE_ASSERT(counters && bytecode.m_counter < counters->counts.size());
+            metadata.m_count = &counters->counts[bytecode.m_counter];
+            // Or code that counts would tier up later and be inlined less.
+            bytecodeCost -= op_count_coverage_length + 1;
+            break;
+        }
 
         LINK(OpCall, callLinkInfo)
         LINK(OpTailCall, callLinkInfo)

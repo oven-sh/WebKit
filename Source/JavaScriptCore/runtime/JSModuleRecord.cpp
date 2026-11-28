@@ -30,6 +30,7 @@
 #include "AsyncContextSwapScope.h"
 #include "BuiltinNames.h"
 #include "CodeCache.h"
+#include "CoverageCounters.h"
 #include "Interpreter.h"
 #include "JSAsyncFunction.h"
 #include "JSAsyncGeneratorFunction.h"
@@ -584,7 +585,8 @@ static bool hasSameObservableSource(const SourceCode& a, const SourceCode& b)
         && providerA->taintedness() == providerB->taintedness()
         && providerA->sourceURL() == providerB->sourceURL()
         && a.firstLine() == b.firstLine() && a.startColumn() == b.startColumn()
-        && providerA->hash() == providerB->hash() && a.view() == b.view();
+        && providerA->hash() == providerB->hash() && a.view() == b.view()
+        && CoverageCounters::canShareLinkedCode(providerA->coverageCounters(), providerB->coverageCounters());
 }
 
 ModuleProgramExecutable* JSModuleRecord::getOrMakeExecutable(JSGlobalObject* globalObject)

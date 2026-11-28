@@ -1740,6 +1740,8 @@ JSValue Interpreter::executeProgram(const SourceCode& source, JSGlobalObject*, J
     // frame on the stack in case the program does an eval via a setter.
     if (source.provider()->couldBeTainted())
         goto failedJSONP;
+    if (source.provider()->coverageCounters())
+        goto failedJSONP;
 
     if (programSource.isNull())
         return jsUndefined();

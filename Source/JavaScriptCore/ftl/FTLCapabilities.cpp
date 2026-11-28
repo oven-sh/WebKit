@@ -236,6 +236,7 @@ inline CapabilityLevel canCompile(DFG::Node* node)
     case CheckArrayOrEmpty:
     case CheckDetached:
     case CountExecution:
+    case CountCoverage:
     case SuperSamplerBegin:
     case SuperSamplerEnd:
     case GetExecutable:

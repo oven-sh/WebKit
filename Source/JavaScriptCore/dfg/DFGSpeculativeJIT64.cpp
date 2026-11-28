@@ -5977,6 +5977,11 @@ void SpeculativeJIT::compile(Node* node)
         break;
     }
 
+    case CountCoverage:
+        add64(TrustedImm32(1), AbsoluteAddress(node->coverageCount()));
+        noResult(node);
+        break;
+
     case SuperSamplerBegin:
         add32(TrustedImm32(1), AbsoluteAddress(std::bit_cast<void*>(&g_superSamplerCount)));
         break;

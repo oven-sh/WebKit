@@ -63,6 +63,7 @@ enum ExitKind : uint8_t {
     GenericUnwind, // We exited because we arrived at this OSR exit from genericUnwind.
     UnexpectedResizableArrayBufferView, // We exited because we made an incorrect assumption about what type of ArrayBufferView we would see.
     SparseIndex, // We exited because we encountered a sparse index in a place we didn't want to see it.
+    TailCallInliningFailed, // Exits into what a tail call inlined made the stack grow. So, assume that inlining it is a bad idea.
 };
 
 NODELETE bool exitKindMayJettison(ExitKind);

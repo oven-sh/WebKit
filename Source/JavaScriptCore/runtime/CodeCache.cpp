@@ -28,6 +28,7 @@
 
 #include "AOTRemovableFeature.h"
 #include "BytecodeGenerator.h"
+#include "DeferGCInlines.h"
 #include "DirectEvalExecutable.h"
 #include "IndirectEvalExecutable.h"
 #include "ModuleProgramExecutable.h"
@@ -197,6 +198,42 @@ UnlinkedModuleProgramCodeBlock* recursivelyGenerateUnlinkedCodeBlockForModulePro
     return recursivelyGenerateUnlinkedCodeBlock<UnlinkedModuleProgramCodeBlock>(vm, source, lexicallyScopedFeatures, scriptMode, codeGenerationMode, error, evalContextType, depth, optimize);
 }
 
+Vector<CoverageCounters::Place> coveragePlacesWithoutCode(VM& vm, const SourceCode& source, JSParserScriptMode scriptMode, ParserError& error)
+{
+    DeferGC deferGC(vm);
+    Vector<std::pair<UnlinkedCodeBlock*, SourceCode>> worklist;
+    if (scriptMode == JSParserScriptMode::Module)
+        worklist.append({ recursivelyGenerateUnlinkedCodeBlockForModuleProgram(vm, source, StrictModeLexicallyScopedFeature, scriptMode, { }, error, EvalContextType::None, 0), source });
+    else
+        worklist.append({ recursivelyGenerateUnlinkedCodeBlockForProgram(vm, source, NoLexicallyScopedFeatures, scriptMode, { }, error, EvalContextType::None, 0), source });
+
+    BitVector hasCode;
+    while (!worklist.isEmpty()) {
+        auto [codeBlock, parentSource] = worklist.takeLast();
+        if (!codeBlock)
+            return { };
+        for (const auto& instruction : codeBlock->instructions()) {
+            if (instruction->is<OpCountCoverage>())
+                hasCode.set(instruction->as<OpCountCoverage>().m_counter);
+        }
+        auto append = [&](UnlinkedFunctionExecutable* executable) {
+            SourceCode functionSource = executable->linkedSourceCode(parentSource);
+            auto kind = executable->isClassConstructorFunction() ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall;
+            worklist.append({ executable->unlinkedCodeBlockFor(vm, functionSource, kind, { }, error, executable->parseMode()), functionSource });
+        };
+        for (unsigned i = 0; i < codeBlock->numberOfFunctionDecls(); i++)
+            append(codeBlock->functionDecl(i));
+        for (unsigned i = 0; i < codeBlock->numberOfFunctionExprs(); i++)
+            append(codeBlock->functionExpr(i));
+    }
+
+    Vector<CoverageCounters::Place> places(source.provider()->coverageCounters()->places);
+    places.removeAllMatching([&](auto& place) {
+        return hasCode.get(place.counter());
+    });
+    return places;
+}
+
 void recordParseFromUnlinkedCodeBlock(GlobalExecutable* executable, const SourceCode& source, UnlinkedGlobalCodeBlock* unlinkedCodeBlock)
 {
     executable->recordParse(unlinkedCodeBlock->codeFeatures(), unlinkedCodeBlock->lexicallyScopedFeatures(), unlinkedCodeBlock->hasCapturedVariables());
@@ -233,7 +270,7 @@ UnlinkedCodeBlockType* CodeCache::getUnlinkedGlobalCodeBlock(VM& vm, ExecutableT
     // (Nor is it registered for being dropped and decoded again: what is remembered for that is remembered per payload
     // and provider, which the shared code of the same source may have as well.)
     // The provider's cached bytecode belongs to the variant with no live imports. Other variants must not read or overwrite it.
-    bool canUseProviderBytecode = liveImports.isNull();
+    bool canUseProviderBytecode = liveImports.isNull() && !source.provider()->coverageCounters();
     UnlinkedCodeBlockType* unlinkedCodeBlock = nullptr;
     if (!privateToExecutable)
         unlinkedCodeBlock = m_sourceCode.findCacheAndUpdateAge<UnlinkedCodeBlockType>(vm, key, canUseProviderBytecode ? CodeCacheMap::FetchFromDisk::Yes : CodeCacheMap::FetchFromDisk::No);
@@ -348,7 +385,8 @@ UnlinkedFunctionExecutable* CodeCache::getUnlinkedGlobalFunctionExecutable(VM& v
 
 void CodeCache::updateCache(const UnlinkedFunctionExecutable* executable, const SourceCode& parentSource, CodeSpecializationKind kind, const UnlinkedFunctionCodeBlock* codeBlock)
 {
-    parentSource.provider()->updateCache(executable, parentSource, kind, codeBlock);
+    if (!parentSource.provider()->coverageCounters())
+        parentSource.provider()->updateCache(executable, parentSource, kind, codeBlock);
 }
 
 void CodeCache::write()

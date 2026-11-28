@@ -478,6 +478,7 @@ namespace JSC {
         void emit_op_inc(const JSInstruction*);
         void emit_op_profile_type(const JSInstruction*);
         void emit_op_profile_control_flow(const JSInstruction*);
+        void emit_op_count_coverage(const JSInstruction*);
         void emit_op_get_parent_scope(const JSInstruction*);
         void emit_op_put_by_id(const JSInstruction*);
         template<typename Op = OpPutByVal>

@@ -40,6 +40,7 @@
 #include "VariableEnvironment.h"
 #include <wtf/FixedVector.h>
 #include <wtf/MathExtras.h>
+#include <wtf/OptionSet.h>
 #include <wtf/SmallSet.h>
 
 namespace JSC {
@@ -163,13 +164,23 @@ namespace JSC {
         void setEndOffset(int offset) { m_endOffset = offset; }
         void setStartOffset(int offset) { m_position.offset = offset; }
 
-        bool needsDebugHook() const { return m_needsDebugHook; }
-        void setNeedsDebugHook() { m_needsDebugHook = true; }
+        bool needsHooks() const { return !m_hooks.isEmpty(); }
+
+        bool needsDebugHook() const { return m_hooks.contains(Hook::Debug); }
+        void setNeedsDebugHook() { m_hooks.add(Hook::Debug); }
+
+        bool hasCoveragePlaces() const { return m_hooks.contains(Hook::Coverage); }
+        void setHasCoveragePlaces() { m_hooks.add(Hook::Coverage); }
 
     protected:
+        enum class Hook : uint8_t {
+            Debug = 1 << 0,
+            Coverage = 1 << 1,
+        };
+
         JSTextPosition m_position;
         int m_endOffset { -1 };
-        bool m_needsDebugHook { false };
+        OptionSet<Hook> m_hooks;
     };
 
     class ExpressionNode : public Node {

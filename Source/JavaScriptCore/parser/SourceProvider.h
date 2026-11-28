@@ -62,6 +62,7 @@ class SourceProvider;
 class UnlinkedFunctionExecutable;
 class UnlinkedFunctionCodeBlock;
 class VM;
+struct CoverageCounters;
 
 enum class JS_EXPORT_PRIVATE SourceProviderSourceType : uint8_t {
     Program,
@@ -160,6 +161,8 @@ public:
     JS_EXPORT_PRIVATE virtual void cacheBytecode(const BytecodeCacheGenerator&) const { }
     JS_EXPORT_PRIVATE virtual void updateCache(const UnlinkedFunctionExecutable*, const SourceCode&, CodeSpecializationKind, const UnlinkedFunctionCodeBlock*) const { }
     JS_EXPORT_PRIVATE virtual void commitCachedBytecode() const { }
+    // The same for as long as the provider lives. Code that counts is neither read from cachedBytecode() nor offered for caching.
+    virtual const CoverageCounters* coverageCounters() const { return nullptr; }
 #if USE(BUN_JSC_ADDITIONS)
     JS_EXPORT_PRIVATE virtual size_t memoryCost() const { return 0; }
     JS_EXPORT_PRIVATE virtual void didGenerateUnlinkedCodeBlock(VM&, const SourceCodeKey&, UnlinkedCodeBlock*) const { }

@@ -7151,15 +7151,13 @@ JSC_DEFINE_JIT_OPERATION(operationAOTRequireIfImported, EncodedJSValue, (Instanc
     OPERATION_RETURN(scope, JSValue::encode(modules.require(ModuleID(module), ModuleID(referrer))));
 }
 
-static NEVER_INLINE Vector<uint64_t>* findCountedFile(Instance& instance, uint32_t module, StringID description)
+static NEVER_INLINE void findCoverageCounts(Instance& instance, uint32_t module, StringID description)
 {
-    auto& files = instance.vm->aotState().countedFiles;
-    while (files.byModule.size() <= module)
-        files.byModule.append(nullptr);
-    files.byModule[module] = files.byDescription.ensure(ProgramStrings::atomOf(*instance.program, description).string(), [] {
-        return makeUnique<Vector<uint64_t>>();
-    }).iterator->value.get();
-    return files.byModule[module];
+    auto& byModule = instance.vm->aotState().coverageCountsByModule;
+    if (byModule.size() <= module)
+        byModule.grow(module + 1);
+    auto find = moduleHostOf(instance.globalObject).coverageCounts;
+    byModule[module] = find ? find(instance.globalObject, ProgramStrings::atomOf(*instance.program, description).string()) : std::span<uint64_t> { };
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTAreLoaderFunctionsStored, size_t, (Instance* instance))
@@ -7197,19 +7195,11 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTWasLoadedSynchronously, size_t, (I
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCountExecution, void, (Instance* instance, uint32_t module, uint32_t description, uint32_t counter))
 {
-    const auto& byModule = instance->vm->aotState().countedFiles.byModule;
-    Vector<uint64_t>* counts = module < byModule.size() ? byModule[module] : nullptr;
-    if (!counts) [[unlikely]]
-        counts = findCountedFile(*instance, module, StringID(description));
-    while (counts->size() <= counter)
-        counts->append(0);
-    ++counts->at(counter);
-}
-
-void forEachCountedFile(VM& vm, const ScopedLambda<void(const String& description, std::span<const uint64_t> counts)>& each)
-{
-    for (auto& [description, counts] : vm.aotState().countedFiles.byDescription)
-        each(description, counts->span());
+    const auto& byModule = instance->vm->aotState().coverageCountsByModule;
+    if (module >= byModule.size() || !byModule[module]) [[unlikely]]
+        findCoverageCounts(*instance, module, StringID(description));
+    if (auto counts = *byModule[module]; counter < counts.size())
+        ++counts[counter];
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTResolveModule, EncodedJSValue, (Instance* instance, uint32_t module, uint32_t, uint32_t, uint32_t isURL))

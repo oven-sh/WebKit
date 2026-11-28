@@ -32,6 +32,7 @@ DSL::types [
   :unsigned,
   :uintptr_t,
   :uint8_t,
+  :uint64_t,
 ]
 
 options = Options::parse(ARGV)

@@ -541,6 +541,7 @@ namespace JSC { namespace DFG {
     macro(HasPrivateBrand, NodeResultBoolean | NodeMustGenerate) \
     macro(ProfileType, NodeMustGenerate) \
     macro(ProfileControlFlow, NodeMustGenerate) \
+    macro(CountCoverage, NodeMustGenerate) \
     macro(SetFunctionName, NodeMustGenerate) \
     macro(EnqueueAsyncGeneratorDriver, NodeMustGenerate) \
     macro(HasOwnProperty, NodeMustGenerate | NodeResultBoolean) \

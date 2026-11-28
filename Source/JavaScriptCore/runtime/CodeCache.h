@@ -326,6 +326,9 @@ UnlinkedModuleProgramCodeBlock* recursivelyGenerateUnlinkedCodeBlockForModulePro
 // bound stay in the cache as executables whose bodies are generated from source when first called).
 JS_EXPORT_PRIVATE void recursivelyGenerateUnlinkedCodeBlocksForFunction(VM&, UnlinkedFunctionExecutable*, const SourceCode& parentSource, ParserError&, unsigned depth = std::numeric_limits<unsigned>::max(), OptimizeBytecode = OptimizeBytecode::No);
 
+// For testing what finds the places: those whose counter no code of the source adds to.
+JS_EXPORT_PRIVATE Vector<CoverageCounters::Place> coveragePlacesWithoutCode(VM&, const SourceCode&, JSParserScriptMode, ParserError&);
+
 // What a CodeCache hit does besides returning the block: the executable learns the parse results
 // (newCodeBlockFor() requires them) and the provider the //# sourceURL / sourceMappingURL directives.
 void recordParseFromUnlinkedCodeBlock(GlobalExecutable*, const SourceCode&, UnlinkedGlobalCodeBlock*);

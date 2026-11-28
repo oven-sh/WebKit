@@ -1152,7 +1152,7 @@ void VMState::releaseImage(VM& vm)
     callSiteCache = nullptr;
     runtimeTable = nullptr;
     identifiers = nullptr;
-    countedFiles = { };
+    coverageCountsByModule = { };
     poisonedCellSites = nullptr;
     caches = nullptr;
     pages = nullptr;

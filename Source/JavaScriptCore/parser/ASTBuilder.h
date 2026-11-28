@@ -82,6 +82,7 @@ public:
         : m_vm(vm)
         , m_parserArena(parserArena)
         , m_sourceCode(sourceCode)
+        , m_coverageCounters(sourceCode->provider()->coverageCounters())
         , m_evalCount(0)
     {
     }
@@ -624,6 +625,16 @@ public:
         ExprStatementNode* result = new (m_parserArena) ExprStatementNode(location, expr);
         result->setStartOffset(start);
         return result;
+    }
+
+    bool hasFreeCoveragePlacesAt(unsigned offset) const { return m_coverageCounters && hasFreeCoveragePlacesAtSlow(offset); }
+    // While a node is parsed, what it starts with does not get its places.
+    unsigned& offsetOfTakenCoveragePlaces() LIFETIME_BOUND { return m_offsetOfTakenCoveragePlaces; }
+    void findCoveragePlaces(StatementNode* node) { findCoveragePlaces(node, node->startOffset()); }
+    void findCoveragePlaces(Node* node, unsigned offset)
+    {
+        if (m_coverageCounters) [[unlikely]]
+            findCoveragePlacesSlow(node, offset);
     }
 
     StatementNode* createIfStatement(const JSTokenLocation& location, ExpressionNode* condition, StatementNode* trueBlock, StatementNode* falseBlock)
@@ -1216,9 +1227,28 @@ private:
             static_cast<ClassExprNode*>(defaultValue)->setEcmaName(uid);
     }
 
+    NEVER_INLINE bool hasFreeCoveragePlacesAtSlow(unsigned offset) const
+    {
+        return offset != m_offsetOfTakenCoveragePlaces && !m_coverageCounters->placesAt(offset).empty();
+    }
+
+    NEVER_INLINE void findCoveragePlacesSlow(Node* node, unsigned offset)
+    {
+        auto places = m_coverageCounters->placesAt(offset);
+        if (places.empty())
+            return;
+        node->setHasCoveragePlaces();
+        auto result = m_parserArena.coveragePlaces().add(node, places);
+        // An expression starts once more at each parenthesis around it.
+        if (!result.isNewEntry)
+            result.iterator->value = m_coverageCounters->placesIn(offset, result.iterator->value.back().offset);
+    }
+
     VM& m_vm;
     ParserArena& m_parserArena;
     SourceCode* m_sourceCode;
+    const CoverageCounters* m_coverageCounters;
+    unsigned m_offsetOfTakenCoveragePlaces { std::numeric_limits<unsigned>::max() };
     Scope m_scope;
     Vector<BinaryOperand, 10, UnsafeVectorOverflow> m_binaryOperandStack;
     Vector<AssignmentInfo, 10, UnsafeVectorOverflow> m_assignmentInfoStack;
@@ -1521,12 +1551,15 @@ ExpressionNode* ASTBuilder::makeBinaryNode(const JSTokenLocation& location, int 
 
     switch (token) {
     case COALESCE:
+        findCoveragePlaces(rhs.first, rhs.second.start.offset);
         return makeCoalesceNode(location, lhs.first, rhs.first);
 
     case OR:
+        findCoveragePlaces(rhs.first, rhs.second.start.offset);
         return new (m_parserArena) LogicalOpNode(location, lhs.first, rhs.first, LogicalOperator::Or);
 
     case AND:
+        findCoveragePlaces(rhs.first, rhs.second.start.offset);
         return new (m_parserArena) LogicalOpNode(location, lhs.first, rhs.first, LogicalOperator::And);
 
     case BITOR:
