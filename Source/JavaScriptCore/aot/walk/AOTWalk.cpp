@@ -5994,10 +5994,15 @@ bool Walker::isListNamedBehindArms(const WalkState& state, ValueID list, const S
     };
     m_liveness.forEachLiveBefore(behindStretch, stretch.inputBlock, [&](ValueID value) {
         // What the stretch makes is what meets, or is made again behind it.
-        if (value < firstOfStretch)
-            look(referenceOf(value));
+        if (isNamed || value >= firstOfStretch)
+            return;
+        Reference name = referenceOf(value);
+        if (!name || !name.isVirtual() || standsForFrameOfGenerator(name))
+            return look(name);
+        indexedIteration(name).forEachValueHeld(look);
     });
-    state.forEachValueHeldByAnother(look);
+    if (!isNamed)
+        state.forEachValueHeldByAnother(look);
     return isNamed;
 }
 
