@@ -245,13 +245,18 @@ std::optional<unsigned> Modules::keepEndedMock(ModuleID fileOrModule, JSObject* 
     if (!momentEnded)
         momentEnded = ++state.momentOfLoads;
     releaseUnusedRemovedMocks();
-    Vector<EndedMock, 2>& ended = m_removedMocksInUse.add(fileOrModule, Vector<EndedMock, 2>()).iterator->value;
     std::optional<unsigned> placeOfMockThatWasPatched;
-    if (JSObject* kept = ended.isEmpty() || ended.last().momentLaid != laid.moment || ended.last().momentEnded > ended.last().momentLaid ? nullptr : endedMock(fileOrModule, ended.size() - 1); kept && kept != mock) {
-        mock = withNamesOfPatchedMock(kept, mock);
-        placeOfMockThatWasPatched = ended.size() - 1;
-        exportsLeftOut = ended.last().exportsLeftOut;
+    if (auto found = m_removedMocksInUse.find(fileOrModule); found != m_removedMocksInUse.end() && !found->value.isEmpty()) {
+        const EndedMock& last = found->value.last();
+        unsigned place = found->value.size() - 1;
+        if (JSObject* kept = last.momentLaid != laid.moment || last.momentEnded > last.momentLaid ? nullptr : endedMock(fileOrModule, place); kept && kept != mock) {
+            placeOfMockThatWasPatched = place;
+            exportsLeftOut = last.exportsLeftOut;
+            // This runs getters of the mock. They may end other mocks, so nothing found in m_removedMocksInUse is valid behind it.
+            mock = withNamesOfPatchedMock(kept, mock);
+        }
     }
+    Vector<EndedMock, 2>& ended = m_removedMocksInUse.add(fileOrModule, Vector<EndedMock, 2>()).iterator->value;
     if (!placeOfMockThatWasPatched && !ended.isEmpty() && ended.last().momentLaid == laid.moment) {
         if (!endedMock(fileOrModule, ended.size() - 1))
             storeValue(m_instance.globalObject, ensureLoaded(fileOrModule).endedMocks.get(), static_cast<unsigned>(ended.size() - 1), mock);
